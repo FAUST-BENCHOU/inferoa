@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  adjustComposerCompactRanges,
   backspaceComposer,
+  compactRangeBeforeCursor,
+  composerPlainPasteFallback,
+  isComposerPathPaste,
+  insertComposerPaste,
   insertComposerNewline,
   insertComposerText,
   moveComposerCursorLeft,
@@ -42,6 +47,83 @@ test("composer supports explicit multiline insertion", () => {
   assert.equal(rendered.cursorLine, 2);
   assert.equal(rendered.cursorColumn, 5);
   assert.equal(rendered.lines.filter((line) => stripAnsi(line).includes("two")).length, 1);
+});
+
+test("composer compacts pasted long text while preserving the raw buffer", () => {
+  const pasted = `first line\n${"x".repeat(220)}\nlast line`;
+  const state = insertComposerPaste("", 0, pasted);
+
+  assert.equal(state.buffer, pasted);
+  assert.equal(state.cursor, pasted.length);
+  assert.equal(state.compactRange?.label, `[Pasted Content ${[...pasted].length} chars]`);
+
+  const rendered = renderComposerSurface({
+    buffer: state.buffer,
+    cursor: state.cursor,
+    compactRanges: state.compactRange ? [state.compactRange] : [],
+    items: [],
+    selected: 0,
+    width: 80,
+  });
+  const plain = rendered.lines.map((line) => stripAnsi(line)).join("\n");
+
+  assert.match(plain, /\[Pasted Content \d+ chars\]/);
+  assert.doesNotMatch(plain, /first line/);
+  assert.doesNotMatch(plain, /last line/);
+  const inputLine = plain.split("\n").find((line) => line.includes("[Pasted Content")) ?? "";
+  assert.ok(rendered.cursorColumn > inputLine.indexOf("[Pasted Content"));
+});
+
+test("composer compacts pasted file and image paths", () => {
+  const image = insertComposerPaste("", 0, "/Users/demo/Desktop/screenshot.png");
+  const files = insertComposerPaste("", 0, "/Users/demo/a.pdf\n/Users/demo/b.txt");
+
+  assert.equal(image.compactRange?.label, "[Pasted Image path]");
+  assert.equal(files.compactRange?.label, "[Pasted Files 2 paths]");
+
+  const rendered = renderComposerSurface({
+    buffer: files.buffer,
+    cursor: files.cursor,
+    compactRanges: files.compactRange ? [files.compactRange] : [],
+    items: [],
+    selected: 0,
+    width: 72,
+  });
+  const plain = rendered.lines.map((line) => stripAnsi(line)).join("\n");
+  assert.match(plain, /\[Pasted Files 2 paths\]/);
+  assert.doesNotMatch(plain, /a\.pdf/);
+});
+
+test("composer recognizes dragged path lists with spaces, escaping, and file URLs", () => {
+  const images = insertComposerPaste("", 0, "/Users/demo/a.png /Users/demo/b.jpg ");
+  const escaped = insertComposerPaste("", 0, "/Users/demo/My\\ File.pdf");
+  const urls = insertComposerPaste("", 0, "file:///Users/demo/a.pdf file:///Users/demo/b.txt");
+
+  assert.equal(images.compactRange?.label, "[Pasted Images 2 paths]");
+  assert.equal(escaped.compactRange?.label, "[Pasted File path]");
+  assert.equal(urls.compactRange?.label, "[Pasted Files 2 paths]");
+  assert.equal(isComposerPathPaste("/Users/demo/My\\ File.pdf"), true);
+  assert.equal(isComposerPathPaste("/not-a-command"), false);
+});
+
+test("composer plain paste fallback does not treat Enter as pasted content", () => {
+  assert.equal(composerPlainPasteFallback("\r"), undefined);
+  assert.equal(composerPlainPasteFallback("\n"), undefined);
+  assert.equal(composerPlainPasteFallback("short"), undefined);
+  assert.equal(composerPlainPasteFallback("first\nsecond"), "first\nsecond");
+  assert.equal(composerPlainPasteFallback("/Users/demo/a.png /Users/demo/b.jpg"), "/Users/demo/a.png /Users/demo/b.jpg");
+});
+
+test("composer compact paste ranges can be removed as a single unit", () => {
+  const pasted = insertComposerPaste("", 0, "alpha\nbeta\ngamma");
+  const range = pasted.compactRange;
+  assert.ok(range);
+  assert.deepEqual(compactRangeBeforeCursor([range], pasted.cursor), range);
+
+  const nextBuffer = `${pasted.buffer.slice(0, range.start)}${pasted.buffer.slice(range.end)}`;
+  const ranges = adjustComposerCompactRanges([range], range.start, range.end, 0);
+  assert.equal(nextBuffer, "");
+  assert.deepEqual(ranges, []);
 });
 
 test("empty composer anchors the terminal cursor before placeholder text", () => {

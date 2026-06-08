@@ -9,6 +9,7 @@ export interface ComposerSuggestion {
 export interface ComposerRenderOptions {
   buffer: string;
   cursor: number;
+  compactRanges?: ComposerCompactRange[];
   items: ComposerSuggestion[];
   selected: number;
   width: number;
@@ -46,6 +47,12 @@ export interface ComposerPanel {
   cursorColumn?: number;
 }
 
+export interface ComposerCompactRange {
+  start: number;
+  end: number;
+  label: string;
+}
+
 interface LineSegment {
   text: string;
   start: number;
@@ -67,6 +74,21 @@ export function insertComposerText(buffer: string, cursor: number, text: string)
 
 export function insertComposerNewline(buffer: string, cursor: number): { buffer: string; cursor: number } {
   return insertComposerText(buffer, cursor, "\n");
+}
+
+export function insertComposerPaste(buffer: string, cursor: number, text: string): { buffer: string; cursor: number; compactRange?: ComposerCompactRange } {
+  const safeCursor = clampCursor(buffer, cursor);
+  const next = insertComposerText(buffer, safeCursor, text);
+  return {
+    ...next,
+    compactRange: shouldCompactPastedText(text)
+      ? {
+          start: safeCursor,
+          end: safeCursor + text.length,
+          label: pastedContentLabel(text),
+        }
+      : undefined,
+  };
 }
 
 export function backspaceComposer(buffer: string, cursor: number): { buffer: string; cursor: number } {
@@ -101,6 +123,56 @@ export function moveComposerCursorEnd(buffer: string, cursor: number): number {
   return segment.end;
 }
 
+export function adjustComposerCompactRanges(
+  ranges: ComposerCompactRange[] | undefined,
+  editStart: number,
+  editEnd: number,
+  insertedLength: number,
+): ComposerCompactRange[] {
+  if (!ranges?.length) {
+    return [];
+  }
+  const start = Math.max(0, Math.min(editStart, editEnd));
+  const end = Math.max(start, editEnd);
+  const delta = insertedLength - (end - start);
+  return ranges.flatMap((range) => {
+    if (range.end <= start) {
+      return [range];
+    }
+    if (range.start >= end) {
+      return [{ ...range, start: range.start + delta, end: range.end + delta }];
+    }
+    return [];
+  });
+}
+
+export function compactRangeBeforeCursor(ranges: ComposerCompactRange[] | undefined, cursor: number): ComposerCompactRange | undefined {
+  return ranges?.find((range) => range.end === cursor);
+}
+
+export function isComposerPathPaste(text: string): boolean {
+  return pastedPathEntries(text.trim()).length > 0;
+}
+
+export function composerPlainPasteFallback(value: string): string | undefined {
+  if (!value || value.includes("\u001b") || value.includes("\u0003") || value.includes("\u007f")) {
+    return undefined;
+  }
+  const normalized = normalizeComposerPastedInput(value);
+  if (normalized === "\n") {
+    return undefined;
+  }
+  const hasPastedText = normalized.replace(/\n/g, "").trim().length > 0;
+  if (value.length >= 80 || (/[\r\n]/.test(value) && hasPastedText) || isComposerPathPaste(value)) {
+    return value;
+  }
+  return undefined;
+}
+
+export function normalizeComposerPastedInput(value: string): string {
+  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
 export function clampCursor(buffer: string, cursor: number): number {
   if (!Number.isFinite(cursor)) {
     return buffer.length;
@@ -120,6 +192,7 @@ export function clampCursor(buffer: string, cursor: number): number {
 export function renderComposerSurface(options: ComposerRenderOptions): ComposerRenderResult {
   const width = Math.max(20, options.width);
   const contentWidth = Math.max(1, width - 4);
+  const display = compactComposerDisplay(options.buffer, options.cursor, options.compactRanges);
   const lines: string[] = [];
   let cursorLine = 0;
   let cursorColumn = 2;
@@ -162,8 +235,8 @@ export function renderComposerSurface(options: ComposerRenderOptions): ComposerR
     cursorLine = inputStartLine + 1;
     cursorColumn = 2;
   } else {
-    const cursor = clampCursor(options.buffer, options.cursor);
-    const segments = splitLines(options.buffer);
+    const cursor = clampCursor(display.buffer, display.cursor);
+    const segments = splitLines(display.buffer);
     const active = segmentForCursor(segments, cursor);
     for (const [index, segment] of segments.entries()) {
       const prefix = index === 0 ? "› " : "  ";
@@ -172,10 +245,10 @@ export function renderComposerSurface(options: ComposerRenderOptions): ComposerR
         const view = lineViewport(segment.text, localCursor, contentWidth);
         cursorLine = inputStartLine + 1 + index;
         cursorColumn = visibleWidth(prefix) + view.cursorColumn;
-        lines.push(bgLine(236, `${prefix}${view.text}`, width));
+        lines.push(bgLine(236, `${prefix}${styleCompactPasteLabels(view.text)}`, width));
       } else {
         const view = lineViewport(segment.text, 0, contentWidth);
-        lines.push(bgLine(236, `${prefix}${view.text}`, width));
+        lines.push(bgLine(236, `${prefix}${styleCompactPasteLabels(view.text)}`, width));
       }
     }
   }
@@ -213,7 +286,8 @@ export function renderWelcomeComposerSurface(options: WelcomeComposerRenderOptio
   const left = Math.max(0, Math.floor((width - boxWidth) / 2));
   const contentWidth = Math.max(1, boxWidth - 5);
   const mark = renderWelcomeMark();
-  const inputSegments = options.buffer.length === 0 ? splitLines("") : splitLines(options.buffer);
+  const display = compactComposerDisplay(options.buffer, options.cursor, options.compactRanges);
+  const inputSegments = display.buffer.length === 0 ? splitLines("") : splitLines(display.buffer);
   const extraRows = options.items.length ? Math.min(5, options.items.length) : 1;
   const minInputRowsBeforeMeta = 3;
   const inputBoxRows = Math.max(5, 1 + inputSegments.length + 2);
@@ -242,7 +316,7 @@ export function renderWelcomeComposerSurface(options: WelcomeComposerRenderOptio
     const placeholder = fg256(244, options.placeholder ?? "Ask Inferoa");
     pushInputLine(`  ${placeholder}`);
   } else {
-    const cursor = clampCursor(options.buffer, options.cursor);
+    const cursor = clampCursor(display.buffer, display.cursor);
     const active = segmentForCursor(inputSegments, cursor);
     for (const [index, segment] of inputSegments.entries()) {
       const prefix = index === 0 ? "  " : "  ";
@@ -251,10 +325,10 @@ export function renderWelcomeComposerSurface(options: WelcomeComposerRenderOptio
         const view = lineViewport(segment.text, localCursor, contentWidth);
         cursorLine = inputStartLine + 1 + index;
         cursorColumn = left + 1 + visibleWidth(prefix) + view.cursorColumn;
-        pushInputLine(`${prefix}${view.text}`);
+        pushInputLine(`${prefix}${styleCompactPasteLabels(view.text)}`);
       } else {
         const view = lineViewport(segment.text, 0, contentWidth);
-        pushInputLine(`${prefix}${view.text}`);
+        pushInputLine(`${prefix}${styleCompactPasteLabels(view.text)}`);
       }
     }
   }
@@ -400,6 +474,169 @@ function metadataSeparator(): string {
 
 function stripAnsiLocal(text: string): string {
   return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").trim();
+}
+
+function compactComposerDisplay(
+  buffer: string,
+  cursor: number,
+  ranges: ComposerCompactRange[] | undefined,
+): { buffer: string; cursor: number } {
+  const usableRanges = normalizeCompactRanges(buffer, ranges);
+  if (!usableRanges.length) {
+    return { buffer, cursor };
+  }
+  const safeCursor = clampCursor(buffer, cursor);
+  let rawIndex = 0;
+  let display = "";
+  let displayCursor: number | undefined;
+  const mapCursorBefore = (position: number) => {
+    if (displayCursor === undefined && safeCursor <= position) {
+      displayCursor = display.length + Math.max(0, safeCursor - rawIndex);
+    }
+  };
+
+  for (const range of usableRanges) {
+    mapCursorBefore(range.start);
+    display += buffer.slice(rawIndex, range.start);
+    if (displayCursor === undefined && safeCursor >= range.start && safeCursor <= range.end) {
+      displayCursor = display.length + range.label.length;
+    }
+    display += range.label;
+    rawIndex = range.end;
+  }
+  mapCursorBefore(buffer.length);
+  display += buffer.slice(rawIndex);
+
+  return {
+    buffer: display,
+    cursor: displayCursor ?? display.length,
+  };
+}
+
+function normalizeCompactRanges(buffer: string, ranges: ComposerCompactRange[] | undefined): ComposerCompactRange[] {
+  if (!ranges?.length) {
+    return [];
+  }
+  const out: ComposerCompactRange[] = [];
+  let lastEnd = 0;
+  for (const range of [...ranges].sort((a, b) => a.start - b.start)) {
+    const start = clampCursor(buffer, range.start);
+    const end = clampCursor(buffer, range.end);
+    if (start < lastEnd || end <= start || !range.label) {
+      continue;
+    }
+    out.push({ start, end, label: range.label });
+    lastEnd = end;
+  }
+  return out;
+}
+
+function styleCompactPasteLabels(text: string): string {
+  return text.replace(/\[Pasted (?:Content|Image|Images|File|Files) [^\]]+\]/g, (match) => fg256(87, match));
+}
+
+function shouldCompactPastedText(text: string): boolean {
+  const clean = text.trim();
+  return text.length >= 180 || /[\r\n]/.test(text) || pastedPathKind(clean) !== undefined;
+}
+
+function pastedContentLabel(text: string): string {
+  const clean = text.trim();
+  const paths = pastedPathEntries(clean);
+  const imageCount = paths.filter((item) => isImagePath(item)).length;
+  if (paths.length > 0 && imageCount === paths.length) {
+    return paths.length === 1 ? "[Pasted Image path]" : `[Pasted Images ${paths.length} paths]`;
+  }
+  if (paths.length > 0) {
+    return paths.length === 1 ? "[Pasted File path]" : `[Pasted Files ${paths.length} paths]`;
+  }
+  return `[Pasted Content ${[...text].length} chars]`;
+}
+
+function pastedPathKind(text: string): "image" | "file" | undefined {
+  const paths = pastedPathEntries(text);
+  if (!paths.length) {
+    return undefined;
+  }
+  return paths.every((item) => isImagePath(item)) ? "image" : "file";
+}
+
+function pastedPathEntries(text: string): string[] {
+  if (!text || text.length > 8192) {
+    return [];
+  }
+  const entries = text.includes("\n") ? text.split(/\r?\n/).flatMap(splitPathList) : splitPathList(text);
+  if (!entries.length || entries.length > 32) {
+    return [];
+  }
+  return entries.every((line) => looksLikePath(line)) ? entries : [];
+}
+
+function splitPathList(text: string): string[] {
+  const entries: string[] = [];
+  let current = "";
+  let quote: "'" | "\"" | undefined;
+  for (let index = 0; index < text.length;) {
+    const char = text[index] ?? "";
+    if (!char) {
+      break;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = undefined;
+      } else if (char === "\\" && index + 1 < text.length) {
+        index += 1;
+        current += text[index] ?? "";
+      } else {
+        current += char;
+      }
+      index += 1;
+      continue;
+    }
+    if (char === "'" || char === "\"") {
+      quote = char;
+      index += 1;
+      continue;
+    }
+    if (char === "\\" && index + 1 < text.length) {
+      index += 1;
+      current += text[index] ?? "";
+      index += 1;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      pushPathEntry(entries, current);
+      current = "";
+      index += 1;
+      continue;
+    }
+    current += char;
+    index += 1;
+  }
+  pushPathEntry(entries, current);
+  return entries;
+}
+
+function pushPathEntry(entries: string[], value: string): void {
+  const clean = value.trim();
+  if (clean) {
+    entries.push(clean);
+  }
+}
+
+function looksLikePath(text: string): boolean {
+  if (/^(?:file:\/\/|~\/|\.\.?\/)[^\0]+/.test(text)) {
+    return true;
+  }
+  if (!text.startsWith("/") || text === "/") {
+    return false;
+  }
+  const tail = text.slice(1);
+  return tail.includes("/") || /\.[A-Za-z0-9]{1,12}(?:[?#].*)?$/.test(tail);
+}
+
+function isImagePath(text: string): boolean {
+  return /\.(?:png|jpe?g|gif|webp|bmp|tiff?|heic|heif|avif|svg)(?:[?#].*)?$/i.test(text);
 }
 
 function splitLines(buffer: string): LineSegment[] {

@@ -59,14 +59,19 @@ import { MarkdownStreamRenderer } from "./markdown.js";
 import { renderHomeFrame } from "./home.js";
 import {
   backspaceComposer,
-  insertComposerNewline,
+  adjustComposerCompactRanges,
+  compactRangeBeforeCursor,
+  composerPlainPasteFallback,
+  insertComposerPaste,
   insertComposerText,
   moveComposerCursorEnd,
   moveComposerCursorHome,
   moveComposerCursorLeft,
   moveComposerCursorRight,
   type ComposerPanel,
+  type ComposerCompactRange,
   compactModelLabel,
+  normalizeComposerPastedInput,
   renderComposerActivityLine,
   renderComposerSurface,
   renderWelcomeComposerSurface,
@@ -142,6 +147,11 @@ interface ReadComposerOptions {
 
 const CLEAR_TO_END = "\x1b[J";
 const CLEAR_LINE = "\x1b[2K";
+const BRACKETED_PASTE_ENABLE = "\x1b[?2004h";
+const BRACKETED_PASTE_DISABLE = "\x1b[?2004l";
+const BRACKETED_PASTE_START = "\x1b[200~";
+const BRACKETED_PASTE_END = "\x1b[201~";
+const PASTE_TOKEN_PREFIX = "\u{e000}paste:";
 const SETUP_TOTAL_STEPS = 6;
 
 export const TUI_OMNI_SETUP_CAPABILITIES: Array<{
@@ -396,6 +406,7 @@ export class TuiApp {
     const skills = await new SkillRegistry(this.app.workspace, this.app.config).discover().catch(() => [] as SkillDescriptor[]);
     let buffer = options.initialBuffer ?? "";
     let cursor = buffer.length;
+    let compactRanges: ComposerCompactRange[] = [];
     let selected = 0;
     let selectionTouched = false;
     let renderedLines = 0;
@@ -408,8 +419,9 @@ export class TuiApp {
     let renderedCodeIntelligenceWidth: number | undefined;
     let forceFullRedraw = false;
     let eraseAfterResize = false;
+    const pasteState: TerminalPasteState = {};
     this.#rl?.pause();
-    stdout.write(ansi.showCursor);
+    stdout.write(`${BRACKETED_PASTE_ENABLE}${ansi.showCursor}`);
 
     return await new Promise((resolve) => {
       const resetRenderedState = () => {
@@ -512,7 +524,7 @@ export class TuiApp {
         if (this.#activeWelcomeCodeIntelligenceRedraw === redrawWelcomeCodeIntelligence) {
           this.#activeWelcomeCodeIntelligenceRedraw = undefined;
         }
-        stdout.write(ansi.hideCursor);
+        stdout.write(`${BRACKETED_PASTE_DISABLE}${ansi.hideCursor}`);
         this.resumeReadline();
       };
       const finish = (text: string) => {
@@ -540,6 +552,7 @@ export class TuiApp {
           ? renderWelcomeComposerSurface({
               buffer,
               cursor,
+              compactRanges,
               items,
               selected,
               width,
@@ -557,6 +570,7 @@ export class TuiApp {
           : renderComposerSurface({
               buffer,
               cursor,
+              compactRanges,
               items,
               selected,
               width,
@@ -600,16 +614,49 @@ export class TuiApp {
         }
         buffer = item.value;
         cursor = buffer.length;
+        compactRanges = [];
         selected = 0;
         selectionTouched = false;
         render();
         return true;
       };
+      const insertText = (text: string) => {
+        const safeCursor = cursor;
+        const next = insertComposerText(buffer, cursor, text);
+        buffer = next.buffer;
+        cursor = next.cursor;
+        compactRanges = adjustComposerCompactRanges(compactRanges, safeCursor, safeCursor, text.length);
+        selected = 0;
+        selectionTouched = false;
+        render();
+      };
+      const insertPaste = (text: string) => {
+        const safeCursor = cursor;
+        const next = insertComposerPaste(buffer, cursor, normalizeComposerPastedInput(text));
+        buffer = next.buffer;
+        cursor = next.cursor;
+        compactRanges = adjustComposerCompactRanges(compactRanges, safeCursor, safeCursor, next.cursor - safeCursor);
+        if (next.compactRange) {
+          compactRanges.push(next.compactRange);
+        }
+        selected = 0;
+        selectionTouched = false;
+        render();
+      };
+      const deleteRange = (start: number, end: number) => {
+        buffer = `${buffer.slice(0, start)}${buffer.slice(end)}`;
+        cursor = start;
+        compactRanges = adjustComposerCompactRanges(compactRanges, start, end, 0);
+        selected = 0;
+        selectionTouched = false;
+        render();
+      };
       const submit = () => {
         const items = composerItems();
         const item = items[selected];
         const trimmed = buffer.trim();
-        if (!trimmed) {
+        const prompt = compactRanges.length ? buffer : trimmed;
+        if (!prompt.trim()) {
           render();
           return;
         }
@@ -621,21 +668,31 @@ export class TuiApp {
           finish(item.value);
           return;
         }
-        finish(trimmed);
+        finish(prompt);
       };
       const onData = (chunk: Buffer) => {
         if (this.#inputModalActive) {
           return;
         }
+        const rawInput = chunk.toString("utf8");
+        const pastedFallback = composerPlainPasteFallback(rawInput);
+        if (pastedFallback !== undefined) {
+          insertPaste(pastedFallback);
+          return;
+        }
         let done = false;
-        for (const key of terminalInputTokens(chunk.toString("utf8"))) {
-          if (key === "\u0003") {
+        for (const key of terminalInputTokens(rawInput, pasteState)) {
+          const pasted = pasteTokenContent(key);
+          if (pasted !== undefined) {
+            insertPaste(pasted);
+          } else if (key === "\u0003") {
             finish("/exit");
             done = true;
           } else if (key === "\u001b") {
             if (buffer) {
               buffer = "";
               cursor = 0;
+              compactRanges = [];
               selected = 0;
               selectionTouched = false;
               render();
@@ -676,6 +733,7 @@ export class TuiApp {
             if (subcommandRoot && !buffer.trim().includes(" ")) {
               buffer = `/${subcommandRoot} `;
               cursor = buffer.length;
+              compactRanges = [];
               selected = 0;
               selectionTouched = false;
               render();
@@ -683,12 +741,7 @@ export class TuiApp {
               completeSelection();
             }
           } else if (key === "shift-enter") {
-            const next = insertComposerNewline(buffer, cursor);
-            buffer = next.buffer;
-            cursor = next.cursor;
-            selected = 0;
-            selectionTouched = false;
-            render();
+            insertText("\n");
           } else if (key === "\r" || key === "\n") {
             submit();
             done = true;
@@ -696,19 +749,21 @@ export class TuiApp {
             finish("/tools expand");
             done = true;
           } else if (key === "\u007f") {
-            const next = backspaceComposer(buffer, cursor);
-            buffer = next.buffer;
-            cursor = next.cursor;
-            selected = 0;
-            selectionTouched = false;
-            render();
+            const compactRange = compactRangeBeforeCursor(compactRanges, cursor);
+            if (compactRange) {
+              deleteRange(compactRange.start, compactRange.end);
+            } else {
+              const oldCursor = cursor;
+              const next = backspaceComposer(buffer, cursor);
+              buffer = next.buffer;
+              cursor = next.cursor;
+              compactRanges = adjustComposerCompactRanges(compactRanges, cursor, oldCursor, 0);
+              selected = 0;
+              selectionTouched = false;
+              render();
+            }
           } else if (isPrintableInput(key)) {
-            const next = insertComposerText(buffer, cursor, printableText(key));
-            buffer = next.buffer;
-            cursor = next.cursor;
-            selected = 0;
-            selectionTouched = false;
-            render();
+            insertText(printableText(key));
           }
           if (done) {
             return;
@@ -3987,7 +4042,11 @@ function printableText(value: string): string {
   }).join("");
 }
 
-function terminalInputTokens(value: string): string[] {
+interface TerminalPasteState {
+  pending?: string;
+}
+
+function terminalInputTokens(value: string, pasteState?: TerminalPasteState): string[] {
   const tokens: string[] = [];
   const shiftEnterSequences = ["\u001b[13;2u", "\u001b[13;2~", "\u001b[27;2;13~"];
   const knownSequences = [
@@ -4001,7 +4060,31 @@ function terminalInputTokens(value: string): string[] {
     "\u001b[4~",
   ];
   for (let index = 0; index < value.length;) {
+    if (pasteState?.pending !== undefined) {
+      const end = value.indexOf(BRACKETED_PASTE_END, index);
+      if (end < 0) {
+        pasteState.pending += value.slice(index);
+        break;
+      }
+      tokens.push(pasteToken(pasteState.pending + value.slice(index, end)));
+      pasteState.pending = undefined;
+      index = end + BRACKETED_PASTE_END.length;
+      continue;
+    }
     const rest = value.slice(index);
+    if (rest.startsWith(BRACKETED_PASTE_START)) {
+      const contentStart = index + BRACKETED_PASTE_START.length;
+      const end = value.indexOf(BRACKETED_PASTE_END, contentStart);
+      if (end < 0) {
+        if (pasteState) {
+          pasteState.pending = value.slice(contentStart);
+        }
+        break;
+      }
+      tokens.push(pasteToken(value.slice(contentStart, end)));
+      index = end + BRACKETED_PASTE_END.length;
+      continue;
+    }
     const shiftEnter = shiftEnterSequences.find((sequence) => rest.startsWith(sequence));
     if (shiftEnter) {
       tokens.push("shift-enter");
@@ -4030,6 +4113,14 @@ function terminalInputTokens(value: string): string[] {
     index += char.length;
   }
   return tokens;
+}
+
+function pasteToken(content: string): string {
+  return `${PASTE_TOKEN_PREFIX}${content}`;
+}
+
+function pasteTokenContent(token: string): string | undefined {
+  return token.startsWith(PASTE_TOKEN_PREFIX) ? token.slice(PASTE_TOKEN_PREFIX.length) : undefined;
 }
 
 function stripFrontmatter(body: string): string {
