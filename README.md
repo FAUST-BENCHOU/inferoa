@@ -178,8 +178,12 @@ OpenAI-compatible vLLM endpoints first.
 
 Publishing is automated from `main`: after `package.json` version is bumped,
 the GitHub workflow builds, tests, packs, and publishes `inferoa@latest` to npm.
-Configure npm Trusted Publishing for `agentic-in/inferoa` and
-`.github/workflows/npm-publish.yml` before the first release.
+For the first release, either add an npm automation token as the `NPM_TOKEN`
+repository secret or configure npm Trusted Publishing for package `inferoa`
+with owner `agentic-in`, repository `inferoa`, workflow
+`.github/workflows/npm-publish.yml`, and branch `main`. After the package exists
+and the trusted publisher is configured, the workflow can publish without a
+long-lived token.
 
 ## Acknowledgements
 
