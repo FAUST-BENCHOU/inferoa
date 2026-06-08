@@ -34,11 +34,12 @@ export function renderRtkSessionLines(events: SessionEvent[], width = terminalWi
     fg256(39, "Recent turns"),
   ];
 
-  for (const event of runEvents.slice(-10).reverse()) {
+  const recent = runEvents.slice(-10);
+  for (const [index, event] of [...recent].reverse().entries()) {
     const rtk = rtkSummary(event.data.rtk);
     const actual = numberField(event.data.tokens);
     const detail = [
-      `run ${event.run_id ?? "unknown"}`,
+      `turn ${recent.length - index}`,
       `tools ${numberField(event.data.tool_calls) || rtk.tool_calls}`,
       `rtk commands ${rtk.rtk_commands}`,
       `saved ${rtk.saved_tokens}`,

@@ -111,6 +111,8 @@ test("RTK session view shows per-turn tool calls, saved tool tokens, and estimat
   assert.match(plain, /RTK tool savings/);
   assert.match(plain, /turns 1 .*tools 3 .*rtk commands 2 .*saved 240/);
   assert.match(plain, /actual tokens 200 .*without RTK 440/);
+  assert.doesNotMatch(plain, /run run/);
+  assert.match(plain, /turn 1 .*tools 3 .*rtk commands 2 .*saved 240/);
 });
 
 test("run_command foreground uses RTK rewrite and records tool savings", async () => {
