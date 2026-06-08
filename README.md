@@ -78,8 +78,9 @@ Inferoa makes those surfaces first-class:
 
 - **Prefix cache is protected**, not merely reported after the turn.
 - **Goals, plans, and autoresearch** are native long-horizon modes.
-- **Context is optimized** through CodeGraph, RTK, and built-in harnesses that
-  reduce token waste while improving task accuracy.
+- **Context is optimized** through [CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph),
+  [RTK](https://github.com/rtk-ai/rtk), and built-in harnesses that reduce token
+  waste while improving task accuracy.
 - **Routing is part of the agent design**, so not every turn has to use the
   same frontier model path.
 - **Serving and endpoint signals** feed back into the loop instead of living in
@@ -87,29 +88,18 @@ Inferoa makes those surfaces first-class:
 - **Multimodal work** stays inside the same session contract instead of
   becoming disconnected side calls.
 
-## Why Coding First
-
-Inferoa starts with coding agents because coding is one of the most demanding
-long-horizon domains: large repositories, changing goals, tool failures,
-context pressure, repeated model calls, and proof through tests all show up in
-one workflow.
-
-That makes coding a useful path toward stronger agent systems. It forces the
-harness to co-optimize context selection, prefix-cache stability, routing, and
-verification under real pressure.
-
-## Across the Inference Stack
+## Optimized with Inference Stack
 
 Inferoa is built on top of the vLLM Ecosystem and extends across the inference
 stack:
 
 | Layer | Substrate | Inferoa role | Optimization target |
 | --- | --- | --- | --- |
-| Agent Harness | Inferoa | Goals, plans, autoresearch, sessions, tools, recovery, verification | Keep long-horizon work coherent and resumable |
-| Context Optimization | CodeGraph, RTK... | Select repo evidence, symbols, summaries, resources, and tool results | Spend fewer tokens and improve coding accuracy |
-| Intelligent Routing | vLLM Semantic Router | Choose model paths by cost, safety, privacy, capability, and session pressure | Avoid using one expensive path for every turn |
-| Serving | vLLM Engine | Use high-performance OpenAI-compatible inference and endpoint signals | Protect prefix cache stability across the session |
-| Multimodal | vLLM Omni | Bring image, video, and audio understanding/generation into the same loop | Keep multimodal tasks durable and inspectable |
+| Agent Harness | [Inferoa](https://github.com/agentic-in/inferoa) | Goals, plans, autoresearch, sessions, tools, recovery, verification | Keep long-horizon work coherent and resumable |
+| Context Optimization | [CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph), [RTK](https://github.com/rtk-ai/rtk)... | Select repo evidence, symbols, summaries, resources, and tool results | Spend fewer tokens and improve coding accuracy |
+| Intelligent Routing | [vLLM Semantic Router](https://github.com/vllm-project/semantic-router) | Choose model paths by cost, safety, privacy, capability, and session pressure | Avoid using one expensive path for every turn |
+| Serving | [vLLM Engine](https://github.com/vllm-project/vllm) | Use high-performance OpenAI-compatible inference and endpoint signals | Protect prefix cache stability across the session |
+| Multimodal | [vLLM Omni](https://github.com/vllm-project/vllm-omni) | Bring image, video, and audio understanding/generation into the same loop | Keep multimodal tasks durable and inspectable |
 
 The product shape is:
 
@@ -127,29 +117,20 @@ optimized agent harness.
   not prompt templates.
 - **Prefix-cache discipline**: stable prompt epochs, deterministic tool schemas,
   bounded context sections, and cache reports protect reusable prefixes.
-- **Context optimization**: CodeGraph, RTK, and built-in coding harnesses reduce
+- **Context optimization**: [CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph),
+  [RTK](https://github.com/rtk-ai/rtk), and built-in coding harnesses reduce
   token consumption while preserving the evidence the model needs.
-- **Inference policy**: routing can respond to cost, safety, privacy,
+- **Intelligent routing**: model paths can respond to cost, safety, privacy,
   capability, and session pressure.
 - **Serving feedback**: usage, cache, model, endpoint, and request signals are
   visible enough to influence the next agent action.
 - **Durable multimodal loop**: image, video, and audio generation or
   understanding are part of the same session history and artifact model.
 
-## Quickstart
+## Installation
 
 ```bash
 npm install -g inferoa
-inferoa setup
-inferoa
-```
-
-For source development:
-
-```bash
-npm install
-npm run build
-make dev-bin
 inferoa setup
 inferoa
 ```
@@ -163,28 +144,6 @@ inferoa --print "Inspect this repository and summarize the test entrypoints."
 Inferoa stores local state under `~/.inferoa/`. Model endpoint credentials are
 stored through the local vault; config files keep references rather than raw
 secrets.
-
-## Development
-
-```bash
-npm test
-make dev-bin
-make docs-preview
-make docs-build
-```
-
-The CLI binary is `inferoa`. The implementation is TypeScript/Node and targets
-OpenAI-compatible vLLM endpoints first.
-
-Publishing is automated from `main`: after `package.json` version is bumped,
-the GitHub workflow builds, tests, packs, and publishes `inferoa@latest` to npm.
-For the first release, either add an npm automation token as the `NPM_TOKEN`
-repository secret or configure npm Trusted Publishing for package `inferoa`
-with owner `agentic-in`, repository `inferoa`, and workflow filename
-`npm-publish.yml`. The workflow file lives at
-`.github/workflows/npm-publish.yml`; npm asks for the filename only. After the
-package exists and the trusted publisher is configured, the workflow can publish
-without a long-lived token.
 
 ## Acknowledgements
 

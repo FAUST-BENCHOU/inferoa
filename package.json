@@ -2,6 +2,7 @@
   "name": "inferoa",
   "version": "0.1.0",
   "description": "Inference-optimized agent for long-horizon tasks in the vLLM ecosystem.",
+  "license": "Apache-2.0",
   "type": "module",
   "bin": {
     "inferoa": "./dist/src/cli.js"
