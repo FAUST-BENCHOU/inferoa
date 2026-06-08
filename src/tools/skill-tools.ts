@@ -1,0 +1,134 @@
+import { promises as fs } from "node:fs";
+import type { JsonObject, ToolResult } from "../types.js";
+import { saveUserConfig } from "../config/config.js";
+import { SkillRegistry } from "../skills/registry.js";
+import { clampLimit, fail, ok } from "../util/limit.js";
+import type { ToolExecutionContext } from "./context.js";
+
+export async function skillList(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
+  const query = typeof args.query === "string" ? args.query.toLowerCase() : "";
+  const includeDisabled = args.include_disabled !== false;
+  const limit = clampLimit(args.limit, 50, 500);
+  const enabled = new Set(context.config.skills.enabled);
+  const skills = await new SkillRegistry(context.workspace, context.config).discover();
+  const filtered = skills
+    .filter((skill) => includeDisabled || enabled.has(skill.id) || enabled.has(skill.name))
+    .filter((skill) => !query || `${skill.id} ${skill.name} ${skill.description}`.toLowerCase().includes(query))
+    .slice(0, limit)
+    .map((skill) => ({
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      trust: skill.trust,
+      source: skill.source,
+      enabled: enabled.has(skill.id) || enabled.has(skill.name),
+      required_tools: skill.required_tools,
+      activation: skill.activation,
+    }));
+  return ok(`Listed ${filtered.length} skills`, { skills: filtered });
+}
+
+export async function skillRead(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
+  const id = String(args.id ?? "");
+  if (!id) {
+    return fail("skill_id_required", "skill_read requires id");
+  }
+  const skills = await new SkillRegistry(context.workspace, context.config).discover();
+  const skill = skills.find((item) => item.id === id || item.name === id);
+  if (!skill?.path) {
+    return fail("skill_not_found", `Skill not found: ${id}`);
+  }
+  const body = await fs.readFile(skill.path, "utf8");
+  const lines = body.split(/\r?\n/);
+  const lineCount = clampLimit(args.line_count, 240, 2000);
+  const content = lines.slice(0, lineCount).map((line, index) => `${index + 1}: ${line}`).join("\n");
+  const resource =
+    lines.length > lineCount || body.length > 24_000
+      ? context.store.putResource(context.session_id, "skill.body", body, {
+          id: skill.id,
+          name: skill.name,
+          source: skill.source,
+        }).uri
+      : undefined;
+  return {
+    ...ok(`Read skill ${skill.id}`, {
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      trust: skill.trust,
+      source: skill.source,
+      content,
+      total_lines: lines.length,
+    }),
+    resource_uri: resource,
+  };
+}
+
+export async function skillEnable(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
+  const requested = parseSkillIds(args);
+  if (!requested.length) {
+    return fail("skill_ids_required", "skill_enable requires ids");
+  }
+  const skills = await new SkillRegistry(context.workspace, context.config).discover();
+  const resolved = resolveSkills(requested, skills);
+  if (resolved.missing.length) {
+    return fail("skill_not_found", `Skill not found: ${resolved.missing.join(", ")}`);
+  }
+  const enabled = new Set(context.config.skills.enabled);
+  for (const skill of resolved.ids) {
+    enabled.add(skill);
+  }
+  context.config.skills.enabled = [...enabled].sort();
+  const target = await saveUserConfig(context.config);
+  return ok(`Enabled ${resolved.ids.length} skills`, {
+    enabled: context.config.skills.enabled,
+    config_path: target,
+  });
+}
+
+export async function skillDisable(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
+  const requested = parseSkillIds(args);
+  if (!requested.length) {
+    return fail("skill_ids_required", "skill_disable requires ids");
+  }
+  const skills = await new SkillRegistry(context.workspace, context.config).discover();
+  const resolved = resolveSkills(requested, skills, true);
+  const enabled = new Set(context.config.skills.enabled);
+  for (const id of resolved.ids) {
+    enabled.delete(id);
+  }
+  context.config.skills.enabled = [...enabled].sort();
+  const target = await saveUserConfig(context.config);
+  return ok(`Disabled ${resolved.ids.length} skills`, {
+    disabled: resolved.ids,
+    missing: resolved.missing,
+    enabled: context.config.skills.enabled,
+    config_path: target,
+  });
+}
+
+function parseSkillIds(args: JsonObject): string[] {
+  const ids = Array.isArray(args.ids) ? args.ids : [];
+  return ids.map((id) => (typeof id === "string" ? id.trim() : "")).filter(Boolean);
+}
+
+function resolveSkills(
+  ids: string[],
+  skills: Awaited<ReturnType<SkillRegistry["discover"]>>,
+  allowEnabledEntries = false,
+): { ids: string[]; missing: string[] } {
+  const byId = new Map(skills.flatMap((skill) => [[skill.id, skill.id], [skill.name, skill.id]]));
+  const resolved: string[] = [];
+  const missing: string[] = [];
+  for (const id of ids) {
+    const match = byId.get(id);
+    if (match) {
+      resolved.push(match);
+    } else if (allowEnabledEntries) {
+      resolved.push(id);
+    } else {
+      missing.push(id);
+    }
+  }
+  return { ids: [...new Set(resolved)], missing };
+}

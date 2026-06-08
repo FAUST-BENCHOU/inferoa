@@ -1,0 +1,63 @@
+{
+  "name": "inferoa",
+  "version": "0.1.0",
+  "description": "Inference-optimized agent for long-horizon tasks in the vLLM ecosystem.",
+  "type": "module",
+  "bin": {
+    "inferoa": "./dist/src/cli.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentic-in/inferoa.git"
+  },
+  "homepage": "https://inferoa.agentic-in.ai/",
+  "bugs": {
+    "url": "https://github.com/agentic-in/inferoa/issues"
+  },
+  "keywords": [
+    "agent",
+    "vllm",
+    "inference",
+    "coding-agent",
+    "prefix-cache"
+  ],
+  "files": [
+    "dist",
+    "skills",
+    "README.md",
+    "docs"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "prepack": "npm run build",
+    "site:start": "npm --prefix website run start",
+    "site:build": "npm --prefix website run build",
+    "site:serve": "npm --prefix website run serve",
+    "validate:t0": "npm run build && node dist/src/validation/milestone.js T0",
+    "validate:t1": "npm run build && node dist/src/validation/milestone.js T1",
+    "validate:t2": "npm run build && node dist/src/validation/milestone.js T2",
+    "validate:t3": "npm run build && node dist/src/validation/milestone.js T3",
+    "validate:t4": "npm run build && node dist/src/validation/milestone.js T4",
+    "validate:t5": "npm run build && node dist/src/validation/milestone.js T5",
+    "validate:t6": "npm run build && node dist/src/validation/milestone.js T6",
+    "validate:t7": "npm run build && node dist/src/validation/milestone.js T7",
+    "validate:t8": "npm run build && node dist/src/validation/milestone.js T8",
+    "validate:t9": "npm run build && node dist/src/validation/milestone.js T9",
+    "validate:t10": "npm run build && node dist/src/validation/milestone.js T10",
+    "validate:all": "npm run build && for milestone in T0 T1 T2 T3 T4 T5 T6 T7 T8 T9 T10; do node dist/src/validation/milestone.js $milestone || exit 1; done"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@colbymchenry/codegraph": "0.9.9",
+    "commander": "^14.0.2",
+    "typescript": "^5.9.3",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1"
+  }
+}

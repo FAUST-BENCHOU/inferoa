@@ -1,0 +1,11 @@
+.inferoa/
+.codegraph/
+.claude/
+dist/
+build/
+.docusaurus/
+target/
+node_modules/
+__pycache__/
+.pytest_cache/
+.DS_Store

@@ -1,0 +1,57 @@
+@import url("https://fonts.googleapis.com/css2?family=Silkscreen&family=Space+Grotesk:wght@400;500;600;700&display=swap");
+
+:root {
+  --ifm-color-primary: #0596c7;
+  --ifm-color-primary-dark: #0788b8;
+  --ifm-color-primary-darker: #077fae;
+  --ifm-color-primary-darkest: #096989;
+  --ifm-color-primary-light: #19a9d8;
+  --ifm-color-primary-lighter: #33b6df;
+  --ifm-color-primary-lightest: #69cce9;
+  --ifm-font-family-base: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ifm-heading-font-weight: 600;
+  --ifm-background-color: #f5f4ef;
+  --ifm-navbar-background-color: rgba(245, 244, 239, 0.86);
+  --ifm-navbar-link-color: #111111;
+  --ifm-navbar-link-hover-color: #0596c7;
+  --ifm-footer-background-color: #111111;
+  --ifm-code-font-size: 92%;
+}
+
+html[data-theme="dark"] {
+  --ifm-background-color: #f5f4ef;
+  --ifm-navbar-background-color: rgba(245, 244, 239, 0.9);
+  --ifm-navbar-link-color: #111111;
+}
+
+.navbar {
+  height: 48px;
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(17, 17, 17, 0.08);
+  box-shadow: none;
+}
+
+.navbar__title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.button {
+  border-radius: 4px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.button--primary {
+  --ifm-button-background-color: #11a8d7;
+  --ifm-button-border-color: #11a8d7;
+  color: #111111;
+}
+
+.button--secondary {
+  --ifm-button-background-color: transparent;
+  --ifm-button-border-color: rgba(17, 17, 17, 0.28);
+  color: #111111;
+}

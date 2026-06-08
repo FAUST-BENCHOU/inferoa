@@ -1,0 +1,236 @@
+export type JsonPrimitive = string | number | boolean | null | undefined;
+export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+export type JsonObject = { [key: string]: JsonValue };
+
+export type EndpointMode = "direct" | "auto";
+export type ProviderKind = "vllm" | "external";
+export type PermissionMode = "ask" | "auto_approve" | "full_access" | "custom";
+
+export interface ModelSetup {
+  mode: EndpointMode;
+  provider?: ProviderKind;
+  profile?: "openai" | "anthropic" | "gemini" | "deepseek" | "openai_compatible";
+  router?: "vllm-sr";
+  base_url?: string;
+  model?: string;
+  api_key_ref?: string;
+  api_key?: string;
+  headers?: Record<string, string>;
+  context_window?: number;
+  cache_salt?: string;
+}
+
+export interface OmniEndpointConfig {
+  base_url?: string;
+  model?: string;
+  api_key_ref?: string;
+  api_key?: string;
+  headers?: Record<string, string>;
+}
+
+export interface OmniConfig {
+  enabled: boolean;
+  endpoints: {
+    vision?: OmniEndpointConfig;
+    image_generation?: OmniEndpointConfig;
+    video_understanding?: OmniEndpointConfig;
+    video_generation?: OmniEndpointConfig;
+    audio_understanding?: OmniEndpointConfig;
+    audio_generation?: OmniEndpointConfig;
+  };
+}
+
+export interface VllmAgentConfig {
+  workspace?: {
+    root?: string;
+  };
+  model_setup: ModelSetup;
+  model_retry?: {
+    max_attempts?: number;
+    initial_delay_ms?: number;
+    max_delay_ms?: number;
+    backoff_factor?: number;
+    jitter_ratio?: number;
+    request_timeout_ms?: number;
+  };
+  omni: OmniConfig;
+  permissions: {
+    mode: PermissionMode;
+    custom?: JsonObject;
+  };
+  context: {
+    compression_threshold: number;
+    context_window: number;
+    protected_recent_loops?: number;
+    force_compression?: boolean;
+    engine?: {
+      provider: "auto" | "codegraph" | "builtin" | "off";
+      startup: "welcome" | "lazy" | "manual";
+      require_ready_before_chat: boolean;
+      watch: boolean;
+    };
+  };
+  skills: {
+    enabled: string[];
+    managed_installs: "ask" | "allow" | "off";
+  };
+  web_search: {
+    provider: "auto" | "brave" | "jina" | "exa" | "perplexity" | "kimi" | "openai" | "anthropic" | "gemini" | "searxng" | "custom" | "off";
+    base_url?: string;
+    api_key_ref?: string;
+    api_key?: string;
+  };
+  daemon: {
+    poll_ms: number;
+  };
+}
+
+export interface WorkspaceIdentity {
+  root: string;
+  id: string;
+  alias: string;
+}
+
+export interface SessionRecord {
+  session_id: string;
+  workspace_id: string;
+  title: string;
+  status: string;
+  current_epoch_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SessionEvent {
+  id?: number;
+  session_id: string;
+  run_id?: string;
+  type: string;
+  data: JsonObject;
+  created_at?: string;
+}
+
+export interface PromptEpochRecord {
+  prompt_epoch_id: string;
+  session_id: string;
+  provider_id: string;
+  model_id: string;
+  cache_salt: string;
+  prompt_layout_hash: string;
+  tool_schema_hash: string;
+  section_hashes: Record<string, string>;
+  reason: string;
+  created_at?: string;
+}
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: JsonObject;
+  permission: "read" | "write" | "shell" | "network" | "external_path" | "destructive";
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: JsonObject;
+}
+
+export interface ToolResult {
+  ok: boolean;
+  summary: string;
+  data?: JsonObject;
+  resource_uri?: string;
+  next_page?: string;
+  error?: {
+    code: string;
+    message: string;
+  };
+}
+
+export interface ClarifyChoice {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+export interface ClarifyRequest {
+  question: string;
+  details?: string;
+  choices: ClarifyChoice[];
+  allow_freeform: boolean;
+  placeholder?: string;
+}
+
+export interface ClarifyResponse {
+  answer: string;
+  choice_id?: string;
+  choice_label?: string;
+  freeform: boolean;
+}
+
+export interface ModelMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | JsonValue[];
+  name?: string;
+  tool_call_id?: string;
+  tool_calls?: ToolCall[];
+}
+
+export interface ModelRequest {
+  session_id: string;
+  run_id: string;
+  mode: EndpointMode;
+  provider_id: string;
+  model: string;
+  messages: ModelMessage[];
+  tools: ToolDefinition[];
+  temperature?: number;
+  max_tokens?: number;
+  request_class?: "interactive" | "tool" | "verification" | "compaction" | "background";
+  prompt_hash?: string;
+  tool_schema_hash?: string;
+  prompt_epoch_id?: string;
+  cache_salt?: string;
+}
+
+export interface ModelUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  cached_prompt_tokens?: number;
+  raw?: JsonObject;
+}
+
+export interface ModelResponse {
+  content: string;
+  tool_calls: ToolCall[];
+  usage?: ModelUsage;
+  request_id?: string;
+  response_id?: string;
+  model?: string;
+  route?: JsonObject;
+  raw?: JsonObject;
+}
+
+export interface EndpointSignalSnapshot {
+  mode: EndpointMode;
+  provider_id: string;
+  base_url?: string;
+  model?: string;
+  models?: JsonObject[];
+  render_available?: boolean;
+  load?: JsonObject;
+  request_id?: string;
+  response_id?: string;
+  request_class?: ModelRequest["request_class"];
+  prompt_hash?: string;
+  tool_schema_hash?: string;
+  prompt_epoch_id?: string;
+  cache_hit_rate?: number;
+  router?: JsonObject;
+  usage?: ModelUsage;
+  cache_metrics?: JsonObject;
+  headers?: Record<string, string>;
+  errors?: string[];
+}
