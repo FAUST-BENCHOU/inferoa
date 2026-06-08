@@ -139,9 +139,17 @@ optimized agent harness.
 ## Quickstart
 
 ```bash
+npm install -g inferoa
+inferoa setup
+inferoa
+```
+
+For source development:
+
+```bash
 npm install
 npm run build
-npm link
+make dev-bin
 inferoa setup
 inferoa
 ```
@@ -167,6 +175,11 @@ make docs-build
 
 The CLI binary is `inferoa`. The implementation is TypeScript/Node and targets
 OpenAI-compatible vLLM endpoints first.
+
+Publishing is automated from `main`: after `package.json` version is bumped,
+the GitHub workflow builds, tests, packs, and publishes `inferoa@latest` to npm.
+Configure npm Trusted Publishing for `agentic-in/inferoa` and
+`.github/workflows/npm-publish.yml` before the first release.
 
 ## Acknowledgements
 
