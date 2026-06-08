@@ -180,10 +180,11 @@ Publishing is automated from `main`: after `package.json` version is bumped,
 the GitHub workflow builds, tests, packs, and publishes `inferoa@latest` to npm.
 For the first release, either add an npm automation token as the `NPM_TOKEN`
 repository secret or configure npm Trusted Publishing for package `inferoa`
-with owner `agentic-in`, repository `inferoa`, workflow
-`.github/workflows/npm-publish.yml`, and branch `main`. After the package exists
-and the trusted publisher is configured, the workflow can publish without a
-long-lived token.
+with owner `agentic-in`, repository `inferoa`, and workflow filename
+`npm-publish.yml`. The workflow file lives at
+`.github/workflows/npm-publish.yml`; npm asks for the filename only. After the
+package exists and the trusted publisher is configured, the workflow can publish
+without a long-lived token.
 
 ## Acknowledgements
 
