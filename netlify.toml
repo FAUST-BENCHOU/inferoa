@@ -1,6 +1,7 @@
 [build]
-  command = "npm run site:build"
-  publish = "website/build"
+  base = "website"
+  command = "npm run build"
+  publish = "build"
 
 [build.environment]
   NODE_VERSION = "24"
