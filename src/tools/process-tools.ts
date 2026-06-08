@@ -30,7 +30,7 @@ export async function runCommand(args: JsonObject, context: ToolExecutionContext
       cwd,
       env,
       shell: true,
-      detached: false,
+      detached: process.platform !== "win32",
     });
     context.store.upsertProcess({
       session_id: context.session_id,
@@ -48,26 +48,28 @@ export async function runCommand(args: JsonObject, context: ToolExecutionContext
     });
     liveProcesses.set(key(context.session_id, processId), { child, session_id: context.session_id, process_id: processId });
     child.stdout.on("data", (chunk) => {
-      context.store.appendProcessOutput(context.session_id, processId, "stdout", String(chunk));
+      safeStoreWrite(() => context.store.appendProcessOutput(context.session_id, processId, "stdout", String(chunk)));
     });
     child.stderr.on("data", (chunk) => {
-      context.store.appendProcessOutput(context.session_id, processId, "stderr", String(chunk));
+      safeStoreWrite(() => context.store.appendProcessOutput(context.session_id, processId, "stderr", String(chunk)));
     });
     child.on("close", (code) => {
-      context.store.upsertProcess({
-        session_id: context.session_id,
-        process_id: processId,
-        pid: child.pid,
-        command,
-        cwd,
-        status: "stopped",
-        exit_code: code,
-      });
-      context.store.appendEvent({
-        session_id: context.session_id,
-        run_id: context.run_id,
-        type: "process.stopped",
-        data: { process_id: processId, code },
+      safeStoreWrite(() => {
+        context.store.upsertProcess({
+          session_id: context.session_id,
+          process_id: processId,
+          pid: child.pid,
+          command,
+          cwd,
+          status: "stopped",
+          exit_code: code,
+        });
+        context.store.appendEvent({
+          session_id: context.session_id,
+          run_id: context.run_id,
+          type: "process.stopped",
+          data: { process_id: processId, code },
+        });
       });
       liveProcesses.delete(key(context.session_id, processId));
     });
@@ -174,7 +176,7 @@ export async function stopProcess(args: JsonObject, context: ToolExecutionContex
     return fail("process_not_live", `Process is not live in this runtime: ${processId}`);
   }
   const signal = String(args.signal ?? "SIGTERM") as NodeJS.Signals;
-  live.child.kill(signal);
+  killProcessTree(live.child, signal);
   context.store.appendEvent({
     session_id: context.session_id,
     run_id: context.run_id,
@@ -186,4 +188,28 @@ export async function stopProcess(args: JsonObject, context: ToolExecutionContex
 
 function stringEnv(env: Record<string, unknown>): Record<string, string> {
   return Object.fromEntries(Object.entries(env).map(([name, value]) => [name, String(value)]));
+}
+
+function killProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+  const pid = child.pid;
+  if (pid && process.platform !== "win32") {
+    try {
+      process.kill(-pid, signal);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+        child.kill(signal);
+      }
+      return;
+    }
+  }
+  child.kill(signal);
+}
+
+function safeStoreWrite(write: () => void): void {
+  try {
+    write();
+  } catch {
+    // Process output can arrive after a test or session has closed its store.
+  }
 }

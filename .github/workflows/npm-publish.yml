@@ -34,6 +34,7 @@ jobs:
         run: npm ci
 
       - name: Test
+        timeout-minutes: 5
         run: npm test
 
       - name: Pack dry run
