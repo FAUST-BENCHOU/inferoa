@@ -6,6 +6,8 @@ export interface ToolExecutionContext {
   workspace: WorkspaceIdentity;
   session_id: string;
   run_id?: string;
+  tool_call_id?: string;
+  tool_name?: string;
   store: SessionStore;
   clarify?: (request: ClarifyRequest) => Promise<ClarifyResponse>;
 }

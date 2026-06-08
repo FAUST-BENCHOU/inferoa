@@ -11,6 +11,7 @@ export type SlashCommandName =
   | "plan"
   | "autoresearch"
   | "cache"
+  | "rtk"
   | "context"
   | "tools"
   | "sessions"
@@ -46,6 +47,7 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: "plan", description: "Start or manage plan mode" },
   { name: "autoresearch", description: "Start or manage autoresearch experiments" },
   { name: "cache", description: "Show prefix cache warmup and hit report" },
+  { name: "rtk", description: "Show RTK tool token savings by turn" },
   { name: "context", description: "Show context usage and compression state" },
   { name: "tools", description: "Show fixed tool schemas and renderer status" },
   { name: "sessions", description: "Manage chat sessions" },

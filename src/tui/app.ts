@@ -6,6 +6,7 @@ import { saveUserConfig, userConfigPath } from "../config/config.js";
 import { readSecret, secretRef, writeSecret } from "../config/secret-vault.js";
 import { EndpointSignals } from "../model/endpoint-signals.js";
 import { authHeaders } from "../model/endpoint-signals.js";
+import { resolveRtkStatus, type RtkStatus } from "../rtk/manager.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { SkillRegistry, type SkillDescriptor } from "../skills/registry.js";
 import { attachDaemonJob, cancelDaemonJob, daemonStatus, detachDaemonJob, queueDaemonRun, startDaemon } from "../daemon/supervisor.js";
@@ -51,6 +52,7 @@ import { cacheTurnKind, formatDuration, renderCacheFooter, renderCacheReportTurn
 import { renderCompactEventLine, renderSessionActivityLines, renderTodoEventLines } from "./event-view.js";
 import { renderModeMetadataRight } from "./mode-footer.js";
 import { renderPlanDocumentSurface } from "./plan-view.js";
+import { renderRtkSessionLines } from "./rtk-view.js";
 import { composerEraseRowsForResize } from "./resize.js";
 import { RESUME_SESSION_PAGE_SIZE, resumeSessionPage } from "./session-picker.js";
 import { renderSessionTranscript } from "./session-transcript.js";
@@ -155,7 +157,7 @@ const BRACKETED_PASTE_DISABLE = "\x1b[?2004l";
 const BRACKETED_PASTE_START = "\x1b[200~";
 const BRACKETED_PASTE_END = "\x1b[201~";
 const PASTE_TOKEN_PREFIX = "\u{e000}paste:";
-const SETUP_TOTAL_STEPS = 6;
+const SETUP_TOTAL_STEPS = 7;
 
 export const TUI_OMNI_SETUP_CAPABILITIES: Array<{
   name: OmniEndpointName;
@@ -1037,6 +1039,9 @@ export class TuiApp {
         case "cache":
           this.renderCacheView();
           return;
+        case "rtk":
+          this.renderRtkView();
+          return;
         case "context":
           await this.renderContextView(args);
           return;
@@ -1147,7 +1152,10 @@ export class TuiApp {
       nextConfig.omni.endpoints = {};
     }
 
-    if (!(await this.reviewSetupBeforeSave(nextConfig))) {
+    this.renderCenteredPanel("Setup", [setupProgress(7, SETUP_TOTAL_STEPS, "rtk"), "", fg256(244, "Preparing RTK tool-output compression.")], true);
+    const rtkStatus = await this.prepareRtkForSetup(nextConfig);
+
+    if (!(await this.reviewSetupBeforeSave(nextConfig, rtkStatus))) {
       this.renderNotice("Setup cancelled. No config was saved.");
       return;
     }
@@ -1164,8 +1172,12 @@ export class TuiApp {
     this.renderHome();
   }
 
-  private async reviewSetupBeforeSave(config: VllmAgentConfig): Promise<boolean> {
-    const action = await this.reviewAction("Review Setup", () => setupReviewLinesForDisplay(config, setupDialogContentWidth()));
+  private async prepareRtkForSetup(config: VllmAgentConfig): Promise<RtkStatus> {
+    return await resolveRtkStatus(config, { allowDownload: config.rtk.auto_download });
+  }
+
+  private async reviewSetupBeforeSave(config: VllmAgentConfig, rtkStatus?: RtkStatus): Promise<boolean> {
+    const action = await this.reviewAction("Review Setup", () => setupReviewLinesForDisplay(config, setupDialogContentWidth(), rtkStatus));
     return action === "save";
   }
 
@@ -1873,7 +1885,8 @@ export class TuiApp {
 
   private async renderEndpointView(): Promise<void> {
     const snapshot = await new EndpointSignals(this.app.config).snapshot();
-    this.renderPanel("System", endpointStatusLinesForDisplay(snapshot, this.app.config, this.describeWebSearchConfig(this.app.config)));
+    const rtk = await resolveRtkStatus(this.app.config, { allowDownload: false });
+    this.renderPanel("System", endpointStatusLinesForDisplay(snapshot, this.app.config, this.describeWebSearchConfig(this.app.config), rtk));
   }
 
   private renderCacheView(): void {
@@ -1897,6 +1910,15 @@ export class TuiApp {
         ? [...cacheEvidenceOverview(evidence, events), "", fg256(39, "Recent turns"), ...lines]
         : ["No prefix cache records yet."],
     );
+  }
+
+  private renderRtkView(): void {
+    const session = this.optionalSession();
+    if (!session) {
+      this.renderPanel("RTK", ["No active session yet. Run a prompt first."]);
+      return;
+    }
+    this.renderPanel("RTK", renderRtkSessionLines(this.app.store.listEvents(session.session_id), terminalWidth()));
   }
 
   private async renderContextView(args = ""): Promise<void> {
@@ -3917,7 +3939,7 @@ export function describeModelSetupForDisplay(setup: ModelSetup): string {
   return `${setup.mode} · ${setup.provider ?? setup.router ?? "unknown"} · ${setup.model ?? "unconfigured"} · ${setup.base_url ?? "unconfigured"}${contextWindow}`;
 }
 
-export function endpointStatusLinesForDisplay(snapshot: EndpointSignalSnapshot, config: VllmAgentConfig, webDescription: string): string[] {
+export function endpointStatusLinesForDisplay(snapshot: EndpointSignalSnapshot, config: VllmAgentConfig, webDescription: string, rtk?: RtkStatus): string[] {
   const omni = Object.entries(config.omni.endpoints).map(([name, endpoint]) =>
     `  ${name}: ${endpoint?.base_url && endpoint.model ? `${endpoint.base_url} · ${endpoint.model}` : "unconfigured"}`,
   );
@@ -3927,6 +3949,7 @@ export function endpointStatusLinesForDisplay(snapshot: EndpointSignalSnapshot, 
     `${fg256(39, "Base URL")} ${snapshot.base_url ?? "unconfigured"}`,
     `${fg256(39, "Model")} ${snapshot.model ?? "unconfigured"}`,
     `${fg256(39, "Web")} ${webDescription}`,
+    `${fg256(39, "RTK")} ${rtkStatusLabel(rtk)}`,
     "",
     fg256(39, "Omni endpoints"),
     ...(omni.length ? omni : ["  none"]),
@@ -3934,7 +3957,21 @@ export function endpointStatusLinesForDisplay(snapshot: EndpointSignalSnapshot, 
   ];
 }
 
-export function setupReviewLinesForDisplay(config: VllmAgentConfig, contentWidth = setupDialogContentWidth()): string[] {
+function rtkStatusLabel(rtk?: RtkStatus): string {
+  if (!rtk) {
+    return "unknown";
+  }
+  if (!rtk.enabled) {
+    return "disabled";
+  }
+  const source = rtk.source === "managed" ? `managed v${rtk.version}` : rtk.source;
+  const state = rtk.available ? "available" : "unavailable";
+  const pathLabel = rtk.binary_path ? ` · ${compactWorkspacePath(rtk.binary_path)}` : "";
+  const error = rtk.error ? ` · ${rtk.error}` : "";
+  return `${state} · ${source}${pathLabel}${error}`;
+}
+
+export function setupReviewLinesForDisplay(config: VllmAgentConfig, contentWidth = setupDialogContentWidth(), rtkStatus?: RtkStatus): string[] {
   const chat = config.model_setup;
   const lines: string[] = [
     setupProgress(SETUP_TOTAL_STEPS, SETUP_TOTAL_STEPS, "review"),
@@ -3968,8 +4005,29 @@ export function setupReviewLinesForDisplay(config: VllmAgentConfig, contentWidth
     }
   }
   lines.push("");
+  appendRtkReviewLines(lines, rtkStatus, contentWidth);
+  lines.push("");
   appendReviewText(lines, "Config will store endpoints, selected models, and vault references only.", contentWidth, 244);
   return lines;
+}
+
+function appendRtkReviewLines(lines: string[], rtk?: RtkStatus, contentWidth = setupDialogContentWidth()): void {
+  if (!rtk) {
+    lines.push(`${fg256(244, "rtk")} unknown`);
+    return;
+  }
+  if (!rtk.enabled) {
+    lines.push(`${fg256(244, "rtk")} disabled`);
+    return;
+  }
+  const source = rtk.source === "managed" ? `managed v${rtk.version}` : rtk.source;
+  lines.push(`${fg256(244, "rtk")} ${rtk.available ? "available" : "unavailable"} · ${source}`);
+  if (rtk.binary_path) {
+    appendReviewField(lines, "path", rtk.binary_path, contentWidth);
+  }
+  if (rtk.error) {
+    appendReviewField(lines, "error", rtk.error, contentWidth);
+  }
 }
 
 export function webSearchProviderSetupOptions(): SelectOption<WebSearchProviderChoice>[] {

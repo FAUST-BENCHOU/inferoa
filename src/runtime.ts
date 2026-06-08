@@ -7,6 +7,7 @@ import type {
   ModelMessage,
   ModelRequest,
   ModelResponse,
+  RtkSavingsSummary,
   SessionRecord,
   ToolCall,
   ToolResult,
@@ -80,6 +81,7 @@ export interface RuntimeRunResult {
   tool_calls: number;
   duration_ms: number;
   tokens_used: number;
+  rtk: RtkSavingsSummary;
   goal_report?: string;
 }
 
@@ -333,6 +335,7 @@ export class Runtime {
         });
       }
       const metrics = runMetrics(startedAt, goalTokenUsage, toolRounds, toolCalls);
+      const rtk = rtkSavingsForRun(this.store, session.session_id, runId, goalTokenUsage, toolCalls, this.config);
       if (stopped) {
         applyGoalUsage(
           this.store,
@@ -355,6 +358,7 @@ export class Runtime {
             tool_rounds: toolRounds,
             tool_calls: toolCalls,
             tokens: goalTokenUsage,
+            rtk: rtk as never,
             duration_ms: metrics.duration_ms,
           },
         });
@@ -379,6 +383,7 @@ export class Runtime {
             tool_rounds: toolRounds,
             tool_calls: toolCalls,
             tokens: goalTokenUsage,
+            rtk: rtk as never,
             duration_ms: metrics.duration_ms,
           },
         });
@@ -391,10 +396,12 @@ export class Runtime {
         tool_calls: toolCalls,
         duration_ms: metrics.duration_ms,
         tokens_used: goalTokenUsage,
+        rtk,
         goal_report: goalCompletionReportForRun(this.store, session.session_id, runId),
       };
     } catch (error) {
       const metrics = runMetrics(startedAt, goalTokenUsage, toolRounds, toolCalls);
+      const rtk = rtkSavingsForRun(this.store, session.session_id, runId, goalTokenUsage, toolCalls, this.config);
       applyGoalUsage(
         this.store,
         session.session_id,
@@ -414,6 +421,7 @@ export class Runtime {
           tool_rounds: toolRounds,
           tool_calls: toolCalls,
           tokens: goalTokenUsage,
+          rtk: rtk as never,
           duration_ms: metrics.duration_ms,
         },
       });
@@ -568,7 +576,13 @@ export class Runtime {
         ),
       },
       tools: this.tools.list().map((tool) => tool.name),
+      rtk: await this.rtkStatus(),
     };
+  }
+
+  private async rtkStatus(): Promise<Record<string, unknown>> {
+    const { resolveRtkStatus } = await import("./rtk/manager.js");
+    return (await resolveRtkStatus(this.config, { allowDownload: false })) as unknown as Record<string, unknown>;
   }
 
   dispose(): void {
@@ -686,6 +700,52 @@ function runMetrics(startedAt: number, tokens: number, toolRounds: number, toolC
     tool_rounds: toolRounds,
     tool_calls: toolCalls,
     duration_ms: durationMs,
+  };
+}
+
+function rtkSavingsForRun(
+  store: SessionStore,
+  sessionId: string,
+  runId: string,
+  modelTokens: number,
+  toolCalls: number,
+  config: VllmAgentConfig,
+): RtkSavingsSummary {
+  const events = store.listEvents(sessionId).filter((event) => event.run_id === runId && event.type === "rtk.tool_savings");
+  let rtkCommands = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let savedTokens = 0;
+  let okEvents = 0;
+  let unavailableEvents = 0;
+  let nonOkEvents = 0;
+  for (const event of events) {
+    const data = event.data;
+    rtkCommands += numberField(data.rtk_commands);
+    inputTokens += numberField(data.input_tokens);
+    outputTokens += numberField(data.output_tokens);
+    savedTokens += numberField(data.saved_tokens);
+    const status = stringField(data.status);
+    if (status === "ok") {
+      okEvents += 1;
+    } else if (status === "unavailable") {
+      unavailableEvents += 1;
+      nonOkEvents += 1;
+    } else if (status) {
+      nonOkEvents += 1;
+    }
+  }
+  const status = !config.rtk.enabled ? "disabled" : nonOkEvents > 0 && okEvents === 0 && unavailableEvents > 0 ? "unavailable" : nonOkEvents > 0 ? "partial" : "ok";
+  return {
+    tool_calls: toolCalls,
+    rtk_tool_calls: events.length,
+    rtk_commands: rtkCommands,
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    saved_tokens: savedTokens,
+    savings_pct: inputTokens > 0 ? (savedTokens / inputTokens) * 100 : 0,
+    estimated_without_rtk_tokens: modelTokens + savedTokens,
+    status,
   };
 }
 
@@ -924,4 +984,8 @@ function stringArray(value: unknown): string[] {
 
 function stringField(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function numberField(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }

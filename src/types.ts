@@ -81,9 +81,18 @@ export interface VllmAgentConfig {
     api_key_ref?: string;
     api_key?: string;
   };
+  rtk: RtkConfig;
   daemon: {
     poll_ms: number;
   };
+}
+
+export interface RtkConfig {
+  enabled: boolean;
+  delivery: "managed" | "path_only";
+  version: string;
+  binary_path?: string;
+  auto_download: boolean;
 }
 
 export interface WorkspaceIdentity {
@@ -201,6 +210,18 @@ export interface ModelUsage {
   total_tokens?: number;
   cached_prompt_tokens?: number;
   raw?: JsonObject;
+}
+
+export interface RtkSavingsSummary {
+  tool_calls: number;
+  rtk_tool_calls: number;
+  rtk_commands: number;
+  input_tokens: number;
+  output_tokens: number;
+  saved_tokens: number;
+  savings_pct: number;
+  estimated_without_rtk_tokens: number;
+  status: "ok" | "disabled" | "unavailable" | "partial";
 }
 
 export interface ModelResponse {

@@ -4,6 +4,7 @@ import { resolveInside } from "../util/fs.js";
 import { fail, ok, truncateText } from "../util/limit.js";
 import { randomId } from "../util/hash.js";
 import type { ToolExecutionContext } from "./context.js";
+import { runRtkAwareShellCommand } from "../rtk/command.js";
 
 interface LiveProcess {
   child: ChildProcessWithoutNullStreams;
@@ -77,63 +78,55 @@ export async function runCommand(args: JsonObject, context: ToolExecutionContext
   }
 
   const timeoutMs = typeof args.timeout_ms === "number" ? Math.max(100, Math.min(args.timeout_ms, 600_000)) : 120_000;
-  return await new Promise((resolve) => {
-    const child = spawn(command, {
-      cwd,
-      env,
-      shell: true,
-    });
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-      setTimeout(() => {
-        if (!child.killed) {
-          child.kill("SIGKILL");
-        }
-      }, 2000).unref();
-    }, timeoutMs);
-    child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timeout);
-      const combined = [stdout, stderr].filter(Boolean).join("\n");
-      const truncated = truncateText(combined);
-      const resource =
-        truncated.truncated || combined.length > 24_000
-          ? context.store.putResource(context.session_id, "command.output", combined, { command, cwd, code, timed_out: timedOut }).uri
-          : undefined;
-      context.store.appendEvent({
-        session_id: context.session_id,
-        run_id: context.run_id,
-        type: "tool.shell.completed",
-        data: { command, cwd, code, timed_out: timedOut, resource_uri: resource },
-      });
-      resolve({
-        ok: code === 0 && !timedOut,
-        summary: `Command exited ${code}${timedOut ? " after timeout" : ""}`,
-        data: {
+  const result = await runRtkAwareShellCommand({
+    config: context.config,
+    store: context.store,
+    session_id: context.session_id,
+    run_id: context.run_id,
+    tool_call_id: context.tool_call_id,
+    tool_name: context.tool_name ?? "run_command",
+    command,
+    cwd,
+    env,
+    timeout_ms: timeoutMs,
+  });
+  const combined = [result.stdout, result.stderr].filter(Boolean).join("\n");
+  const truncated = truncateText(combined);
+  const resource =
+    truncated.truncated || combined.length > 24_000
+      ? context.store.putResource(context.session_id, "command.output", combined, {
           command,
           cwd,
-          code,
-          timed_out: timedOut,
-          output: truncated.text,
-        },
-        resource_uri: resource,
-        error: code === 0 && !timedOut ? undefined : { code: timedOut ? "command_timeout" : "command_failed", message: stderr || stdout },
-      });
-    });
-    child.on("error", (error) => {
-      clearTimeout(timeout);
-      resolve(fail("command_spawn_failed", error.message));
-    });
+          code: result.code,
+          timed_out: result.timed_out,
+        }).uri
+      : undefined;
+  context.store.appendEvent({
+    session_id: context.session_id,
+    run_id: context.run_id,
+    type: "tool.shell.completed",
+    data: {
+      command,
+      rewritten_command: result.rewritten_command,
+      cwd,
+      code: result.code,
+      timed_out: result.timed_out,
+      resource_uri: resource,
+    },
   });
+  return {
+    ok: result.code === 0 && !result.timed_out,
+    summary: `Command exited ${result.code}${result.timed_out ? " after timeout" : ""}`,
+    data: {
+      command,
+      cwd,
+      code: result.code,
+      timed_out: result.timed_out,
+      output: truncated.text,
+    },
+    resource_uri: resource,
+    error: result.code === 0 && !result.timed_out ? undefined : { code: result.timed_out ? "command_timeout" : "command_failed", message: result.stderr || result.stdout },
+  };
 }
 
 export async function readProcess(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {

@@ -91,15 +91,24 @@ test("TUI setup review uses full-width rows and does not truncate final summary"
   config.model_setup.api_key_ref = "secret-chat-direct-https-api-agrun-woa-com-v1-api-key";
 
   const frameWidth = 61;
-  const lines = setupReviewLinesForDisplay(config, frameWidth - 3);
+  const lines = setupReviewLinesForDisplay(config, frameWidth - 3, {
+    enabled: true,
+    available: true,
+    source: "managed",
+    version: "0.42.3",
+    delivery: "managed",
+    auto_download: true,
+    binary_path: "/Users/example/.inferoa/rtk/0.42.3/darwin-arm64/rtk",
+  });
   const frame = commandDeckFrame("Review Setup", lines, frameWidth);
   const plain = stripAnsi(frame.join("\n"));
   const compactPlain = plain.replace(/[▌\s]/g, "");
 
   assert.ok(frame.every((line) => visibleWidth(line) === frameWidth));
   assert.doesNotMatch(plain, /…/);
-  assert.match(plain, /setup 6\/6/);
+  assert.match(plain, /setup 7\/7/);
   assert.match(plain, /context\s+1024000/);
+  assert.match(plain, /rtk available .*managed v0\.42\.3/);
   assert.ok(compactPlain.includes(config.model_setup.model ?? ""));
   assert.ok(compactPlain.includes(config.model_setup.base_url ?? ""));
   assert.match(plain, /local vault/);

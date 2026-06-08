@@ -8,6 +8,7 @@ import { clampLimit, DEFAULT_LIST_LIMIT, fail, ok, truncateText } from "../util/
 import type { ToolExecutionContext } from "./context.js";
 import { decodeEscapedTextArgument, textArgumentCandidates } from "./text-args.js";
 import { workspaceExternalPathsAllowed } from "./permissions.js";
+import { runRtkAwareShellCommand, type RtkShellCommandResult } from "../rtk/command.js";
 
 export async function listDir(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   try {
@@ -264,27 +265,53 @@ export async function applyPatchTool(args: JsonObject, context: ToolExecutionCon
 
 export async function gitStatus(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const cwd = resolveInside(context.workspace.root, String(args.cwd ?? "."));
-  const result = await runSmallCommand("git", ["status", "--short", "--branch"], cwd, 10_000);
+  const result = await runRtkAwareShellCommand({
+    config: context.config,
+    store: context.store,
+    session_id: context.session_id,
+    run_id: context.run_id,
+    tool_call_id: context.tool_call_id,
+    tool_name: context.tool_name ?? "git_status",
+    command: "git status --short --branch",
+    cwd,
+    timeout_ms: 10_000,
+  });
   return commandResult("git_status", result, context, "git.status");
 }
 
 export async function gitDiff(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const cwd = resolveInside(context.workspace.root, String(args.cwd ?? "."));
-  const commandArgs = ["diff", "--", typeof args.path === "string" ? args.path : "."];
-  if (args.staged) {
-    commandArgs.splice(1, 0, "--staged");
-  }
-  const result = await runSmallCommand("git", commandArgs, cwd, 10_000);
+  const pathArg = typeof args.path === "string" ? args.path : ".";
+  const command = ["git", "diff", args.staged ? "--staged" : "", "--", shellQuote(pathArg)].filter(Boolean).join(" ");
+  const result = await runRtkAwareShellCommand({
+    config: context.config,
+    store: context.store,
+    session_id: context.session_id,
+    run_id: context.run_id,
+    tool_call_id: context.tool_call_id,
+    tool_name: context.tool_name ?? "git_diff",
+    command,
+    cwd,
+    timeout_ms: 10_000,
+  });
   return commandResult("git_diff", result, context, "git.diff");
 }
 
 export async function gitShow(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const cwd = resolveInside(context.workspace.root, String(args.cwd ?? "."));
-  const commandArgs = ["show", "--stat", "--patch", String(args.rev)];
-  if (typeof args.path === "string") {
-    commandArgs.push("--", args.path);
-  }
-  const result = await runSmallCommand("git", commandArgs, cwd, 10_000);
+  const rev = shellQuote(String(args.rev));
+  const command = typeof args.path === "string" ? `git show --stat --patch ${rev} -- ${shellQuote(args.path)}` : `git show --stat --patch ${rev}`;
+  const result = await runRtkAwareShellCommand({
+    config: context.config,
+    store: context.store,
+    session_id: context.session_id,
+    run_id: context.run_id,
+    tool_call_id: context.tool_call_id,
+    tool_name: context.tool_name ?? "git_show",
+    command,
+    cwd,
+    timeout_ms: 10_000,
+  });
   return commandResult("git_show", result, context, "git.show");
 }
 
@@ -321,7 +348,7 @@ export async function sessionNote(args: JsonObject, context: ToolExecutionContex
 
 async function commandResult(
   name: string,
-  result: { code: number | null; stdout: string; stderr: string },
+  result: { code: number | null; stdout: string; stderr: string; rtk?: RtkShellCommandResult["rtk"] },
   context: ToolExecutionContext,
   kind: string,
 ): Promise<ToolResult> {
@@ -338,6 +365,13 @@ async function commandResult(
     resource_uri: resource,
     error: result.code === 0 ? undefined : { code: `${name}_failed`, message: result.stderr || result.stdout },
   };
+}
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:=@%+-]+$/.test(value)) {
+    return value;
+  }
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 async function walkFiles(dir: string, root: string, max: number): Promise<string[]> {

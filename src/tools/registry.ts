@@ -150,6 +150,8 @@ export class ToolRegistry {
       workspace: this.workspace,
       session_id: context.session_id,
       run_id: context.run_id,
+      tool_call_id: call.id,
+      tool_name: call.name,
       store: this.store,
       clarify: context.clarify,
     };

@@ -39,6 +39,12 @@ export const DEFAULT_CONFIG: VllmAgentConfig = {
   web_search: {
     provider: "auto",
   },
+  rtk: {
+    enabled: true,
+    delivery: "managed",
+    version: "0.42.3",
+    auto_download: true,
+  },
   daemon: {
     poll_ms: 1000,
   },

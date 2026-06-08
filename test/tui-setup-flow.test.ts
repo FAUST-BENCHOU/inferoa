@@ -26,6 +26,7 @@ test("setup save returns to welcome surface", async () => {
       enterChatSurfaceFromWelcome: () => void;
       renderSetupView: () => Promise<void>;
       renderCenteredPanel: () => void;
+      prepareRtkForSetup: (nextConfig: typeof config) => Promise<unknown>;
       chooseProvider: () => Promise<"direct">;
       askRequired: () => Promise<string>;
       askApiKeySelection: () => Promise<{ api_key_ref?: string }>;
@@ -45,6 +46,11 @@ test("setup save returns to welcome surface", async () => {
 
     view.renderCenteredPanel = () => {};
     view.writeHomeFrame = () => {};
+    let rtkPrepared = false;
+    view.prepareRtkForSetup = async () => {
+      rtkPrepared = true;
+      return { enabled: true, available: true, source: "config", version: "0.42.3", delivery: "path_only", auto_download: false };
+    };
     view.chooseProvider = async () => "direct";
     view.askRequired = async () => "https://api.agrun.woa.com/v1";
     view.askApiKeySelection = async () => ({ api_key_ref: undefined });
@@ -74,6 +80,7 @@ test("setup save returns to welcome surface", async () => {
     }
 
     assert.equal(homeRendered, true);
+    assert.equal(rtkPrepared, true);
     assert.deepEqual(renderedPanels, []);
     assert.equal(view.shouldRenderWelcomeComposer(), true);
   } finally {

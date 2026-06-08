@@ -141,7 +141,7 @@ Options:
   --no-animation                     Disable TUI intro animation
 
 TUI commands:
-  /setup /model /system /skills /cache /context /tools /sessions /jobs
+  /setup /model /system /skills /cache /rtk /context /tools /sessions /jobs
   /todo /activity /acceptance /help /clear /exit
   $                                  Open skill catalog
 
@@ -181,6 +181,7 @@ async function runPrint(options: ParsedCli): Promise<void> {
         tool_calls: result.tool_calls,
         duration_ms: result.duration_ms,
         tokens_used: result.tokens_used,
+        rtk: result.rtk,
         goal_report: result.goal_report,
       },
       options.json,

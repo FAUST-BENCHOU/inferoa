@@ -50,6 +50,16 @@ export async function loadConfig(cwd: string, explicit?: string): Promise<{ conf
     config.model_setup.mode = "auto";
     config.model_setup.router = "vllm-sr";
   }
+  if (process.env.INFEROA_RTK) {
+    config.rtk.enabled = !/^(0|false|off|disabled)$/i.test(process.env.INFEROA_RTK.trim());
+  }
+  if (process.env.INFEROA_RTK_PATH) {
+    config.rtk.binary_path = process.env.INFEROA_RTK_PATH;
+    config.rtk.delivery = "path_only";
+  }
+  if (process.env.INFEROA_RTK_AUTO_DOWNLOAD) {
+    config.rtk.auto_download = !/^(0|false|off|disabled)$/i.test(process.env.INFEROA_RTK_AUTO_DOWNLOAD.trim());
+  }
   if (process.env.INFEROA_OMNI_VISION_URL) {
     config.omni.enabled = true;
     config.omni.endpoints.vision = {
@@ -191,7 +201,7 @@ function stringValue(value: unknown): string | undefined {
 }
 
 function pruneConfig(config: VllmAgentConfig): void {
-  pruneKeys(config, ["workspace", "model_setup", "model_retry", "omni", "permissions", "context", "skills", "web_search", "daemon"]);
+  pruneKeys(config, ["workspace", "model_setup", "model_retry", "omni", "permissions", "context", "skills", "web_search", "rtk", "daemon"]);
   pruneKeys(config.workspace, ["root"]);
   pruneKeys(config.model_setup, ["mode", "provider", "profile", "router", "base_url", "model", "api_key_ref", "api_key", "headers", "context_window"]);
   pruneKeys(config.model_retry, [
@@ -222,6 +232,7 @@ function pruneConfig(config: VllmAgentConfig): void {
   pruneKeys(config.context?.engine, ["provider", "startup", "require_ready_before_chat", "watch"]);
   pruneKeys(config.skills, ["enabled", "managed_installs"]);
   pruneKeys(config.web_search, ["provider", "base_url", "api_key_ref", "api_key"]);
+  pruneKeys(config.rtk, ["enabled", "delivery", "version", "binary_path", "auto_download"]);
   pruneKeys(config.daemon, ["poll_ms"]);
 }
 

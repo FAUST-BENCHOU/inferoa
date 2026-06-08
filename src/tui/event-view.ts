@@ -164,8 +164,15 @@ function renderRunLifecycleEvent(event: SessionEvent, stamp: string): string {
     labeled("tools", data.tool_calls),
     durationMs !== undefined ? `${fg256(39, "time")} ${formatDuration(durationMs)}` : "",
     labeled("tokens", data.tokens),
+    rtkSavedLabel(data.rtk),
   ].filter(Boolean);
   return `${stamp} · ${fg256(39, "run")} ${runLifecycleLabel(event.type)}${parts.length ? ` · ${parts.join(" · ")}` : ""}`;
+}
+
+function rtkSavedLabel(value: unknown): string {
+  const rtk = objectField(value);
+  const saved = numberField(rtk.saved_tokens);
+  return saved === undefined || saved <= 0 ? "" : `${fg256(39, "rtk saved")} ${saved}`;
 }
 
 function runLifecycleLabel(type: string): string {
