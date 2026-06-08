@@ -1,9 +1,11 @@
 import { unknownSlashCommandMessage } from "./slash-notice.js";
+import { isPathListInput } from "../util/path-input.js";
 
 export type SlashCommandName =
   | "setup"
   | "model"
   | "system"
+  | "access"
   | "skills"
   | "goal"
   | "plan"
@@ -38,6 +40,7 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: "setup", description: "Open endpoint, provider, and Omni setup" },
   { name: "model", description: "Open model/provider selector" },
   { name: "system", description: "Show model, web search, Omni, and runtime status" },
+  { name: "access", description: "Change this workspace's file and tool access" },
   { name: "skills", description: "List skills or manage enabled skills" },
   { name: "goal", description: "Start or manage goal mode" },
   { name: "plan", description: "Start or manage plan mode" },
@@ -76,6 +79,11 @@ export const SLASH_SUBCOMMANDS: SlashSubcommandSpec[] = [
   { command: "autoresearch", name: "status", value: "/autoresearch status", description: "Show autoresearch state" },
   { command: "autoresearch", name: "off", value: "/autoresearch off", description: "Disable autoresearch mode" },
   { command: "autoresearch", name: "clear", value: "/autoresearch clear", description: "Clear autoresearch state" },
+  { command: "access", name: "status", value: "/access status", description: "Show this workspace's access mode" },
+  { command: "access", name: "full", value: "/access full", description: "Allow full local file and tool access for this workspace" },
+  { command: "access", name: "auto", value: "/access auto", description: "Auto-approve routine tools for this workspace" },
+  { command: "access", name: "ask", value: "/access ask", description: "Ask before risky access in this workspace" },
+  { command: "access", name: "custom", value: "/access custom", description: "Use custom config rules for this workspace" },
   { command: "context", name: "status", value: "/context", description: "Show context and code intelligence state" },
   { command: "context", name: "reindex", value: "/context reindex", description: "Rebuild the context index" },
   { command: "tools", name: "list", value: "/tools", description: "Show fixed tool schemas" },
@@ -111,6 +119,9 @@ const SUBCOMMANDS = SLASH_SUBCOMMANDS.reduce((map, command) => {
 export function parseSlashCommand(input: string): { command?: SlashCommandSpec; args: string; error?: string } {
   const trimmed = input.trim();
   if (!trimmed.startsWith("/")) {
+    return { args: trimmed };
+  }
+  if (isPathListInput(trimmed)) {
     return { args: trimmed };
   }
   const body = trimmed.slice(1);

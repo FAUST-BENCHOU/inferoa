@@ -4,7 +4,7 @@ import type { JsonObject, OmniEndpointConfig, ToolResult } from "../types.js";
 import { endpointApiKey } from "../config/config.js";
 import { fail, ok, truncateText } from "../util/limit.js";
 import { delay, numberOrDefault, stringField } from "../util/types.js";
-import { resolveInside } from "../util/fs.js";
+import { resolveReadablePath } from "../util/fs.js";
 import type { ToolExecutionContext } from "./context.js";
 
 type OmniCapability =
@@ -362,10 +362,10 @@ async function get(
 }
 
 async function normalizeInput(input: string, context: ToolExecutionContext): Promise<string> {
-  if (/^(https?:|data:|file:)/.test(input)) {
+  if (/^(https?:|data:)/.test(input)) {
     return input;
   }
-  const file = resolveInside(context.workspace.root, input);
+  const file = resolveReadablePath(context.workspace.root, input).file;
   const bytes = await fs.readFile(file);
   return `data:${mimeType(file)};base64,${bytes.toString("base64")}`;
 }

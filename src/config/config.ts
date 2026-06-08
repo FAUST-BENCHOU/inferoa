@@ -214,7 +214,10 @@ function pruneConfig(config: VllmAgentConfig): void {
   for (const endpoint of Object.values(config.omni?.endpoints ?? {})) {
     pruneKeys(endpoint, ["base_url", "model", "api_key_ref", "api_key", "headers"]);
   }
-  pruneKeys(config.permissions, ["mode", "custom"]);
+  pruneKeys(config.permissions, ["mode", "custom", "workspaces"]);
+  for (const policy of Object.values(config.permissions?.workspaces ?? {})) {
+    pruneKeys(policy, ["mode", "custom"]);
+  }
   pruneKeys(config.context, ["compression_threshold", "context_window", "protected_recent_loops", "force_compression", "engine"]);
   pruneKeys(config.context?.engine, ["provider", "startup", "require_ready_before_chat", "watch"]);
   pruneKeys(config.skills, ["enabled", "managed_installs"]);

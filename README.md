@@ -78,15 +78,13 @@ Inferoa makes those surfaces first-class:
 
 - **Prefix cache is protected**, not merely reported after the turn.
 - **Goals, plans, and autoresearch** are native long-horizon modes.
-- **Context is optimized** through [CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph),
-  [RTK](https://github.com/rtk-ai/rtk), and built-in harnesses that reduce token
-  waste while improving task accuracy.
-- **Routing is part of the agent design**, so not every turn has to use the
-  same frontier model path.
-- **Serving and endpoint signals** feed back into the loop instead of living in
-  logs.
-- **Multimodal work** stays inside the same session contract instead of
-  becoming disconnected side calls.
+- **Context is selected as evidence**, not pasted until the window is full.
+- **Intelligent routing chooses the model path** by cost, safety, privacy,
+  capability, and session pressure.
+- **Serving signals shape the next turn**: latency, usage, cache behavior, and
+  endpoint capability are visible to the harness.
+- **Multimodal work stays durable** with the same session, tools, files, and
+  verification loop.
 
 ## Optimized with Inference Stack
 
@@ -100,16 +98,6 @@ stack:
 | Intelligent Routing | [vLLM Semantic Router](https://github.com/vllm-project/semantic-router) | Choose model paths by cost, safety, privacy, capability, and session pressure | Avoid using one expensive path for every turn |
 | Serving | [vLLM Engine](https://github.com/vllm-project/vllm) | Use high-performance OpenAI-compatible inference and endpoint signals | Protect prefix cache stability across the session |
 | Multimodal | [vLLM Omni](https://github.com/vllm-project/vllm-omni) | Bring image, video, and audio understanding/generation into the same loop | Keep multimodal tasks durable and inspectable |
-
-The product shape is:
-
-```text
-Agent Harness -> Context Optimization -> Intelligent Routing -> Serving -> Multimodal
-```
-
-The day-0 strategy is concrete: co-design with vLLM Engine, vLLM Semantic
-Router, and vLLM Omni while keeping the product centered on the inference
-optimized agent harness.
 
 ## Core Design
 

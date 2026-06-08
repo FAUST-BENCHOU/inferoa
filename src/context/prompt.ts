@@ -13,6 +13,7 @@ import { hashJson, randomId, sha256Hex, stableJson } from "../util/hash.js";
 import { truncateText } from "../util/limit.js";
 import { providerId } from "../model/endpoint-signals.js";
 import type { SkillDescriptor } from "../skills/registry.js";
+import { effectiveWorkspacePermission } from "../tools/permissions.js";
 import { escapeXmlText, readGoalState, renderGoalModeSection } from "../goals/state.js";
 import { readAutoresearchState, renderAutoresearchModeSection } from "../autoresearch/state.js";
 import { readPlanState, renderPlanModeSection } from "../plans/state.js";
@@ -90,10 +91,11 @@ export class PromptBuilder {
     const setup = this.config.model_setup;
     const provider = providerId(this.config);
     const model = setup.model ?? "unconfigured";
+    const permissionMode = effectiveWorkspacePermission(this.config, this.workspace).mode;
     const cacheSalt =
       setup.cache_salt ??
-      `cs_${sha256Hex(`inferoa:cache-salt:v1\0${this.workspace.id}\0${session.session_id}\0${provider}\0${this.config.permissions.mode}`).slice(0, 32)}`;
-    const promptLayoutHash = promptLayoutHashFor(sectionHashes, provider, model, this.config.permissions.mode);
+      `cs_${sha256Hex(`inferoa:cache-salt:v1\0${this.workspace.id}\0${session.session_id}\0${provider}\0${permissionMode}`).slice(0, 32)}`;
+    const promptLayoutHash = promptLayoutHashFor(sectionHashes, provider, model, permissionMode);
     const record: PromptEpochRecord = {
       prompt_epoch_id: randomId("pe"),
       session_id: session.session_id,
@@ -119,7 +121,8 @@ export class PromptBuilder {
     const setup = this.config.model_setup;
     const provider = providerId(this.config);
     const model = setup.model ?? "unconfigured";
-    const layoutHash = promptLayoutHashFor(sectionHashes, provider, model, this.config.permissions.mode);
+    const permissionMode = effectiveWorkspacePermission(this.config, this.workspace).mode;
+    const layoutHash = promptLayoutHashFor(sectionHashes, provider, model, permissionMode);
     if (
       !current ||
       current.provider_id !== provider ||

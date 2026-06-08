@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DEFAULT_CONFIG } from "../src/config/defaults.js";
@@ -60,6 +60,52 @@ test("clear starts a clean default session without prompting or rendering creati
     assert.equal(view.optionalSession()?.session_id, sessions[0]?.session_id);
   } finally {
     process.stdout.write = originalStdoutWrite;
+    store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("access command saves a workspace-specific permission override", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-access-session-"));
+  const previousStateDir = process.env.INFEROA_STATE_DIR;
+  const store = await SessionStore.open(path.join(stateDir, "store"));
+  process.env.INFEROA_STATE_DIR = stateDir;
+  try {
+    const workspace = { id: "w_access_session", root: stateDir, alias: "access-session" };
+    const config = structuredClone(DEFAULT_CONFIG);
+    const tui = new TuiApp(
+      {
+        config,
+        configFiles: [],
+        workspace,
+        store,
+        runtime: {},
+      } as never,
+    );
+    const view = tui as unknown as {
+      renderAccessView: (args: string) => Promise<void>;
+      renderPanel: (title: string, body: string[]) => void;
+    };
+    const panels: Array<{ title: string; body: string[] }> = [];
+    view.renderPanel = (title, body) => {
+      panels.push({ title, body });
+    };
+
+    await view.renderAccessView("ask");
+
+    assert.equal(config.permissions.workspaces?.[workspace.id]?.mode, "ask");
+    assert.equal(panels.at(-1)?.title, "Access");
+    assert.ok(panels.at(-1)?.body.some((line) => line.includes("Request approval")));
+    const text = await readFile(path.join(stateDir, "config.yaml"), "utf8");
+    assert.match(text, /workspaces:/);
+    assert.match(text, /w_access_session:/);
+    assert.match(text, /mode: ask/);
+  } finally {
+    if (previousStateDir === undefined) {
+      delete process.env.INFEROA_STATE_DIR;
+    } else {
+      process.env.INFEROA_STATE_DIR = previousStateDir;
+    }
     store.close();
     await rm(stateDir, { recursive: true, force: true });
   }

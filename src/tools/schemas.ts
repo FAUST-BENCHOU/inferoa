@@ -128,11 +128,11 @@ const DEFINITIONS = [
   },
   {
     name: "edit_file",
-    description: "Replace exact text in a workspace file. If no exact match is found, the result includes nearby similar lines; escaped multiline text is accepted as a fallback.",
+    description: "Replace exact text in a workspace file, or in an absolute local file when workspace access is full. If no exact match is found, the result includes nearby similar lines; escaped multiline text is accepted as a fallback.",
     permission: "write",
     parameters: objectSchema(
       {
-        path: string("Workspace-relative file path."),
+        path: string("Workspace-relative path, or absolute local path when access is full."),
         old_text: string("Exact text to replace. Escaped multiline text such as \\n is accepted as a fallback."),
         new_text: string("Replacement text."),
         occurrence: number("1-based occurrence to replace. Defaults to 1."),
@@ -255,11 +255,11 @@ const DEFINITIONS = [
   },
   {
     name: "list_dir",
-    description: "List files and folders in a workspace directory.",
+    description: "List files and folders in a workspace directory, or an absolute local directory when workspace access is full.",
     permission: "read",
     parameters: objectSchema(
       {
-        path: string("Workspace-relative directory path. Use '.' or '/' for the workspace root; absolute filesystem paths are not allowed."),
+        path: string("Workspace-relative directory path, or absolute local directory when access is full. Use '.' or '/' for the workspace root."),
         limit: number("Maximum entries."),
         page: string("Opaque page token."),
       },
@@ -316,11 +316,11 @@ const DEFINITIONS = [
   },
   {
     name: "read_file",
-    description: "Read a bounded window from a workspace file.",
+    description: "Read a bounded window from a workspace-relative or absolute local file path.",
     permission: "read",
     parameters: objectSchema(
       {
-        path: string("Workspace-relative file path."),
+        path: string("Workspace-relative path, absolute local path, or file:// URL."),
         start_line: number("1-based start line."),
         line_count: number("Number of lines."),
       },
@@ -564,11 +564,11 @@ const DEFINITIONS = [
   },
   {
     name: "write_file",
-    description: "Create or replace a workspace file.",
+    description: "Create or replace a workspace file, or an absolute local file when workspace access is full.",
     permission: "write",
     parameters: objectSchema(
       {
-        path: string("Workspace-relative file path."),
+        path: string("Workspace-relative path, or absolute local path when access is full."),
         content: string("Full file content."),
         overwrite: boolean("Allow replacing an existing file."),
       },

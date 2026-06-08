@@ -1,5 +1,5 @@
-import path from "node:path";
-import type { ToolDefinition, VllmAgentConfig, WorkspaceIdentity } from "../types.js";
+import type { JsonObject, PermissionMode, ToolDefinition, VllmAgentConfig, WorkspaceIdentity } from "../types.js";
+import { isExternalLocalPath } from "../util/fs.js";
 
 export interface PermissionDecision {
   status: "allow" | "ask" | "deny";
@@ -22,21 +22,24 @@ export class PermissionPolicy {
   ) {}
 
   decide(tool: ToolDefinition, args: Record<string, unknown>): PermissionDecision {
+    const policy = effectiveWorkspacePermission(this.config, this.workspace);
+    const mode = policy.mode;
+    if (mode === "full_access") {
+      return { status: "allow", reason: "full_access" };
+    }
     if (tool.name === "run_command" && typeof args.command === "string" && isDestructiveCommand(args.command)) {
       return {
-        status: this.config.permissions.mode === "full_access" ? "ask" : "deny",
+        status: mode === "auto_approve" ? "ask" : "deny",
         reason: "destructive shell command requires explicit approval",
       };
     }
-    if ((tool.permission === "write" || tool.permission === "external_path") && pathEscapesWorkspace(args.path, this.workspace.root)) {
+    if (usesExternalLocalPath(args, this.workspace.root)) {
       return {
-        status: this.config.permissions.mode === "full_access" ? "ask" : "deny",
+        status: mode === "auto_approve" || mode === "ask" || mode === "custom" ? "ask" : "deny",
         reason: "path is outside workspace",
       };
     }
-    switch (this.config.permissions.mode) {
-      case "full_access":
-        return { status: "allow", reason: "full_access" };
+    switch (mode) {
       case "auto_approve":
         if (tool.permission === "destructive" || tool.permission === "external_path") {
           return { status: "ask", reason: "auto_approve requires approval for risky operations" };
@@ -48,11 +51,35 @@ export class PermissionPolicy {
         }
         return { status: "ask", reason: "ask mode" };
       case "custom":
-        return customDecision(this.config.permissions.custom, tool);
+        return customDecision(policy.custom, tool);
       default:
         return { status: "deny", reason: "unknown permission mode" };
     }
   }
+}
+
+export function effectiveWorkspacePermission(
+  config: VllmAgentConfig,
+  workspace: WorkspaceIdentity,
+): { mode: PermissionMode; custom?: JsonObject; source: "workspace" | "default" } {
+  const workspacePolicy = config.permissions.workspaces?.[workspace.id];
+  if (workspacePolicy && isPermissionMode(workspacePolicy.mode)) {
+    return { mode: workspacePolicy.mode, custom: workspacePolicy.custom, source: "workspace" };
+  }
+  return { mode: "full_access", source: "default" };
+}
+
+export function setWorkspacePermissionMode(config: VllmAgentConfig, workspace: WorkspaceIdentity, mode: PermissionMode): void {
+  config.permissions.workspaces ??= {};
+  const existing = config.permissions.workspaces[workspace.id];
+  config.permissions.workspaces[workspace.id] = {
+    mode,
+    ...(mode === "custom" && (existing?.custom ?? config.permissions.custom) ? { custom: (existing?.custom ?? config.permissions.custom)! } : {}),
+  };
+}
+
+export function workspaceExternalPathsAllowed(config: VllmAgentConfig, workspace: WorkspaceIdentity): boolean {
+  return effectiveWorkspacePermission(config, workspace).mode === "full_access";
 }
 
 function customDecision(custom: unknown, tool: ToolDefinition): PermissionDecision {
@@ -72,12 +99,17 @@ function isDestructiveCommand(command: string): boolean {
   return destructivePatterns.some((pattern) => pattern.test(command));
 }
 
-function pathEscapesWorkspace(value: unknown, workspaceRoot: string): boolean {
-  if (typeof value !== "string") {
+function usesExternalLocalPath(args: Record<string, unknown>, workspaceRoot: string): boolean {
+  if (isExternalLocalPath(workspaceRoot, args.path) || isExternalLocalPath(workspaceRoot, args.cwd)) {
+    return true;
+  }
+  const inputs = args.inputs;
+  if (!Array.isArray(inputs)) {
     return false;
   }
-  // Resolve relative paths to detect path traversal (e.g. ../../etc/passwd)
-  const resolved = path.resolve(workspaceRoot, value);
-  const relative = path.relative(workspaceRoot, resolved);
-  return relative.startsWith("..") || path.isAbsolute(relative);
+  return inputs.some((input) => isExternalLocalPath(workspaceRoot, input));
+}
+
+function isPermissionMode(value: unknown): value is PermissionMode {
+  return value === "ask" || value === "auto_approve" || value === "full_access" || value === "custom";
 }

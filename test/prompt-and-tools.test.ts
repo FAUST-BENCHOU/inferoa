@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { pathToFileURL } from "node:url";
 import { DEFAULT_CONFIG } from "../src/config/defaults.js";
 import { SessionStore } from "../src/session/store.js";
 import { PromptBuilder } from "../src/context/prompt.js";
@@ -810,6 +811,120 @@ test("ToolRegistry runs workspace, search, command, git, and evidence tools", as
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("ToolRegistry read_file supports explicit external local paths", async () => {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-workspace-read-"));
+  const externalDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-external-read-"));
+  const store = await SessionStore.open(path.join(workspaceDir, "state"));
+  try {
+    const workspaceRoot = path.join(workspaceDir, "workspace");
+    await mkdir(workspaceRoot, { recursive: true });
+    const externalFile = path.join(externalDir, "Dragged File.md");
+    await writeFile(externalFile, "outside\nworkspace\n", "utf8");
+
+    const workspace: WorkspaceIdentity = { id: "w_external_read", root: workspaceRoot, alias: "external-read" };
+    const session = store.createSession(workspace, "external-read");
+    const registry = new ToolRegistry(config(), workspace, store);
+
+    const escaped = externalFile.replaceAll(" ", "\\ ");
+    const readEscaped = await registry.call({ id: "external-read-1", name: "read_file", arguments: { path: escaped } }, { session_id: session.session_id });
+    assert.equal(readEscaped.ok, true, JSON.stringify(readEscaped));
+    assert.equal(readEscaped.data?.external, true);
+    assert.match(String(readEscaped.data?.content ?? ""), /outside/);
+
+    const readUrl = await registry.call({ id: "external-read-2", name: "read_file", arguments: { path: pathToFileURL(externalFile).href } }, { session_id: session.session_id });
+    assert.equal(readUrl.ok, true, JSON.stringify(readUrl));
+    assert.equal(readUrl.data?.path, externalFile);
+    assert.match(String(readUrl.data?.content ?? ""), /workspace/);
+
+    const listed = await registry.call({ id: "external-list", name: "list_dir", arguments: { path: externalDir } }, { session_id: session.session_id });
+    assert.equal(listed.ok, true, JSON.stringify(listed));
+    assert.ok((listed.data?.entries as Array<{ path?: string }>).some((entry) => entry.path === externalFile));
+
+    const externalWrite = path.join(externalDir, "written.txt");
+    const wrote = await registry.call(
+      { id: "external-write", name: "write_file", arguments: { path: externalWrite, content: "draft\n", overwrite: true } },
+      { session_id: session.session_id },
+    );
+    assert.equal(wrote.ok, true, JSON.stringify(wrote));
+    assert.equal(wrote.data?.external, true);
+    assert.equal(await readFile(externalWrite, "utf8"), "draft\n");
+
+    const edited = await registry.call(
+      { id: "external-edit", name: "edit_file", arguments: { path: externalWrite, old_text: "draft", new_text: "final" } },
+      { session_id: session.session_id },
+    );
+    assert.equal(edited.ok, true, JSON.stringify(edited));
+    assert.equal(await readFile(externalWrite, "utf8"), "final\n");
+  } finally {
+    store.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(externalDir, { recursive: true, force: true });
+  }
+});
+
+test("ToolRegistry blocks external local paths after workspace access is reduced", async () => {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-workspace-access-"));
+  const externalDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-external-access-"));
+  const store = await SessionStore.open(path.join(workspaceDir, "state"));
+  try {
+    const workspaceRoot = path.join(workspaceDir, "workspace");
+    await mkdir(workspaceRoot, { recursive: true });
+    await writeFile(path.join(workspaceRoot, "inside.txt"), "inside\n", "utf8");
+    const externalFile = path.join(externalDir, "outside.txt");
+    await writeFile(externalFile, "outside\n", "utf8");
+
+    const workspace: WorkspaceIdentity = { id: "w_access_reduced", root: workspaceRoot, alias: "access-reduced" };
+    const session = store.createSession(workspace, "access-reduced");
+    const nextConfig = config();
+    nextConfig.permissions.workspaces = { [workspace.id]: { mode: "ask" } };
+    const registry = new ToolRegistry(nextConfig, workspace, store);
+
+    const insideRead = await registry.call({ id: "inside-read", name: "read_file", arguments: { path: "inside.txt" } }, { session_id: session.session_id });
+    assert.equal(insideRead.ok, true, JSON.stringify(insideRead));
+
+    const externalRead = await registry.call({ id: "external-read", name: "read_file", arguments: { path: externalFile } }, { session_id: session.session_id });
+    assert.equal(externalRead.ok, false);
+    assert.equal(externalRead.error?.code, "permission_required");
+
+    const externalWrite = await registry.call(
+      { id: "external-write", name: "write_file", arguments: { path: path.join(externalDir, "blocked.txt"), content: "blocked\n", overwrite: true } },
+      { session_id: session.session_id },
+    );
+    assert.equal(externalWrite.ok, false);
+    assert.equal(externalWrite.error?.code, "permission_required");
+  } finally {
+    store.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(externalDir, { recursive: true, force: true });
+  }
+});
+
+test("ToolRegistry defaults new workspaces to full access even with legacy global restrictions", async () => {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-workspace-default-access-"));
+  const externalDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-external-default-access-"));
+  const store = await SessionStore.open(path.join(workspaceDir, "state"));
+  try {
+    const workspaceRoot = path.join(workspaceDir, "workspace");
+    await mkdir(workspaceRoot, { recursive: true });
+    const externalFile = path.join(externalDir, "outside.txt");
+    await writeFile(externalFile, "outside\n", "utf8");
+
+    const workspace: WorkspaceIdentity = { id: "w_default_full_access", root: workspaceRoot, alias: "default-full-access" };
+    const session = store.createSession(workspace, "default-full-access");
+    const nextConfig = config();
+    nextConfig.permissions.mode = "ask";
+    const registry = new ToolRegistry(nextConfig, workspace, store);
+
+    const externalRead = await registry.call({ id: "external-read", name: "read_file", arguments: { path: externalFile } }, { session_id: session.session_id });
+    assert.equal(externalRead.ok, true, JSON.stringify(externalRead));
+    assert.equal(externalRead.data?.external, true);
+  } finally {
+    store.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(externalDir, { recursive: true, force: true });
   }
 });
 

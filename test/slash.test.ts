@@ -59,6 +59,23 @@ test("slash parser exposes clear session commands and readable activity command"
   assert.equal(resume.command?.name, "resume");
   assert.equal(resume.args, "s_123");
   assert.equal(resume.error, undefined);
+
+  const access = parseSlashCommand("/access full");
+  assert.equal(access.command?.name, "access");
+  assert.equal(access.args, "full");
+  assert.equal(access.error, undefined);
+});
+
+test("slash parser leaves dragged absolute paths as chat input", () => {
+  const single = parseSlashCommand("/Users/demo/Desktop/screenshot.png");
+  assert.equal(single.command, undefined);
+  assert.equal(single.error, undefined);
+  assert.equal(single.args, "/Users/demo/Desktop/screenshot.png");
+
+  const multiple = parseSlashCommand("/Users/demo/a.png /Users/demo/b.jpg");
+  assert.equal(multiple.command, undefined);
+  assert.equal(multiple.error, undefined);
+  assert.equal(multiple.args, "/Users/demo/a.png /Users/demo/b.jpg");
 });
 
 test("unknown slash command notice is short and neutral", () => {
@@ -99,6 +116,10 @@ test("slash registry exposes chat subcommands for completion", () => {
   assert.deepEqual(
     slashSubcommands("autoresearch").map((item) => item.value),
     ["/autoresearch status", "/autoresearch off", "/autoresearch clear"],
+  );
+  assert.deepEqual(
+    slashSubcommands("access").map((item) => item.value),
+    ["/access status", "/access full", "/access auto", "/access ask", "/access custom"],
   );
   assert.deepEqual(
     slashSubcommands("sessions").map((item) => item.value),

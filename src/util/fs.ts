@@ -2,6 +2,8 @@ import { constants, promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { singlePathInput } from "./path-input.js";
 
 export function homeStateDir(): string {
   return path.join(os.homedir(), ".inferoa");
@@ -83,4 +85,49 @@ export function resolveInside(base: string, requested: string): string {
     throw new Error(`Path escapes workspace: ${requested}`);
   }
   return resolved;
+}
+
+export function resolveReadablePath(base: string, requested: string): { file: string; displayPath: string; external: boolean } {
+  if (requested.trim() === "/") {
+    return { file: base, displayPath: ".", external: false };
+  }
+  const input = normalizeLocalPathInput(requested);
+  if (path.isAbsolute(input)) {
+    return { file: input, displayPath: input, external: true };
+  }
+  const file = resolveInside(base, input);
+  return { file, displayPath: input, external: false };
+}
+
+export function resolveWritablePath(base: string, requested: string, allowExternal: boolean): { file: string; displayPath: string; external: boolean } {
+  const resolved = resolveReadablePath(base, requested);
+  if (resolved.external && !allowExternal) {
+    throw new Error(`Path escapes workspace: ${requested}`);
+  }
+  return resolved;
+}
+
+export function isExternalLocalPath(base: string, requested: unknown): boolean {
+  if (typeof requested !== "string") {
+    return false;
+  }
+  const input = normalizeLocalPathInput(requested);
+  const resolved = path.isAbsolute(input) ? input : path.resolve(base, input);
+  const relative = path.relative(base, resolved);
+  return relative.startsWith("..") || path.isAbsolute(relative);
+}
+
+export function normalizeLocalPathInput(requested: string): string {
+  const trimmed = requested.trim();
+  const input = singlePathInput(trimmed) ?? trimmed;
+  if (input.startsWith("file://")) {
+    return fileURLToPath(input);
+  }
+  if (input === "~") {
+    return os.homedir();
+  }
+  if (input.startsWith("~/")) {
+    return path.join(os.homedir(), input.slice(2));
+  }
+  return input;
 }

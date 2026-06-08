@@ -3,21 +3,23 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import type { JsonObject, ToolResult } from "../types.js";
 import type { ResourceRecord } from "../session/store.js";
-import { resolveInside, runSmallCommand, toPosixPath } from "../util/fs.js";
+import { resolveInside, resolveReadablePath, resolveWritablePath, runSmallCommand, toPosixPath } from "../util/fs.js";
 import { clampLimit, DEFAULT_LIST_LIMIT, fail, ok, truncateText } from "../util/limit.js";
 import type { ToolExecutionContext } from "./context.js";
 import { decodeEscapedTextArgument, textArgumentCandidates } from "./text-args.js";
+import { workspaceExternalPathsAllowed } from "./permissions.js";
 
 export async function listDir(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   try {
     const rel = String(args.path ?? ".");
-    const dir = resolveInside(context.workspace.root, rel);
+    const readable = resolveWritablePath(context.workspace.root, rel, workspaceExternalPathsAllowed(context.config, context.workspace));
+    const dir = readable.file;
     const limit = clampLimit(args.limit, DEFAULT_LIST_LIMIT, 1000);
     const page = Number(args.page ?? 0);
     const entries = await fs.readdir(dir, { withFileTypes: true });
     const slice = entries.slice(page, page + limit).map((entry) => ({
       name: entry.name,
-      path: toPosixPath(path.relative(context.workspace.root, path.join(dir, entry.name))),
+      path: readable.external ? path.join(readable.displayPath, entry.name) : toPosixPath(path.relative(context.workspace.root, path.join(dir, entry.name))),
       type: entry.isDirectory() ? "directory" : entry.isFile() ? "file" : entry.isSymbolicLink() ? "symlink" : "other",
     }));
     const hasMore = page + limit < entries.length;
@@ -35,7 +37,8 @@ export async function listDir(args: JsonObject, context: ToolExecutionContext): 
 export async function readFile(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   try {
     const rel = String(args.path);
-    const file = resolveInside(context.workspace.root, rel);
+    const readable = resolveReadablePath(context.workspace.root, rel);
+    const file = readable.file;
     const text = await fs.readFile(file, "utf8");
     const lines = text.split(/\r?\n/);
     const start = Math.max(1, Number(args.start_line ?? 1));
@@ -45,8 +48,8 @@ export async function readFile(args: JsonObject, context: ToolExecutionContext):
     const truncated = start - 1 + count < lines.length;
     return {
       ok: true,
-      summary: `Read ${selected.length} lines from ${rel}`,
-      data: { path: rel, start_line: start, line_count: selected.length, content, total_lines: lines.length },
+      summary: `Read ${selected.length} lines from ${readable.displayPath}`,
+      data: { path: readable.displayPath, external: readable.external, start_line: start, line_count: selected.length, content, total_lines: lines.length },
       next_page: truncated ? String(start + count) : undefined,
     };
   } catch (error) {
@@ -169,13 +172,14 @@ export async function fileSearch(args: JsonObject, context: ToolExecutionContext
 export async function writeFile(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   try {
     const rel = String(args.path);
-    const target = resolveInside(context.workspace.root, rel);
+    const writable = resolveWritablePath(context.workspace.root, rel, workspaceExternalPathsAllowed(context.config, context.workspace));
+    const target = writable.file;
     const overwrite = Boolean(args.overwrite);
     let previous: string | undefined;
     try {
       await fs.access(target);
       if (!overwrite) {
-        return fail("file_exists", `File exists and overwrite was not true: ${rel}`);
+        return fail("file_exists", `File exists and overwrite was not true: ${writable.displayPath}`);
       }
       previous = await fs.readFile(target, "utf8");
     } catch {
@@ -184,7 +188,12 @@ export async function writeFile(args: JsonObject, context: ToolExecutionContext)
     const next = String(args.content);
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.writeFile(target, next, "utf8");
-    return ok(`Wrote ${rel}`, { path: rel, bytes: Buffer.byteLength(next), diff: simpleUnifiedDiff(rel, previous ?? "", next, previous === undefined) });
+    return ok(`Wrote ${writable.displayPath}`, {
+      path: writable.displayPath,
+      external: writable.external,
+      bytes: Buffer.byteLength(next),
+      diff: simpleUnifiedDiff(writable.displayPath, previous ?? "", next, previous === undefined),
+    });
   } catch (error) {
     return fail("write_file_failed", errorMessage(error));
   }
@@ -193,18 +202,20 @@ export async function writeFile(args: JsonObject, context: ToolExecutionContext)
 export async function editFile(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   try {
     const rel = String(args.path);
-    const target = resolveInside(context.workspace.root, rel);
+    const writable = resolveWritablePath(context.workspace.root, rel, workspaceExternalPathsAllowed(context.config, context.workspace));
+    const target = writable.file;
     const rawOldText = String(args.old_text);
     const rawNewText = String(args.new_text);
     const occurrence = Math.max(1, Number(args.occurrence ?? 1));
     if (!rawOldText) {
-      return fail("old_text_required", `old_text must not be empty for ${rel}`);
+      return fail("old_text_required", `old_text must not be empty for ${writable.displayPath}`);
     }
     const text = await fs.readFile(target, "utf8");
     const match = findOccurrence(text, textArgumentCandidates(rawOldText), occurrence);
     if (!match) {
-      return fail("old_text_not_found", `Could not find occurrence ${occurrence} in ${rel}`, {
-        path: rel,
+      return fail("old_text_not_found", `Could not find occurrence ${occurrence} in ${writable.displayPath}`, {
+        path: writable.displayPath,
+        external: writable.external,
         occurrence,
         hint: "edit_file requires exact text. Use read_file around a similar line, or use apply_patch for structured edits.",
         similar_lines: similarTextSnippets(text, rawOldText) as never,
@@ -213,11 +224,12 @@ export async function editFile(args: JsonObject, context: ToolExecutionContext):
     const newText = match.decoded_escapes ? decodeEscapedTextArgument(rawNewText) : rawNewText;
     const updated = `${text.slice(0, match.index)}${newText}${text.slice(match.index + match.old_text.length)}`;
     await fs.writeFile(target, updated, "utf8");
-    return ok(`Edited ${rel}`, {
-      path: rel,
+    return ok(`Edited ${writable.displayPath}`, {
+      path: writable.displayPath,
+      external: writable.external,
       occurrence,
       decoded_escapes: match.decoded_escapes,
-      diff: simpleUnifiedDiff(rel, text, updated, false),
+      diff: simpleUnifiedDiff(writable.displayPath, text, updated, false),
     });
   } catch (error) {
     return fail("edit_file_failed", errorMessage(error));

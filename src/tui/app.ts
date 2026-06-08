@@ -34,9 +34,11 @@ import type {
   ModelSetup,
   ModelUsage,
   OmniEndpointConfig,
+  PermissionMode,
   SessionEvent,
   SessionRecord,
   VllmAgentConfig,
+  WorkspaceIdentity,
 } from "../types.js";
 import type { SupervisorJob } from "../session/store.js";
 import { randomId } from "../util/hash.js";
@@ -53,6 +55,7 @@ import { composerEraseRowsForResize } from "./resize.js";
 import { RESUME_SESSION_PAGE_SIZE, resumeSessionPage } from "./session-picker.js";
 import { renderSessionTranscript } from "./session-transcript.js";
 import { renderUnknownSlashCommandNotice } from "./slash-notice.js";
+import { effectiveWorkspacePermission, setWorkspacePermissionMode } from "../tools/permissions.js";
 import { renderToolCards } from "./tool-renderer.js";
 import { withConversationGap } from "./transcript-spacing.js";
 import { MarkdownStreamRenderer } from "./markdown.js";
@@ -1016,6 +1019,9 @@ export class TuiApp {
         case "system":
           await this.renderEndpointView();
           return;
+        case "access":
+          await this.renderAccessView(args);
+          return;
         case "skills":
           await this.renderSkillsView(args);
           return;
@@ -1827,6 +1833,42 @@ export class TuiApp {
       this.app.configFiles.push(target);
     }
     this.renderPanel("Model Saved", [`${fg256(48, "✓")} ${selected}`, `${fg256(39, "Config")} ${target}`]);
+  }
+
+  private async renderAccessView(args: string): Promise<void> {
+    if (isAccessStatusRequest(args)) {
+      this.renderPanel("Access", accessStatusLines(this.app.config, this.app.workspace));
+      return;
+    }
+    const requested = parseAccessMode(args);
+    if (args.trim() && !requested) {
+      this.renderNotice("Unknown access mode. Use /access full, auto, ask, custom, or status.");
+      return;
+    }
+    const mode = requested ?? await this.chooseAccessMode();
+    const nextConfig = structuredClone(this.app.config);
+    setWorkspacePermissionMode(nextConfig, this.app.workspace, mode);
+    const target = await saveUserConfig(nextConfig);
+    Object.assign(this.app.config, nextConfig);
+    if (!this.app.configFiles.includes(target)) {
+      this.app.configFiles.push(target);
+    }
+    this.renderPanel("Access", accessStatusLines(this.app.config, this.app.workspace, target));
+  }
+
+  private async chooseAccessMode(): Promise<PermissionMode> {
+    const current = effectiveWorkspacePermission(this.app.config, this.app.workspace).mode;
+    const options: SelectOption<PermissionMode>[] = [
+      { value: "full_access", label: "Full access", description: "Read/write local files and run tools without approval prompts" },
+      { value: "auto_approve", label: "Auto approve", description: "Run normal tools automatically; stop for risky or external access" },
+      { value: "ask", label: "Request approval", description: "Ask before writes, shell, network, or external file access" },
+      { value: "custom", label: "Custom", description: "Use this workspace's custom rules from config" },
+    ];
+    const defaultIndex = Math.max(0, options.findIndex((option) => option.value === current));
+    return await this.selectOption("Access", options, defaultIndex, [
+      `${fg256(39, "Workspace")} ${compactWorkspacePath(this.app.workspace.root)}`,
+      `${fg256(39, "Current")} ${accessModeLabel(current)}`,
+    ]);
   }
 
   private async renderEndpointView(): Promise<void> {
@@ -4571,6 +4613,72 @@ function displayToolName(name: string): string {
       return "context_status";
     default:
       return name;
+  }
+}
+
+function isAccessStatusRequest(args: string): boolean {
+  const value = args.trim().toLowerCase();
+  return value === "status" || value === "show";
+}
+
+function parseAccessMode(args: string): PermissionMode | undefined {
+  const value = args.trim().toLowerCase().replaceAll("-", "_");
+  switch (value) {
+    case "full":
+    case "full_access":
+      return "full_access";
+    case "auto":
+    case "auto_approve":
+      return "auto_approve";
+    case "ask":
+    case "approval":
+    case "request":
+    case "request_approval":
+      return "ask";
+    case "custom":
+      return "custom";
+    default:
+      return undefined;
+  }
+}
+
+function accessStatusLines(config: VllmAgentConfig, workspace: WorkspaceIdentity, target?: string): string[] {
+  const policy = effectiveWorkspacePermission(config, workspace);
+  const lines = [
+    `${fg256(39, "Mode")} ${accessModeLabel(policy.mode)}${fg256(244, ` · ${policy.source}`)}`,
+    `${fg256(39, "Workspace")} ${compactWorkspacePath(workspace.root)}`,
+    fg256(244, accessModeSummary(policy.mode)),
+  ];
+  if (target) {
+    lines.push("", `${fg256(39, "Config")} ${target}`);
+  }
+  lines.push("", `${fg256(39, "/access full")} full access · ${fg256(39, "/access ask")} request approval · ${fg256(39, "/access status")} show current`);
+  return lines;
+}
+
+function accessModeLabel(mode: PermissionMode): string {
+  switch (mode) {
+    case "full_access":
+      return "Full access";
+    case "auto_approve":
+      return "Auto approve";
+    case "ask":
+      return "Request approval";
+    case "custom":
+      return "Custom";
+  }
+}
+
+function accessModeSummary(mode: PermissionMode): string {
+  switch (mode) {
+    case "full_access":
+      return "External files are readable/writable; tools run without approval prompts.";
+    case "auto_approve":
+      return "Normal tools run automatically; risky commands and external paths pause for approval.";
+    case "ask":
+      return "Reads stay open; writes, shell, network, and external paths request approval.";
+    case "custom":
+      return "Rules come from this workspace's custom config.";
   }
 }
 

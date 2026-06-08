@@ -57,6 +57,7 @@ export interface VllmAgentConfig {
   permissions: {
     mode: PermissionMode;
     custom?: JsonObject;
+    workspaces?: Record<string, { mode: PermissionMode; custom?: JsonObject }>;
   };
   context: {
     compression_threshold: number;
