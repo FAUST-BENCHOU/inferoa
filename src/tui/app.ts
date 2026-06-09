@@ -3922,13 +3922,11 @@ export class TuiApp {
           if (!rendered) {
             return;
           }
-          activity.pauseForOutput({ redraw: false });
           if (renderState.lastSegment === "tool") {
             this.writeTranscript("\n");
           }
           this.writeTranscript(rendered);
           renderState.lastSegment = "assistant";
-          activity.status(decodeActivity);
         },
         onStatus: (event) => {
           if (event.type === "model_start") {

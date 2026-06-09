@@ -158,7 +158,7 @@ test("goal continuation queues a hidden foreground prompt instead of a daemon jo
   }
 });
 
-test("decode activity resumes between streamed transcript writes", async () => {
+test("decode activity stays active without per-chunk resume redraws", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-decode-activity-"));
   try {
     const session = {
@@ -181,10 +181,11 @@ test("decode activity resumes between streamed transcript writes", async () => {
           run: async (options: { onDelta?: (text: string) => void; onStatus?: (event: { type: "model_start"; model: string }) => void }) => {
             options.onStatus?.({ type: "model_start", model: "decode-activity-test" });
             options.onDelta?.("hello\n");
+            options.onDelta?.("world\n");
             return {
               session,
               run_id: "run_decode_activity",
-              content: "hello",
+              content: "hello\nworld",
               tool_rounds: 0,
               tool_calls: 0,
               duration_ms: 1,
@@ -238,12 +239,12 @@ test("decode activity resumes between streamed transcript writes", async () => {
     await view.submitPrompt("hi", { renderPrompt: false });
 
     assert.ok(transcript.some((chunk) => chunk.includes("hello")));
-    assert.deepEqual(activityCalls.slice(0, 5), [
+    assert.ok(transcript.some((chunk) => chunk.includes("world")));
+    assert.deepEqual(activityCalls, [
       "start:Prefill with >_ Inferoa",
       "status:Prefill with >_ Inferoa",
       "status:Decode with >_ Inferoa",
-      "pause",
-      "status:Decode with >_ Inferoa",
+      "stop",
     ]);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
