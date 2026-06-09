@@ -371,8 +371,8 @@ function renderWelcomeMark(): string[] {
 
 function colorWelcomeLogoRow(line: string, index: number): string {
   const inferColor = index < 2 ? 244 : 252;
-  const oaColor = index < 2 ? 24 : 31;
-  const oaStart = 39;
+  const oaColor = index < 2 ? 67 : 75;
+  const oaStart = 38;
   const inferPart = line.slice(0, oaStart);
   const oaPart = line.slice(oaStart);
   return `${ansi.bold}\x1b[38;5;${inferColor}m${inferPart}\x1b[38;5;${oaColor}m${oaPart}${ansi.reset}`;
