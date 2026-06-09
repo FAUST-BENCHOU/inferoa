@@ -39,13 +39,15 @@ For non-trivial coding tasks, Inferoa should:
 ## Useful Commands
 
 ```text
-/tools last
-/context
-/todo
-/acceptance status
+/tools last                  Show the latest tool call
+/context                     Show context and compression state
+/todo                        Open the task ledger
+/acceptance status           Show final acceptance readiness
 ```
 
 Use `/tools last` when you want to inspect the latest tool call. Use `/context`
 when the repository is large or the session has been running long enough to
 trigger compression. Use `/todo` for the task ledger and `/acceptance status`
-when validating a release-quality endpoint setup.
+when validating a release-quality endpoint setup. See
+[Slash commands](../reference/slash-commands.md) for the full command
+registry, including aliases.

@@ -12,13 +12,21 @@ npm install -g inferoa@dev
 ```
 
 `@dev` installs the newest Inferoa build published from `main`. The npm
-`latest` dist-tag is reserved for stable release versions.
+`latest` dist-tag is reserved for stable release versions. Node.js 24 or
+newer is required.
 
 Then start the setup wizard and launch the TUI:
 
 ```bash
 inferoa setup
 inferoa
+```
+
+Pass a prompt as an argument to start a session and submit it as the first user
+turn:
+
+```bash
+inferoa "Inspect this repository and list the test entrypoints."
 ```
 
 Run a one-shot prompt without opening the interactive interface:
@@ -46,16 +54,22 @@ sequenceDiagram
 
 ## First Commands
 
-- Use `/setup` when you need to change provider, model, endpoint, web search,
-  or Omni configuration.
-- Use `/system` to inspect model, web search, Omni, and runtime status.
+Slash commands live inside the TUI. See
+[Slash commands](./reference/slash-commands.md) for the full registry.
+
+- Use `/setup` to change provider, model, endpoint, web search, or Omni
+  configuration.
+- Use `/system` (also `/endpoints`) to inspect model, web search, Omni, and
+  runtime status.
 - Use [`/goal set`](./workflows/goal-mode.md) for a durable objective that
   should survive multiple turns.
 - Use [`/plan set`](./workflows/plan-mode.md) for ambiguous work that needs an
   inspectable plan before execution.
 - Use [`/autoresearch`](./workflows/autoresearch-mode.md) for experiment-shaped
   work that needs repeated measurement.
-- Use `/tokenmaxxing` to see token, cache, RTK, and routing pressure.
+- Use `/tokenmaxxing` (also `/cache`, `/rtk`, `/activity`) to see token, cache,
+  RTK, and routing pressure.
+- Use `/access` to change this workspace's file and tool access mode.
 
 ## Repository Development
 
@@ -65,7 +79,9 @@ local CLI:
 ```bash
 npm install
 npm run build
-npm link
+make dev-bin
+inferoa setup
+inferoa
 ```
 
 Useful development commands:
@@ -74,7 +90,10 @@ Useful development commands:
 npm test
 make docs-preview
 make docs-build
+make dev-unlink
 ```
 
 Configuration is stored under `~/.inferoa/`. Endpoint keys are stored in the
-local vault; config files store key references.
+local vault; config files store key references. See the
+[Configuration reference](./reference/configuration.md) for the full schema
+and environment overrides.

@@ -44,19 +44,24 @@ features; they define the state that long-horizon inference has to preserve.
 
 Prefix cache is a core design target. Inferoa protects it with stable prompt
 epochs, deterministic tool schema ordering, bounded mutable context, and
-separate warmup versus steady-state cache reporting.
+separate warmup versus steady-state cache reporting. See
+[Prefix cache](./concepts/prefix-cache.md) for the prompt-epoch model.
 
 ## Context Optimization
 
 Context optimization selects what the next turn actually needs. CodeGraph,
 RTK, summaries, symbols, resources, and tool outputs are used to reduce token
-waste while preserving the evidence required for accurate coding work.
+waste while preserving the evidence required for accurate coding work. See
+[Context optimization](./concepts/context-optimization.md) for the
+lifecycle and defaults.
 
 ## Intelligent Routing
 
 Routing is part of agent policy. vLLM Semantic Router can choose model paths by
 cost, safety, privacy, capability, and session pressure instead of forcing
-every turn through the same model.
+every turn through the same model. See
+[Model endpoints](./configuration/model-endpoints.md) for the configuration
+shape and the `auto` mode that delegates routing to vLLM Semantic Router.
 
 ## Self-Hosted Model Serving
 
@@ -68,4 +73,6 @@ agent can surface and eventually act on.
 
 vLLM Omni extends the self-hosted serving path with image, video, and audio
 understanding or generation. Multimodal outputs are tracked as session
-artifacts instead of disconnected side calls.
+artifacts instead of disconnected side calls. See [vLLM Omni](./configuration/omni.md)
+for the configured endpoints and [Acceptance](./operations/acceptance.md) for
+the real-endpoint validation workflow.

@@ -10,19 +10,21 @@ provided. By default, the user config path is:
 ~/.inferoa/config.yaml
 ```
 
-Use `INFEROA_STATE_DIR` or `--state-dir` to change the state directory.
+Use `INFEROA_STATE_DIR` or `--state-dir` to change the state directory. The
+state directory also holds the local secret vault, session database, and other
+durable state.
 
 ## Top-Level Shape
 
-```yaml
-workspace:
-  root: /path/to/workspace
+The full default configuration is written by `inferoa debug init`. The defaults
+shipped in [`src/config/defaults.ts`](https://github.com/agentic-in/inferoa/blob/main/src/config/defaults.ts)
+are:
 
+```yaml
 model_setup:
   mode: direct
   provider: vllm
   base_url: http://localhost:8000/v1
-  model: model-id
   context_window: 32768
 
 model_retry:
@@ -43,6 +45,11 @@ context:
   compression_threshold: 0.8
   context_window: 32768
   protected_recent_loops: 3
+  engine:
+    provider: auto
+    startup: welcome
+    require_ready_before_chat: true
+    watch: true
 
 skills:
   enabled:
@@ -62,7 +69,24 @@ daemon:
   poll_ms: 1000
 ```
 
+## Key Fields
+
+- `model_setup.mode` — one of `direct`, `auto`, or `external`. `auto`
+  delegates model selection to vLLM Semantic Router.
+- `model_setup.provider` — provider id such as `vllm`, `vllm-sr`, or an
+  external provider id from the setup wizard.
+- `omni.endpoints` — keyed by capability. Supported keys are `vision`,
+  `image_generation`, `image_edit`, `video_understanding`, `video_generation`,
+  `audio_understanding`, `audio_generation`, and `speech`.
+- `permissions.mode` — workspace permission mode. One of `full_access`,
+  `auto_approve`, `ask`, or `custom`. Override per workspace from the TUI with
+  [`/access`](../reference/slash-commands.md).
+- `context.engine.provider` — `auto`, `codegraph`, `builtin`, or `off`.
+- `skills.managed_installs` — `ask`, `always`, or `never`.
+
 ## Environment Overrides
+
+Environment variables override config at startup. They never persist to disk.
 
 | Variable | Effect |
 | --- | --- |
@@ -70,9 +94,9 @@ daemon:
 | `VLLM_BASE_URL` | Fallback override for `model_setup.base_url` |
 | `INFEROA_MODEL` | Overrides `model_setup.model` |
 | `VLLM_MODEL` | Fallback override for `model_setup.model` |
-| `INFEROA_MODE=auto` | Sets auto mode through vLLM Semantic Router |
+| `INFEROA_MODE=auto` | Sets `model_setup.mode=auto` and uses the vLLM Semantic Router |
 | `INFEROA_RTK` | Enables or disables RTK |
-| `INFEROA_RTK_PATH` | Uses a specific RTK binary |
+| `INFEROA_RTK_PATH` | Uses a specific RTK binary path |
 | `INFEROA_RTK_AUTO_DOWNLOAD` | Enables or disables managed RTK download |
 | `INFEROA_OMNI_VISION_URL` | Enables and configures the Omni vision endpoint URL |
 | `INFEROA_OMNI_IMAGE_URL` | Enables and configures image generation |
@@ -80,11 +104,16 @@ daemon:
 | `INFEROA_OMNI_VIDEO_URL` | Enables and configures video generation |
 | `INFEROA_OMNI_SPEECH_URL` | Enables and configures speech generation |
 
-Each Omni URL override also supports a matching model variable such as
-`INFEROA_OMNI_VISION_MODEL`.
+Each Omni URL override also supports a matching `INFEROA_OMNI_<KEY>_MODEL`
+variable. The accepted keys are the endpoint names: `VISION`, `IMAGE`,
+`IMAGE_EDIT`, `VIDEO`, `SPEECH`.
 
 ## Secret Handling
 
 Config files should store `api_key_ref`, not raw `api_key` values. The setup
 wizard writes raw secrets into the local vault and stores only references in
-the YAML file.
+the YAML file. The same rule applies to `model_setup`,
+`omni.endpoints.*.api_key`, and `web_search.api_key`.
+
+`inferoa debug setup` redacts any `*api_key*` field before printing. Public
+docs, progress logs, and evidence artifacts must not include raw keys.

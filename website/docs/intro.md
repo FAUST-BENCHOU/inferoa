@@ -55,19 +55,30 @@ behavior with inference behavior.
 
 ## Documentation Map
 
-- Start with [Quickstart](./quickstart.md) when you want to run Inferoa.
-- Read [Architecture](./architecture.md) when you want the system model.
-- Use [Model endpoints](./configuration/model-endpoints.md) when connecting
-  direct vLLM, vLLM Semantic Router, or an external compatible provider.
-- Use [Goal mode](./workflows/goal-mode.md), [Plan mode](./workflows/plan-mode.md),
-  and [Autoresearch mode](./workflows/autoresearch-mode.md) when structuring
-  long-running work.
-- Use [CLI reference](./reference/cli.md) and
-  [Slash commands](./reference/slash-commands.md) when you need exact command
-  names.
+- [Quickstart](./quickstart.md) when you want to run Inferoa.
+- [Architecture](./architecture.md) for the system model.
+- [Tokenmaxxing](./concepts/tokenmaxxing.md),
+  [Context optimization](./concepts/context-optimization.md), and
+  [Prefix cache](./concepts/prefix-cache.md) for the core disciplines.
+- [Model endpoints](./configuration/model-endpoints.md),
+  [vLLM Omni](./configuration/omni.md), and
+  [Context and RTK](./configuration/context-and-rtk.md) for configuration.
+- [Goal mode](./workflows/goal-mode.md),
+  [Plan mode](./workflows/plan-mode.md),
+  [Autoresearch mode](./workflows/autoresearch-mode.md),
+  [Coding workflow](./workflows/coding-workflow.md), and
+  [Daemon and jobs](./workflows/daemon-jobs.md) for long-horizon workflows.
+- [Acceptance](./operations/acceptance.md) and
+  [Evidence and sessions](./operations/evidence-and-sessions.md) for release
+  validation.
+- [CLI reference](./reference/cli.md),
+  [Slash commands](./reference/slash-commands.md), and
+  [Configuration reference](./reference/configuration.md) when you need exact
+  command or key names.
 
 ## Current Implementation
 
 Inferoa is a TypeScript and Node.js terminal application. It stores local state
 under `~/.inferoa/` by default and keeps raw endpoint secrets in the local vault
-instead of plain configuration files.
+instead of plain configuration files. Node.js 24 or newer is required; the npm
+package is published as `inferoa` from the `agentic-in` organization.

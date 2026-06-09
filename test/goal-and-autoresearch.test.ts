@@ -614,6 +614,26 @@ test("goal tool maintains native decomposition and dynamic step updates", async 
     assert.equal(readGoalState(store, session.session_id)?.goal.planning?.active_step_id, "planning-state");
     assert.equal(readGoalState(store, session.session_id)?.goal.planning?.steps[0]?.notes, longNote);
 
+    const activeUpdated = await registry.call(
+      {
+        id: "gd_3_active",
+        name: "goal",
+        arguments: {
+          op: "update_step",
+          status: "completed",
+          notes: "Active planning state completed without repeating step_id.",
+          evidence: { defaulted_to_active_step: true },
+        },
+      },
+      { session_id: session.session_id, run_id: "run_gd" },
+    );
+    assert.equal(activeUpdated.ok, true, JSON.stringify(activeUpdated));
+    const afterActiveUpdate = readGoalState(store, session.session_id)?.goal;
+    assert.equal(afterActiveUpdate?.planning?.steps[1]?.id, "planning-state");
+    assert.equal(afterActiveUpdate?.planning?.steps[1]?.status, "completed");
+    assert.deepEqual(afterActiveUpdate?.planning?.steps[1]?.evidence, { defaulted_to_active_step: true });
+    assert.equal(afterActiveUpdate?.planning?.active_step_id, "verification");
+
     const context = new PromptBuilder(config(), store, workspace).build(
       store.getSession(session.session_id)!,
       "continue goal",
@@ -622,7 +642,8 @@ test("goal tool maintains native decomposition and dynamic step updates", async 
     const goalContext = findContextMessage(context.messages, "<goal.mode>");
     assert.match(goalContext, /Internal goal plan:/);
     assert.match(goalContext, /\[x\] runtime-accounting Reflection stopped and failed runtime accounting/);
-    assert.match(goalContext, /\[\*\] planning-state Add native goal planning state/);
+    assert.match(goalContext, /\[x\] planning-state Add native goal planning state/);
+    assert.match(goalContext, /\[\*\] verification Run focused verification/);
     assert.match(goalContext, /notes: Notes stay useful but bounded in the prompt/);
     assert.doesNotMatch(goalContext, /tail should stay in state only/);
     assert.match(goalContext, /evidence: files=src\/runtime\.ts; note=verified &lt;stable&gt; prompt tail; tests=runtime-long-horizon/);
@@ -636,13 +657,13 @@ test("goal tool maintains native decomposition and dynamic step updates", async 
     assert.equal(prematureComplete.error?.code, "goal_incomplete_plan");
     assert.equal(
       prematureComplete.error?.message,
-      "Cannot complete goal with unfinished internal plan steps: planning-state, verification",
+      "Cannot complete goal with unfinished internal plan steps: verification",
     );
     assert.equal((prematureComplete.data?.goal as { objective?: string } | undefined)?.objective, "Stabilize long-running research work");
     assert.equal((prematureComplete.data?.goal as { status?: string } | undefined)?.status, "active");
     assert.equal(
       ((prematureComplete.data?.goal as { planning?: { active_step_id?: string } } | undefined)?.planning)?.active_step_id,
-      "planning-state",
+      "verification",
     );
   } finally {
     store.close();
@@ -747,6 +768,20 @@ test("goal reflection gates completion and can expand a new frontier generation"
     );
     assert.equal(blockedComplete.ok, false);
     assert.equal(blockedComplete.error?.code, "goal_reflection_required");
+
+    const missingExpandSteps = await registry.call(
+      {
+        id: "ga_expand_missing_steps",
+        name: "goal",
+        arguments: { op: "reflect", decision: "expand", summary: "Found another frontier but forgot to describe it." },
+      },
+      { session_id: session.session_id, run_id: "run_reflection_expand_missing", request_class: "reflection", visibility: "internal" },
+    );
+    assert.equal(missingExpandSteps.ok, false);
+    assert.equal(missingExpandSteps.error?.code, "goal_reflection_failed");
+    assert.match(missingExpandSteps.error?.message ?? "", /requires concrete new steps/);
+    assert.equal((missingExpandSteps.data?.goal as { objective?: string } | undefined)?.objective, "Finish hidden frontier");
+    assert.equal((missingExpandSteps.data?.goal as { status?: string } | undefined)?.status, "active");
 
     const expanded = await registry.call(
       {

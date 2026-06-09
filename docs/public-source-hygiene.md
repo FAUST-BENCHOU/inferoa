@@ -1,5 +1,7 @@
 # Public Source Hygiene
 
+> Internal design note — not part of the public docs site.
+
 Public Inferoa documents and source should describe Inferoa on its own
 terms. Design research can inform private implementation work, but public
 materials must avoid naming unrelated products as inspirations, competitors, or

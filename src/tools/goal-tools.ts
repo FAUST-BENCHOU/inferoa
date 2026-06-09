@@ -131,13 +131,13 @@ function updateGoalStep(args: JsonObject, context: ToolExecutionContext): ToolRe
   if (state.goal.status === "complete" || state.goal.status === "dropped") {
     return fail("goal_closed", `Cannot update a ${state.goal.status} goal.`);
   }
-  const stepId = stringArg(args.step_id)?.trim();
+  const stepId = stringArg(args.step_id)?.trim() || state.goal.planning?.active_step_id;
   if (!stepId) {
-    return fail("goal_step_required", "step_id is required when op=update_step");
+    return failGoalWithState(state, "goal_step_required", "step_id is required when op=update_step and no active goal step is available");
   }
   const status = parseGoalStepStatus(stringArg(args.status));
   if (args.status !== undefined && !status) {
-    return fail("goal_step_status_invalid", "status must be pending, in_progress, completed, blocked, or skipped");
+    return failGoalWithState(state, "goal_step_status_invalid", "status must be pending, in_progress, completed, blocked, or skipped");
   }
   try {
     const next = updateGoalPlanningStep(state, {
@@ -150,7 +150,7 @@ function updateGoalStep(args: JsonObject, context: ToolExecutionContext): ToolRe
     });
     return describeGoal(writeGoalState(context.store, context.session_id, next, context.run_id), "Goal step updated");
   } catch (error) {
-    return fail("goal_step_update_failed", error instanceof Error ? error.message : String(error));
+    return failGoalWithState(state, "goal_step_update_failed", error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -163,11 +163,11 @@ function recordGoalReflection(args: JsonObject, context: ToolExecutionContext): 
     return fail("goal_missing", "No goal to reflect on.");
   }
   if (state.goal.status === "complete" || state.goal.status === "dropped") {
-    return fail("goal_closed", `Cannot reflect on a ${state.goal.status} goal.`);
+    return failGoalWithState(state, "goal_closed", `Cannot reflect on a ${state.goal.status} goal.`);
   }
   const decision = parseGoalReflectionDecision(stringArg(args.decision));
   if (!decision) {
-    return fail("goal_reflection_decision_required", "decision is required for op=reflect and must be expand, done, or blocked");
+    return failGoalWithState(state, "goal_reflection_decision_required", "decision is required for op=reflect and must be expand, done, or blocked");
   }
   try {
     const next = completeGoalReflection(
@@ -211,7 +211,7 @@ function recordGoalReflection(args: JsonObject, context: ToolExecutionContext): 
     }
     return describeGoal(saved, decision === "expand" ? "Goal frontier expanded" : "Goal reflection recorded");
   } catch (error) {
-    return fail("goal_reflection_failed", error instanceof Error ? error.message : String(error));
+    return failGoalWithState(state, "goal_reflection_failed", error instanceof Error ? error.message : String(error));
   }
 }
 

@@ -42,8 +42,9 @@ First viewport:
 
 The default chat banner should not expose base URLs, workspace ids, run ids,
 client ids, cache salts, prompt epoch ids, or other internal routing values.
-Those belong in explicit diagnostic views such as `/endpoints` and
-`/activity`.
+Those belong in explicit diagnostic views such as `/system` (also
+`/endpoints`) and `/tokenmaxxing` (also `/activity`, `/cache`, `/rtk`,
+`/evidence`, `/history`).
 
 The UI should make the product identity obvious without forcing the user through
 a marketing page.
@@ -236,15 +237,17 @@ Initial command set:
 
 - `/setup`: open setup wizard;
 - `/model`: open model/provider selector;
-- `/endpoints`: open endpoint capability and signal view;
+- `/system`: open endpoint capability and signal view (also `/endpoint`,
+  `/endpoints`);
 - `/skills`: open discovered skill picker and enable/disable skills;
-- `/cache`: show per-turn and aggregate cache evidence;
+- `/tokenmaxxing`: show per-turn and aggregate token, cache, RTK, and
+  routing savings (also `/cache`, `/rtk`, `/activity`, `/evidence`,
+  `/history`);
 - `/context`: show context and compression breakdown;
 - `/tools`: show active fixed tool schemas and tool renderer status;
 - `/sessions`: open session picker;
 - `/jobs`: open daemon/supervisor jobs;
 - `/todo`: open task ledger;
-- `/activity`: open the activity ledger and final report resources;
 - `/acceptance`: open final acceptance workflow;
 - `/help`: show keyboard shortcuts and command list;
 - `/exit`: exit the TUI.

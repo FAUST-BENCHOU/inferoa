@@ -29,12 +29,13 @@ long reports.
 ## Useful Commands
 
 ```text
-/sessions all
-/sessions resume
-/tools last
-/tokenmaxxing
-/context
+/sessions all                 Show active and archived sessions
+/sessions resume              Attach to a previous session
+/tools last                   Show the latest tool trace
+/tokenmaxxing                 Show token, cache, RTK, and routing savings
+/context                      Show context and compression state
 ```
 
 Use these commands to inspect the session before writing a final report or
-debugging a failed workflow.
+debugging a failed workflow. The full registry, including aliases, is in
+[Slash commands](../reference/slash-commands.md).

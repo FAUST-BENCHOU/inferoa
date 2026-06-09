@@ -20,6 +20,12 @@ you want and any constraints that matter:
 Inspect this package, find the test entrypoints, and add a missing docs build check.
 ```
 
+You can also start a session and submit a prompt from the shell:
+
+```bash
+inferoa "Inspect this package and add a missing docs build check."
+```
+
 ## Use Modes Deliberately
 
 - Use plain chat for small questions and one-turn inspections.
@@ -29,29 +35,34 @@ Inspect this package, find the test entrypoints, and add a missing docs build ch
   until a durable objective is done.
 - Use [`/autoresearch`](../workflows/autoresearch-mode.md) when the task is
   experiment-shaped and needs repeated measurement.
+- Use [`/acceptance`](../operations/acceptance.md) when validating a
+  release-quality endpoint setup.
 
 ## Inspect Evidence
 
 During or after the session:
 
 ```text
-/context
-/tools last
-/tokenmaxxing
-/sessions all
+/context                      Show context and compression state
+/tools last                   Show the latest tool trace
+/tokenmaxxing                 Show token, cache, RTK, and routing pressure
+/sessions all                 Show active and archived sessions
 ```
 
 The session log is designed to prove what happened: which files were read,
 which tools ran, which endpoint handled the request, and which artifacts were
-stored.
+stored. See [Evidence and sessions](../operations/evidence-and-sessions.md)
+for the event log model.
 
 ## Resume Later
 
-Use the session picker from the TUI:
+Open the session picker from the TUI:
 
 ```text
 /sessions resume
 ```
 
-Or launch with a fresh prompt and then use `/resume` to attach to prior work.
-The resumed session keeps its workspace identity and event log.
+Or run the top-level `/resume` slash command to attach to a previous session.
+The resumed session keeps its workspace identity and event log; you can keep
+using `/goal`, `/plan`, `/autoresearch`, and the rest of the TUI surfaces
+without losing continuity.
