@@ -63,7 +63,7 @@ import { isAbortError } from "../util/abort.js";
 import type { loadApp } from "../app.js";
 import { ansi, bgLine, bg256, center, centerBlock, fg256, frame, padRight, terminalHeight, terminalWidth, truncateToWidth, visibleWidth } from "./ansi.js";
 import { parseSlashCommand, slashCommandWithSubcommands, slashSubcommands, SLASH_COMMANDS, type SlashCommandName } from "./slash.js";
-import { renderActivityLine, renderActivityRecordLine } from "./activity.js";
+import { inferoaActivityLabel, renderActivityLine, renderActivityRecordLine } from "./activity.js";
 import { cacheTurnKind, formatDuration, renderCacheFooter, renderCacheReportTurn } from "./cache-footer.js";
 import { renderCompactEventLine, renderSessionActivityLines, renderTodoEventLines } from "./event-view.js";
 import { renderModeMetadataRight } from "./mode-footer.js";
@@ -3895,7 +3895,9 @@ export class TuiApp {
       lastSegment: "none",
     };
     const liveToolCallIds = new Set<string>();
-    const activity = this.startActivityIndicator(options.activityLabel ?? "Prefill with Inferoa");
+    const prefillActivity = options.activityLabel ?? inferoaActivityLabel("Prefill");
+    const decodeActivity = inferoaActivityLabel("Decode");
+    const activity = this.startActivityIndicator(prefillActivity);
     let sawModelDelta = false;
     const abort = new AbortController();
     this.#activeAbort = abort;
@@ -3911,7 +3913,7 @@ export class TuiApp {
         onDelta: (text) => {
           if (!sawModelDelta) {
             sawModelDelta = true;
-            activity.status("Decode with Inferoa");
+            activity.status(decodeActivity);
           }
           if (options.suppressTranscript) {
             return;
@@ -3926,8 +3928,13 @@ export class TuiApp {
           }
           this.writeTranscript(rendered);
           renderState.lastSegment = "assistant";
+          activity.status(decodeActivity);
         },
         onStatus: (event) => {
+          if (event.type === "model_start") {
+            sawModelDelta = false;
+            activity.status(prefillActivity);
+          }
           if (event.type === "model_retry") {
             activity.status(`Retrying Inferoa in ${formatDuration(event.delay_ms)}`);
           }

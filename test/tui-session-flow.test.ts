@@ -158,6 +158,98 @@ test("goal continuation queues a hidden foreground prompt instead of a daemon jo
   }
 });
 
+test("decode activity resumes between streamed transcript writes", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-decode-activity-"));
+  try {
+    const session = {
+      session_id: "s_decode_activity",
+      workspace_id: "w_decode_activity",
+      title: "decode activity",
+      status: "idle",
+      created_at: new Date(0).toISOString(),
+      updated_at: new Date(0).toISOString(),
+    };
+    const activityCalls: string[] = [];
+    const transcript: string[] = [];
+    const tui = new TuiApp(
+      {
+        config: structuredClone(DEFAULT_CONFIG),
+        configFiles: [],
+        workspace: { id: "w_decode_activity", root: stateDir, alias: "decode-activity" },
+        store: { listEvents: () => [] },
+        runtime: {
+          run: async (options: { onDelta?: (text: string) => void; onStatus?: (event: { type: "model_start"; model: string }) => void }) => {
+            options.onStatus?.({ type: "model_start", model: "decode-activity-test" });
+            options.onDelta?.("hello\n");
+            return {
+              session,
+              run_id: "run_decode_activity",
+              content: "hello",
+              tool_rounds: 0,
+              tool_calls: 0,
+              duration_ms: 1,
+              tokens_used: 1,
+              rtk: {
+                tool_calls: 0,
+                rtk_tool_calls: 0,
+                rtk_commands: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                saved_tokens: 0,
+                savings_pct: 0,
+                estimated_without_rtk_tokens: 1,
+                status: "ok",
+              },
+            };
+          },
+        },
+      } as never,
+    );
+    const view = tui as unknown as {
+      submitPrompt: (prompt: string, options?: { renderPrompt?: boolean }) => Promise<unknown>;
+      waitForCodeIntelligenceBeforeChat: () => Promise<boolean>;
+      startActivityIndicator: (label: string) => {
+        status: (label: string) => void;
+        record: (line: string) => void;
+        pauseForOutput: () => void;
+        stop: () => void;
+      };
+      writeTranscript: (text: string) => void;
+      latestTurnEvidence: () => Record<string, never>;
+      toolSummaryBlock: () => string;
+    };
+
+    view.waitForCodeIntelligenceBeforeChat = async () => true;
+    view.startActivityIndicator = (label) => {
+      activityCalls.push(`start:${stripAnsi(label)}`);
+      return {
+        status: (next) => activityCalls.push(`status:${stripAnsi(next)}`),
+        record: (line) => activityCalls.push(`record:${line}`),
+        pauseForOutput: () => activityCalls.push("pause"),
+        stop: () => activityCalls.push("stop"),
+      };
+    };
+    view.writeTranscript = (text) => {
+      transcript.push(text);
+    };
+    view.latestTurnEvidence = () => ({});
+    view.toolSummaryBlock = () => "";
+
+    await view.submitPrompt("hi", { renderPrompt: false });
+
+    assert.ok(transcript.some((chunk) => chunk.includes("hello")));
+    assert.deepEqual(activityCalls.slice(0, 5), [
+      "start:Prefill with >_ Inferoa",
+      "status:Prefill with >_ Inferoa",
+      "status:Decode with >_ Inferoa",
+      "pause",
+      "status:Decode with >_ Inferoa",
+    ]);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("inline panels sanitize embedded newlines before writing background rows", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-inline-panel-"));
   const originalStdoutWrite = process.stdout.write;

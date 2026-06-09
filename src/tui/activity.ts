@@ -11,6 +11,14 @@ const ACTIVITY_FRAMES = {
   context: ["·", "•"],
 } as const;
 
+export function inferoaActivityLabel(phase: "Prefill" | "Decode"): string {
+  return `${phase} with ${inferoaActivityWordmark()}`;
+}
+
+function inferoaActivityWordmark(): string {
+  return `${fg256(244, ">_")} ${fg256(252, "Infer")}${fg256(75, "oa")}`;
+}
+
 export function renderActivityLine(label: string, elapsedMs: number, frameIndex: number, width: number): string {
   const safeWidth = Math.max(1, Math.trunc(width));
   const phase = activityPhase(label);
@@ -21,13 +29,13 @@ export function renderActivityLine(label: string, elapsedMs: number, frameIndex:
   const suffix = ` ${elapsed}`;
   const normalized = label.replace(/\s+/g, " ").trim() || "Working";
   let room = Math.max(0, safeWidth - visibleWidth(glyph) - visibleWidth(suffix) - 1);
-  let labelText = plainTruncateToWidth(normalized, room);
-  let body = labelText ? ` ${fg256(250, labelText)}` : "";
+  let labelText = truncateActivityLabel(normalized, room);
+  let body = activityLabelBody(labelText);
   let line = `${fg256(glyphColor, glyph)}${body}${fg256(244, suffix)}`;
   while (visibleWidth(line) > safeWidth && room > 0) {
     room -= 1;
-    labelText = plainTruncateToWidth(normalized, room);
-    body = labelText ? ` ${fg256(250, labelText)}` : "";
+    labelText = truncateActivityLabel(normalized, room);
+    body = activityLabelBody(labelText);
     line = `${fg256(glyphColor, glyph)}${body}${fg256(244, suffix)}`;
   }
   return visibleWidth(line) <= safeWidth ? line : truncateToWidth(line, safeWidth);
@@ -84,6 +92,22 @@ function activityPhase(label: string): keyof typeof ACTIVITY_FRAMES {
   return "tool";
 }
 
+function activityLabelBody(labelText: string): string {
+  if (!labelText) {
+    return "";
+  }
+  return ` ${hasAnsi(labelText) ? labelText : fg256(250, labelText)}`;
+}
+
+function truncateActivityLabel(text: string, width: number): string {
+  const truncated = truncateToWidth(text, width);
+  return hasAnsi(text) ? truncated : stripAnsi(truncated);
+}
+
 function plainTruncateToWidth(text: string, width: number): string {
   return stripAnsi(truncateToWidth(text, width));
+}
+
+function hasAnsi(text: string): boolean {
+  return /\x1b\[[0-9;?]*[ -/]*[@-~]/.test(text);
 }

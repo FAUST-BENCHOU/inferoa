@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { renderActivityLine, renderActivityRecordLine } from "../src/tui/activity.js";
+import { inferoaActivityLabel, renderActivityLine, renderActivityRecordLine } from "../src/tui/activity.js";
 import { stripAnsi, visibleWidth } from "../src/tui/ansi.js";
 
 test("activity line uses only neutral white/gray text animation", () => {
@@ -31,6 +31,15 @@ test("activity line uses distinct minimal motion for model, goal, tool, retry, a
   assert.match(retry, /^↺ Retrying model in 1s 1\.2s$/);
   assert.match(compact, /^▰ Compressing context 200\/100 tokens 1\.2s$/);
   assert.match(research, /^› Running autoresearch benchmark 1\.2s$/);
+});
+
+test("Inferoa activity labels use the banner wordmark styling", () => {
+  const line = renderActivityLine(inferoaActivityLabel("Decode"), 1200, 1, 80);
+
+  assert.match(stripAnsi(line), /^• Decode with >_ Inferoa 1\.2s$/);
+  assert.match(line, /\x1b\[38;5;244m>_\x1b\[0m/);
+  assert.match(line, /\x1b\[38;5;252mInfer\x1b\[0m/);
+  assert.match(line, /\x1b\[38;5;75moa\x1b\[0m/);
 });
 
 test("activity line stays within resized terminal width", () => {
