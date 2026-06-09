@@ -1,26 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="980" height="420" viewBox="0 0 980 420" role="img" aria-labelledby="title desc">
-  <title id="title">Tokenmaxxing reduces token and model-route cost</title>
-  <desc id="desc">Horizontal bar chart showing prefix cache, CodeGraph, RTK, and intelligent routing token or cost reductions.</desc>
-  <rect width="980" height="420" fill="#ffffff"/>
-  <text x="28" y="38" font-family="DejaVu Sans, Arial, sans-serif" font-size="21" font-weight="700" fill="#263238">Tokenmaxxing reduces token and model-route cost</text>
-  <g font-family="DejaVu Sans, Arial, sans-serif"><line x1="286" y1="78" x2="286" y2="348" stroke="#e8eef2"/><text x="286" y="370" text-anchor="middle" font-size="12" fill="#607d8b">0%</text>
-<line x1="439" y1="78" x2="439" y2="348" stroke="#e8eef2"/><text x="439" y="370" text-anchor="middle" font-size="12" fill="#607d8b">25%</text>
-<line x1="592" y1="78" x2="592" y2="348" stroke="#e8eef2"/><text x="592" y="370" text-anchor="middle" font-size="12" fill="#607d8b">50%</text>
-<line x1="745" y1="78" x2="745" y2="348" stroke="#e8eef2"/><text x="745" y="370" text-anchor="middle" font-size="12" fill="#607d8b">75%</text>
-<line x1="898" y1="78" x2="898" y2="348" stroke="#e8eef2"/><text x="898" y="370" text-anchor="middle" font-size="12" fill="#607d8b">100%</text></g>
-  <line x1="286" y1="348" x2="898" y2="348" stroke="#b0bec5"/>
-  <g font-family="DejaVu Sans, Arial, sans-serif"><text x="268" y="116.8" text-anchor="end" font-size="14" fill="#263238">Prefix cache cached-token discount</text>
-<rect x="286" y="92.8" width="550.8" height="37.8" rx="4" fill="#1976d2"/>
-<text x="846.8" y="116.8" font-size="15" font-weight="700" fill="#263238">90.0%</text>
-<text x="268" y="184.3" text-anchor="end" font-size="14" fill="#263238">CodeGraph context reduced</text>
-<rect x="286" y="160.3" width="494.7" height="37.8" rx="4" fill="#00796b"/>
-<text x="790.7" y="184.3" font-size="15" font-weight="700" fill="#263238">80.8%</text>
-<text x="268" y="251.8" text-anchor="end" font-size="14" fill="#263238">RTK tool output reduced</text>
-<rect x="286" y="227.8" width="375.8" height="37.8" rx="4" fill="#8e24aa"/>
-<text x="671.8" y="251.8" font-size="15" font-weight="700" fill="#263238">61.4%</text>
-<text x="268" y="319.3" text-anchor="end" font-size="14" fill="#263238">Intelligent routing cost saved</text>
-<rect x="286" y="295.4" width="166.0" height="37.8" rx="4" fill="#ef6c00"/>
-<text x="462.0" y="319.3" font-size="15" font-weight="700" fill="#263238">27.1%</text></g>
-  <text x="286" y="398" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#607d8b">Sources: prefix-cache cost model, CodeGraph projection, RTK records, and routing cost projection.</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="380" viewBox="0 0 980 380" role="img" aria-labelledby="title desc">
+  <title id="title">Tokenmaxxing reduces token pressure</title>
+  <desc id="desc">Horizontal bar chart showing prefix cache, CodeGraph, and RTK token or context reductions.</desc>
+  <rect width="980" height="380" fill="#ffffff"/>
+  <text x="28" y="38" font-family="DejaVu Sans, Arial, sans-serif" font-size="21" font-weight="700" fill="#263238">Tokenmaxxing reduces token pressure</text>
+  <g font-family="DejaVu Sans, Arial, sans-serif"><line x1="286" y1="78" x2="286" y2="308" stroke="#e8eef2"/><text x="286" y="330" text-anchor="middle" font-size="12" fill="#607d8b">0%</text>
+<line x1="439" y1="78" x2="439" y2="308" stroke="#e8eef2"/><text x="439" y="330" text-anchor="middle" font-size="12" fill="#607d8b">25%</text>
+<line x1="592" y1="78" x2="592" y2="308" stroke="#e8eef2"/><text x="592" y="330" text-anchor="middle" font-size="12" fill="#607d8b">50%</text>
+<line x1="745" y1="78" x2="745" y2="308" stroke="#e8eef2"/><text x="745" y="330" text-anchor="middle" font-size="12" fill="#607d8b">75%</text>
+<line x1="898" y1="78" x2="898" y2="308" stroke="#e8eef2"/><text x="898" y="330" text-anchor="middle" font-size="12" fill="#607d8b">100%</text></g>
+  <line x1="286" y1="308" x2="898" y2="308" stroke="#b0bec5"/>
+  <g font-family="DejaVu Sans, Arial, sans-serif"><text x="268" y="121.3" text-anchor="end" font-size="14" fill="#263238">Prefix cache cached-token discount</text>
+<rect x="286" y="97.3" width="550.8" height="38.0" rx="4" fill="#1976d2"/>
+<text x="846.8" y="121.3" font-size="15" font-weight="700" fill="#263238">90.0%</text>
+<text x="268" y="198.0" text-anchor="end" font-size="14" fill="#263238">CodeGraph context reduced</text>
+<rect x="286" y="174.0" width="494.7" height="38.0" rx="4" fill="#00796b"/>
+<text x="790.7" y="198.0" font-size="15" font-weight="700" fill="#263238">80.8%</text>
+<text x="268" y="274.7" text-anchor="end" font-size="14" fill="#263238">RTK tool output reduced</text>
+<rect x="286" y="250.7" width="375.8" height="38.0" rx="4" fill="#8e24aa"/>
+<text x="671.8" y="274.7" font-size="15" font-weight="700" fill="#263238">61.4%</text></g>
+  <text x="286" y="358" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#607d8b">Sources: prefix-cache cost model, CodeGraph projection, and RTK records.</text>
 </svg>

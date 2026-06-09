@@ -161,14 +161,11 @@ def render_compression_continuity(data: dict, path: Path) -> None:
 
 def render_optimization_surfaces(data: dict, path: Path) -> None:
     summary = data["summary"]
-    router = data["routing_projection"]
     prefix_cache_discount_pct = (1 - data["scaled_projection"]["cache_discount_factor"]) * 100
-    routing_cost_saved_pct = percent(router["big3_cost_usd"] - router["full_pool_cost_usd"], router["big3_cost_usd"])
     values = [
         ("Prefix cache cached-token discount", prefix_cache_discount_pct, COLORS["blue"]),
         ("CodeGraph context reduced", summary["codegraph_context_savings_pct"], COLORS["green"]),
         ("RTK tool output reduced", summary["rtk_savings_pct"], COLORS["purple"]),
-        ("Intelligent routing cost saved", routing_cost_saved_pct, COLORS["orange"]),
     ]
 
     fig, ax = plt.subplots(figsize=(9.8, 4.8), constrained_layout=True)
@@ -176,8 +173,8 @@ def render_optimization_surfaces(data: dict, path: Path) -> None:
     widths = [item[1] for item in values]
     y = list(range(len(values)))
     bars = ax.barh(y, widths, color=[item[2] for item in values], height=0.58)
-    ax.set_title("Tokenmaxxing reduces token and model-route cost", loc="left", fontsize=15, fontweight="bold", pad=12)
-    ax.set_xlabel("Token / cost reduction (%)")
+    ax.set_title("Tokenmaxxing reduces token pressure", loc="left", fontsize=15, fontweight="bold", pad=12)
+    ax.set_xlabel("Token reduction / cached-token discount (%)")
     ax.set_xlim(0, 100)
     ax.set_yticks(y, labels)
     ax.invert_yaxis()
@@ -186,7 +183,7 @@ def render_optimization_surfaces(data: dict, path: Path) -> None:
     ax.text(
         0,
         -0.2,
-        "Sources: prefix-cache cost model, CodeGraph projection, RTK records, and routing cost projection.",
+        "Sources: prefix-cache cost model, CodeGraph projection, and RTK records.",
         transform=ax.transAxes,
         fontsize=9,
         color=COLORS["muted"],

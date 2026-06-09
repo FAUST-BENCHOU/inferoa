@@ -21,7 +21,7 @@ between model paths, and still need to prove the work at the end.
 > Prefix cache stability is ignored. Routing is bolted on later. Context is
 > pasted until it fits. Users pay for that gap.
 
-Inferoa = Infer(Inference-native)o(Tokenmaxxing)a(Agent Harness).
+Inferoa = **Infer**(Inference-native)**o**(Tokenmaxxing)**a**(Agent Harness).
 
 Inferoa is an **Inference-native Tokenmaxxing Agent Harness** for
 **long-horizon coding work**. It starts from the inference stack and designs the
@@ -32,8 +32,9 @@ agent loop around **tokenmaxxing**: **prefix-cache discipline**,
 [vLLM Semantic Router](https://github.com/vllm-project/semantic-router),
 **high-throughput model serving** with
 [vLLM Engine](https://github.com/vllm-project/vllm) and
-[vLLM Omni](https://github.com/vllm-project/vllm-omni), plus
-**autoresearch** and **verification** inside the same durable session.
+[vLLM Omni](https://github.com/vllm-project/vllm-omni), plus **native
+long-horizon running modes**: **goal**, **plan**, and **autoresearch** with
+**tokenmaxxing observability**.
 
 <!-- truncate -->
 
@@ -69,7 +70,7 @@ still running.
 | Agent Harness | [Inferoa](https://github.com/agentic-in/inferoa) | Goals, plans, autoresearch, sessions, tools, recovery, verification, and prefix-cache discipline | Long work stays coherent while preserving reusable prompt prefixes |
 | Context Optimization | [CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph), [RTK](https://github.com/rtk-ai/rtk) | Compression, graph-shaped repo context, bounded tool output, and evidence selection | The model sees evidence, not raw sprawl |
 | Intelligent Routing | [vLLM Semantic Router](https://github.com/vllm-project/semantic-router) | Model paths respond to cost, safety, privacy, capability, and session pressure | Turns can route between self-hosted vLLM models and external frontier models |
-| Model Serving | [vLLM Engine](https://github.com/vllm-project/vllm), [vLLM Omni](https://github.com/vllm-project/vllm-omni) | High-throughput, memory-efficient serving and multimodal endpoints stay visible to the harness | Cache, cost, latency, and data-control surfaces stay native |
+| Model Serving | [vLLM Engine](https://github.com/vllm-project/vllm), [vLLM Omni](https://github.com/vllm-project/vllm-omni) | High-throughput, memory-efficient serving and multimodal endpoints stay visible to the harness | Self-hosted paths make cost, safety, privacy, and data sovereignty controllable when an external frontier model is unnecessary |
 
 This is the core design: the agent is not merely calling an inference system.
 It is shaped by it.
@@ -126,35 +127,34 @@ measured shape is carried to 1k-10k loops.
 
 Key results:
 
-- **Prefix stability across turns**: measured loop profiles kept **one prompt
-  epoch, one tool schema hash, and one cache salt** while cache reuse improved
-  as the session warmed. The local Runtime simulator uses warmup-excluded,
-  weighted cached-token reuse, and a separate stable-prefix provider probe
-  reported high cached prompt-token reuse after warmup.
-- **Compression continuity**: a **256-turn regression** forced compression every
-  8 turns, for **32 compression cycles**. The check found no missing continuity
-  marker or archive pointer in the post-compression prompts. That is a regression
-  invariant, not a general reliability percentage. The interactive path recovered
-  **31.8%** weighted cache reuse after compression.
-- **Long-horizon projection**: using the measured tail slope, a **1k-loop**
-  reference projects **97.7%** lower input-token-equivalent work than a raw
-  transcript baseline; the **10k-loop** projection reaches **98.6%**. The 10k
-  reference is a projection, not a claim that we ran 10,001 live model requests.
-- **Independent optimization surfaces**:
+- **Prefix cache and continuity**: measured profiles kept **one prompt epoch,
+  one tool schema hash, and one cache salt** while cache reuse improved after
+  warmup. A **256-turn compression regression** preserved continuity markers and
+  archive pointers, and 1k-10k projections were calibrated from measured tail
+  slope instead of claimed as live 10k-request runs.
+- **CodeGraph context reduction**:
   [CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph)-style
-  symbol/range context saved **80.8%** of inspected context,
-  [RTK](https://github.com/rtk-ai/rtk) command records saved **61.4%** of
-  command-token footprint, and intelligent routing reduced model-route cost
-  against a Big-3-only reference at comparable benchmark accuracy.
+  symbol/range selection saved **80.8%** of inspected context.
+- **RTK tool-output reduction**: [RTK](https://github.com/rtk-ai/rtk) command
+  records saved **61.4%** of command-token footprint.
 
-![Inferoa optimization surfaces](/img/experiments/inferoa-optimization-surfaces.svg)
+![Inferoa tokenmaxxing surfaces](/img/experiments/inferoa-optimization-surfaces.svg)
+
+- **Routing economics**: the
+  [Routeworks leaderboard](https://routeworks.github.io/?p=/leaderboard) makes the
+  inference-cost tradeoff visible on a log scale. At similar accuracy, routed
+  paths can sit at **1/10** or even **1/100** of a frontier-heavy route's cost.
+
+![Routeworks routing leaderboard](/img/experiments/routeworks-routing-leaderboard.png)
 
 The exact numbers will move with workload, model pricing, and local RTK command
 corpus. The direction is the important part: long-horizon agents need a harness
 that protects stability, preserves continuity through compression, and uses
 every inference surface available.
 
-## Built With The vLLM Ecosystem
+## Built With The Inference Stack
+
+### vLLM Ecosystem
 
 Inferoa starts with the vLLM ecosystem because vLLM exposes the right surfaces:
 serving behavior, routing, multimodal paths, endpoint signals, and prefix-cache
@@ -169,6 +169,16 @@ economics.
 - [**vLLM Omni**](https://github.com/vllm-project/vllm-omni) brings image,
   video, and audio understanding or generation into the same durable agent
   contract.
+
+### Context Optimization
+
+Inferoa also uses the context optimization projects that make long-horizon
+agent loops practical:
+
+- [**CodeGraph**](https://www.npmjs.com/package/@colbymchenry/codegraph)
+  turns repository context into graph-shaped symbol and range evidence.
+- [**RTK**](https://github.com/rtk-ai/rtk) rewrites command-heavy tool output
+  into compact records that preserve evidence while reducing token pressure.
 
 Inferoa is the harness layer above that stack: the place where long-horizon
 agent behavior and inference behavior meet.
