@@ -119,22 +119,25 @@ model-selection cost pressure.
 ## Proof Of Value
 
 The value story is not one benchmark score. It is whether the tokenmaxxing path
-stays stable, measurable, and cheaper as the horizon grows. The eval is split
-into measured stress runs and calibrated projections: measured runs check
-invariants and continuity; projections ask what happens if the measured shape is
-carried to 1k-10k loops.
+stays stable, measurable, and cheaper as the horizon grows. The public eval is
+deliberately split into measured stress runs and calibrated projections: measured
+runs check runtime invariants and continuity; projections ask what happens if the
+measured shape is carried to 1k-10k loops.
 
 Key results:
 
 - **Prefix stability across turns**: measured loop profiles kept **one prompt
   epoch, one tool schema hash, and one cache salt** while cache reuse improved
-  as the session warmed. The multi-turn profile reached **44.7%** steady-state
-  cache reuse, and repeated stable-prefix provider probes reported **99.2%**
-  cached prompt tokens after warmup.
-- **Compression continuity**: a **256-turn measured run** forced compression
-  every 8 turns, for **32 compression cycles**. Continuity markers and archive
-  references survived **100%** of post-compression turns, and the interactive
-  path recovered **31.8%** steady cache reuse after compression.
+  as the session warmed. In the local Runtime simulator, the `8 turns x 4 loops`
+  profile made 40 model requests; after dropping the first warmup request, the
+  weighted cache-reuse ratio was `sum(cached_prompt_tokens) /
+  sum(prompt_tokens) = 217,887 / 487,004 = 44.7%`. A separate stable-prefix
+  provider probe reported **99.2%** cached prompt tokens after warmup.
+- **Compression continuity**: a **256-turn regression** forced compression every
+  8 turns, for **32 compression cycles**. The check found no missing continuity
+  marker or archive pointer in the post-compression prompts. That is a regression
+  invariant, not a general reliability percentage. The interactive path recovered
+  **31.8%** weighted cache reuse after compression.
 - **Long-horizon projection**: using the measured tail slope, a **1k-loop**
   reference projects **97.7%** lower input-token-equivalent work than a raw
   transcript baseline; the **10k-loop** projection reaches **98.6%**. The 10k
@@ -146,8 +149,6 @@ Key results:
   command-token footprint, and routing projections lifted the DeepSeek-priced
   same-budget reference from **39.6%** single-model accuracy to **91.0%**
   oracle-routed accuracy.
-
-![Inferoa compression continuity](/img/experiments/inferoa-compression-continuity.svg)
 
 ![Inferoa optimization surfaces](/img/experiments/inferoa-optimization-surfaces.svg)
 
