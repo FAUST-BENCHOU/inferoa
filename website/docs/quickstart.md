@@ -8,8 +8,11 @@ This quickstart gets Inferoa running against an OpenAI-compatible endpoint.
 Install the CLI globally:
 
 ```bash
-npm install -g inferoa
+npm install -g inferoa@dev
 ```
+
+`@dev` installs the newest Inferoa build published from `main`. The npm
+`latest` dist-tag is reserved for stable release versions.
 
 Then start the setup wizard and launch the TUI:
 

@@ -182,7 +182,7 @@ agent behavior and inference behavior meet.
 ## Try It
 
 ```bash
-npm install -g inferoa
+npm install -g inferoa@dev
 inferoa setup
 inferoa
 ```

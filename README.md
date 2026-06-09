@@ -94,7 +94,7 @@ the inference stack:
 ## Installation
 
 ```bash
-npm install -g inferoa
+npm install -g inferoa@dev
 ```
 
 ## Quickstart

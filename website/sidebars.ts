@@ -12,7 +12,7 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "Start",
       collapsed: false,
-      items: ["quickstart", "getting-started/installation", "getting-started/first-session"],
+      items: ["quickstart", "getting-started/first-session"],
     },
     {
       type: "category",
