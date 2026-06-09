@@ -6,6 +6,8 @@ import path from "node:path";
 import { DEFAULT_CONFIG } from "../src/config/defaults.js";
 import { SessionStore } from "../src/session/store.js";
 import { TuiApp } from "../src/tui/app.js";
+import { buildGoalWorkPrompt } from "../src/goals/supervisor-prompts.js";
+import { stripAnsi } from "../src/tui/ansi.js";
 
 test("clear starts a clean default session without prompting or rendering creation details", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-clear-session-"));
@@ -107,6 +109,84 @@ test("access command saves a workspace-specific permission override", async () =
       process.env.INFEROA_STATE_DIR = previousStateDir;
     }
     store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("goal continuation queues a hidden foreground prompt instead of a daemon job panel", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-foreground-"));
+  const store = await SessionStore.open(stateDir);
+  try {
+    const config = structuredClone(DEFAULT_CONFIG);
+    config.model_setup.base_url = "http://127.0.0.1:9999/v1";
+    config.model_setup.model = "foreground-goal-test";
+    const workspace = { id: "w_goal_foreground", root: stateDir, alias: "goal-foreground" };
+    const tui = new TuiApp(
+      {
+        config,
+        configFiles: [],
+        workspace,
+        store,
+        runtime: {},
+      } as never,
+    );
+    const view = tui as unknown as {
+      enqueueGoalContinuation: (objective: string) => Promise<void>;
+      optionalSession: () => { session_id: string } | undefined;
+      enqueuePrompt: (prompt: string, options?: { renderPrompt?: boolean }) => void;
+      renderPanel: (title: string, body: string[]) => void;
+    };
+    const session = store.createSession(workspace, "goal foreground");
+    const queued: Array<{ prompt: string; renderPrompt?: boolean }> = [];
+    const panels: string[] = [];
+
+    view.optionalSession = () => session;
+    view.enqueuePrompt = (prompt, options = {}) => {
+      queued.push({ prompt, renderPrompt: options.renderPrompt });
+    };
+    view.renderPanel = (title) => {
+      panels.push(title);
+    };
+
+    await view.enqueueGoalContinuation("deep research on this repo");
+
+    assert.deepEqual(queued, [{ prompt: buildGoalWorkPrompt("deep research on this repo"), renderPrompt: false }]);
+    assert.deepEqual(panels, []);
+  } finally {
+    store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("inline panels sanitize embedded newlines before writing background rows", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-inline-panel-"));
+  const originalStdoutWrite = process.stdout.write;
+  try {
+    const tui = new TuiApp(
+      {
+        config: structuredClone(DEFAULT_CONFIG),
+        configFiles: [],
+        workspace: { id: "w_inline_panel", root: stateDir, alias: "inline-panel" },
+        store: { close() {} },
+        runtime: {},
+      } as never,
+    );
+    const view = tui as unknown as {
+      renderInlinePanel: (title: string, body: string[]) => void;
+    };
+    let output = "";
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      output += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+      return true;
+    }) as typeof process.stdout.write;
+
+    view.renderInlinePanel("Goal Supervisor", ["queued goal\nGoal objective: deep research"]);
+
+    const plainLines = stripAnsi(output).split("\n");
+    assert.equal(plainLines.length, 5);
+    assert.match(plainLines[2] ?? "", /queued goal Goal objective: deep research/);
+  } finally {
+    process.stdout.write = originalStdoutWrite;
     await rm(stateDir, { recursive: true, force: true });
   }
 });

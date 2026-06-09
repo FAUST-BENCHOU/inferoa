@@ -7,7 +7,7 @@ test("splash renders the inference-native identity without the old tagline", () 
   const rendered = renderInferoaSplash(650, 160, 32).join("\n");
   const plain = stripAnsi(rendered);
   assert.match(plain, /Inferoa/);
-  assert.match(plain, /Inference Optimized Agent Harness/);
+  assert.match(plain, /Inference-native Tokenmaxxing Agent Harness/);
   assert.doesNotMatch(plain, /Inferoa inference-native coding/);
   assert.doesNotMatch(plain, /Agent inference-native coding/);
   assert.match(plain, /██████╗  ██████╗  █████╗/);

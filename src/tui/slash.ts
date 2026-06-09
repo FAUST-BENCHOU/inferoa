@@ -10,12 +10,10 @@ export type SlashCommandName =
   | "goal"
   | "plan"
   | "autoresearch"
-  | "cache"
-  | "rtk"
+  | "tokenmaxxing"
   | "context"
   | "tools"
   | "sessions"
-  | "activity"
   | "jobs"
   | "todo"
   | "acceptance"
@@ -46,12 +44,10 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: "goal", description: "Start or manage goal mode" },
   { name: "plan", description: "Start or manage plan mode" },
   { name: "autoresearch", description: "Start or manage autoresearch experiments" },
-  { name: "cache", description: "Show prefix cache warmup and hit report" },
-  { name: "rtk", description: "Show RTK tool token savings by turn" },
+  { name: "tokenmaxxing", description: "Show token, cache, RTK, and routing savings" },
   { name: "context", description: "Show context usage and compression state" },
   { name: "tools", description: "Show fixed tool schemas and renderer status" },
   { name: "sessions", description: "Manage chat sessions" },
-  { name: "activity", description: "Show recent session activity" },
   { name: "jobs", description: "Open daemon/supervisor jobs" },
   { name: "todo", description: "Open task ledger" },
   { name: "acceptance", description: "Open final acceptance workflow" },
@@ -108,8 +104,11 @@ const COMMANDS = new Map(SLASH_COMMANDS.map((command) => [command.name, command]
 const COMMAND_ALIASES = new Map<string, SlashCommandName>([
   ["endpoint", "system"],
   ["endpoints", "system"],
-  ["evidence", "activity"],
-  ["history", "activity"],
+  ["activity", "tokenmaxxing"],
+  ["cache", "tokenmaxxing"],
+  ["rtk", "tokenmaxxing"],
+  ["evidence", "tokenmaxxing"],
+  ["history", "tokenmaxxing"],
 ]);
 const SUBCOMMANDS = SLASH_SUBCOMMANDS.reduce((map, command) => {
   const bucket = map.get(command.command) ?? [];

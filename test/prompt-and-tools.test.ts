@@ -554,6 +554,10 @@ test("PromptBuilder renders frozen epoch memory without mutable tail system mess
     assert.equal(systemMessages.length, 1);
     const system = String(systemMessages[0]?.content ?? "");
     assert.match(system, /<epoch.memory>/);
+    const capabilitiesIndex = system.indexOf("<runtime.capabilities>");
+    const memoryIndex = system.indexOf("<epoch.memory>");
+    assert.ok(capabilitiesIndex >= 0);
+    assert.ok(memoryIndex > capabilitiesIndex);
     assert.match(system, /Frozen summary from prior prompt epoch/);
     assert.match(system, /Compression retention: 42 archived events; 7 protected tail events; 1 protected prompts\./);
     assert.match(system, /original deep research request/);

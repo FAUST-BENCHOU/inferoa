@@ -1,7 +1,7 @@
 {
   "name": "inferoa",
   "version": "0.1.0",
-  "description": "Inference-optimized agent for long-horizon tasks in the vLLM ecosystem.",
+  "description": "Inference-native Tokenmaxxing agent harness for long-horizon tasks in the vLLM ecosystem.",
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
@@ -39,6 +39,7 @@
     "site:start": "npm --prefix website run start",
     "site:build": "npm --prefix website run build",
     "site:serve": "npm --prefix website run serve",
+    "experiment:long-horizon": "npm run build && node scripts/long-horizon-value.mjs",
     "validate:t0": "npm run build && node dist/src/validation/milestone.js T0",
     "validate:t1": "npm run build && node dist/src/validation/milestone.js T1",
     "validate:t2": "npm run build && node dist/src/validation/milestone.js T2",

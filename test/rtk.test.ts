@@ -55,7 +55,7 @@ test("config enables managed RTK by default and honors env overrides", async () 
 
 test("slash parser and activity view expose RTK savings", () => {
   const rtk = parseSlashCommand("/rtk");
-  assert.equal(rtk.command?.name, "rtk");
+  assert.equal(rtk.command?.name, "tokenmaxxing");
   assert.equal(rtk.error, undefined);
 
   const activity = stripAnsi(
@@ -109,10 +109,10 @@ test("RTK session view shows per-turn tool calls, saved tool tokens, and estimat
   );
   const plain = stripAnsi(lines.join("\n"));
   assert.match(plain, /RTK tool savings/);
-  assert.match(plain, /turns 1 .*tools 3 .*rtk commands 2 .*saved 240/);
-  assert.match(plain, /actual tokens 200 .*without RTK 440/);
+  assert.match(plain, /turns 1 .*tools 3 .*rtk commands 2 .*io 300->60 .*saved 240/);
+  assert.match(plain, /tokens 200\/440/);
   assert.doesNotMatch(plain, /run run/);
-  assert.match(plain, /turn 1 .*tools 3 .*rtk commands 2 .*saved 240/);
+  assert.match(plain, /turn 1 .*tools 3 .*rtk 2 .*io 300->60 .*saved 240 .*tokens 200\/440 .*tool 80\.0%/);
 });
 
 test("run_command foreground uses RTK rewrite and records tool savings", async () => {

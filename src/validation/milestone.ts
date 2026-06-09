@@ -34,7 +34,7 @@ const checks: Record<Milestone, () => Promise<Check[]>> = {
     await file("docs/tui-product-design.md"),
     await file("docs/public-source-hygiene.md"),
     await containsCheck("docs/roadmap.md", "`inferoa` launches the TUI by default.", "TUI-first entrypoint contract"),
-    await containsCheck("README.md", "Inference Optimized Agent Harness", "README positioning"),
+    await containsCheck("README.md", "Inference-native Tokenmaxxing Agent Harness", "README positioning"),
   ],
   T1: async () => [
     await file("src/tui/app.ts"),

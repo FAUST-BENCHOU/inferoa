@@ -42,13 +42,25 @@ test("slash parser exposes system command and keeps endpoint aliases", () => {
   assert.equal(endpoints.error, undefined);
 });
 
-test("slash parser exposes clear session commands and readable activity command", () => {
+test("slash parser exposes tokenmaxxing and keeps old savings aliases", () => {
+  const tokenmaxxing = parseSlashCommand("/tokenmaxxing");
+  assert.equal(tokenmaxxing.command?.name, "tokenmaxxing");
+  assert.equal(tokenmaxxing.error, undefined);
+
   const activity = parseSlashCommand("/activity");
-  assert.equal(activity.command?.name, "activity");
+  assert.equal(activity.command?.name, "tokenmaxxing");
   assert.equal(activity.error, undefined);
 
+  const cache = parseSlashCommand("/cache");
+  assert.equal(cache.command?.name, "tokenmaxxing");
+  assert.equal(cache.error, undefined);
+
+  const rtk = parseSlashCommand("/rtk");
+  assert.equal(rtk.command?.name, "tokenmaxxing");
+  assert.equal(rtk.error, undefined);
+
   const evidenceAlias = parseSlashCommand("/evidence");
-  assert.equal(evidenceAlias.command?.name, "activity");
+  assert.equal(evidenceAlias.command?.name, "tokenmaxxing");
   assert.equal(evidenceAlias.error, undefined);
 
   const fresh = parseSlashCommand("/new");

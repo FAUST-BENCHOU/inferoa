@@ -188,7 +188,7 @@ export class PromptBuilder {
       },
     ];
     if (memory) {
-      sections.splice(2, 0, {
+      sections.push({
         id: "epoch.memory",
         placement: "system",
         text: memory,

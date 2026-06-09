@@ -12,12 +12,14 @@ export function renderRtkSessionLines(events: SessionEvent[], width = terminalWi
       acc.turns += 1;
       acc.tools += numberField(event.data.tool_calls) || rtk.tool_calls;
       acc.rtkCommands += rtk.rtk_commands;
+      acc.input += rtk.input_tokens;
+      acc.output += rtk.output_tokens;
       acc.saved += rtk.saved_tokens;
       acc.actual += numberField(event.data.tokens);
       acc.without += rtk.estimated_without_rtk_tokens;
       return acc;
     },
-    { turns: 0, tools: 0, rtkCommands: 0, saved: 0, actual: 0, without: 0 },
+    { turns: 0, tools: 0, rtkCommands: 0, input: 0, output: 0, saved: 0, actual: 0, without: 0 },
   );
 
   const lines = [
@@ -26,10 +28,10 @@ export function renderRtkSessionLines(events: SessionEvent[], width = terminalWi
       `${fg256(39, "turns")} ${totals.turns}`,
       `${fg256(39, "tools")} ${totals.tools}`,
       `${fg256(39, "rtk commands")} ${totals.rtkCommands}`,
+      totals.rtkCommands > 0 ? `${fg256(39, "io")} ${totals.input}->${totals.output}` : undefined,
       `${fg256(39, "saved")} ${totals.saved}`,
-      `${fg256(39, "actual tokens")} ${totals.actual}`,
-      `${fg256(39, "without RTK")} ${totals.without}`,
-    ].join(" · "),
+      `${fg256(39, "tokens")} ${totals.actual}/${totals.without}`,
+    ].filter((part): part is string => Boolean(part)).join(" · "),
     "",
     fg256(39, "Recent turns"),
   ];
@@ -41,11 +43,11 @@ export function renderRtkSessionLines(events: SessionEvent[], width = terminalWi
     const detail = [
       `turn ${recent.length - index}`,
       `tools ${numberField(event.data.tool_calls) || rtk.tool_calls}`,
-      `rtk commands ${rtk.rtk_commands}`,
+      `rtk ${rtk.rtk_commands}`,
+      rtk.rtk_commands > 0 ? `io ${rtk.input_tokens}->${rtk.output_tokens}` : undefined,
       `saved ${rtk.saved_tokens}`,
-      `actual tokens ${actual}`,
-      `without RTK ${rtk.estimated_without_rtk_tokens}`,
-      rtk.savings_pct > 0 ? `${rtk.savings_pct.toFixed(1)}%` : undefined,
+      `tokens ${actual}/${rtk.estimated_without_rtk_tokens}`,
+      rtk.savings_pct > 0 ? `tool ${rtk.savings_pct.toFixed(1)}%` : undefined,
     ]
       .filter((part): part is string => Boolean(part))
       .join(" · ");

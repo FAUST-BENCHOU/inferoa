@@ -3,7 +3,7 @@ import type { Preset } from "@docusaurus/preset-classic";
 
 const config: Config = {
   title: "Inferoa",
-  tagline: "Inference Optimized Agent Harness",
+  tagline: "Inference-native Tokenmaxxing Agent Harness",
   favicon: "img/inferoa-favicon.svg",
   url: "https://inferoa.agentic-in.ai",
   baseUrl: "/",

@@ -4,22 +4,22 @@ title: Inferoa
 sidebar_label: Overview
 ---
 
-Inferoa is an **Inference Optimized Agent Harness**.
+Inferoa is an **Inference-native Tokenmaxxing Agent Harness**.
 
-Most agents treat inference as a black-box chat API. Inferoa starts from the
-opposite direction: the agent loop is designed around the inference stack. Long
-sessions, prefix cache stability, context pressure, model routing, serving
-signals, multimodal artifacts, and verification all belong to one durable
-harness.
+Most agents treat inference as a black-box chat API. inferoa starts from the
+opposite direction: the agent loop is designed around tokenmaxxing across the
+inference stack. Long sessions, prefix-cache discipline, context pressure,
+model routing, self-hosted serving signals, multimodal artifacts, and
+verification all belong to one durable harness.
 
-## What Inferoa Optimizes
+## What inferoa Tokenmaxxes
 
 - Goal, plan, and autoresearch modes for long-horizon work.
-- Prefix-cache stability through prompt epochs and deterministic tool schemas.
-- Context optimization with CodeGraph, RTK, and built-in coding harnesses.
+- Prefix-cache discipline through prompt epochs and deterministic tool schemas.
+- Context Optimization with CodeGraph, RTK, and built-in coding harnesses.
 - Intelligent routing through vLLM Semantic Router.
-- Serving feedback and cache signals from vLLM Engine-compatible endpoints.
-- Native multimodal paths through vLLM Omni.
+- Self-Hosted Model Serving through vLLM Engine-compatible endpoints.
+- Native multimodal paths through vLLM Omni in the same session loop.
 
 ## Why Coding First
 
@@ -30,6 +30,6 @@ behavior with inference behavior.
 
 ## Current Implementation
 
-Inferoa is a TypeScript/Node terminal application. It uses OpenAI-compatible
+inferoa is a TypeScript/Node terminal application. It uses OpenAI-compatible
 endpoints first, stores local state under `~/.inferoa/`, and keeps raw secrets
 in the local vault instead of plain config files.

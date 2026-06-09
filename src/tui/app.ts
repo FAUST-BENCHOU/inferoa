@@ -20,16 +20,19 @@ import { resolveRtkStatus, type RtkStatus } from "../rtk/manager.js";
 import { staticOmniCapabilityMatrix } from "../model/omni-capabilities.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { SkillRegistry, type SkillDescriptor } from "../skills/registry.js";
-import { attachDaemonJob, cancelDaemonJob, daemonStatus, detachDaemonJob, queueDaemonGoal, queueDaemonRun, startDaemon } from "../daemon/supervisor.js";
-import type { RuntimeStatusEvent } from "../runtime.js";
+import { attachDaemonJob, cancelDaemonJob, daemonStatus, detachDaemonJob, queueDaemonRun, startDaemon } from "../daemon/supervisor.js";
+import type { RuntimeRunOptions, RuntimeRunResult, RuntimeStatusEvent } from "../runtime.js";
 import { runFinalAcceptance } from "../validation/acceptance.js";
 import {
   attachGoalPlanSnapshot,
   cloneGoalState,
+  completeGoalAfterAudit,
   createGoalState,
   incompleteGoalPlanningMessage,
+  isGoalFrontierExhausted,
   goalCompletionAuditBlockMessage,
   goalPlanningProgressSummary,
+  markGoalAuditStarted,
   readGoalState,
   recordGoalCompletionReport,
   validateTokenBudget,
@@ -37,6 +40,7 @@ import {
   type GoalRecord,
   type GoalState,
 } from "../goals/state.js";
+import { buildGoalAuditPrompt, buildGoalWorkPrompt } from "../goals/supervisor-prompts.js";
 import { readAutoresearchState, setAutoresearchMode, summarizeAutoresearchProgress, type AutoresearchState } from "../autoresearch/state.js";
 import { clonePlanState, createPlanState, planApprovalBlockMessage, readPlanState, writePlanState, type PlanState } from "../plans/state.js";
 import type {
@@ -67,6 +71,7 @@ import { renderCompactEventLine, renderSessionActivityLines, renderTodoEventLine
 import { renderModeMetadataRight } from "./mode-footer.js";
 import { renderPlanDocumentSurface } from "./plan-view.js";
 import { renderRtkSessionLines } from "./rtk-view.js";
+import { renderTokenmaxxingLines } from "./tokenmaxxing-view.js";
 import { composerEraseRowsForResize } from "./resize.js";
 import { RESUME_SESSION_PAGE_SIZE, resumeSessionPage } from "./session-picker.js";
 import { filterProviderPickerOptions, providerPickerPage } from "./provider-picker.js";
@@ -158,11 +163,22 @@ interface ActivityIndicator {
   stop(options?: { redraw?: boolean }): void;
 }
 
+interface SubmitPromptOptions {
+  renderPrompt?: boolean;
+  requestClass?: RuntimeRunOptions["request_class"];
+  visibility?: RuntimeRunOptions["visibility"];
+  runId?: string;
+  activityLabel?: string;
+  suppressTranscript?: boolean;
+}
+
 interface ReadComposerOptions {
   placeholder?: string;
   initialBuffer?: string;
   suggestions?: boolean;
 }
+
+const FOREGROUND_GOAL_MAX_ITERATIONS = 10_000;
 
 const CLEAR_TO_END = "\x1b[J";
 const CLEAR_LINE = "\x1b[2K";
@@ -210,6 +226,7 @@ export class TuiApp {
   #promptQueue: PromptQueueState = createPromptQueueState();
   #promptWorker: Promise<void> | undefined;
   #promptWorkerScheduled = false;
+  #goalSupervisorActive = false;
   #activeAbort: AbortController | undefined;
   #welcomeCodeIntelligenceStarted = false;
   #welcomeCodeIntelligenceStop: (() => void) | undefined;
@@ -341,8 +358,126 @@ export class TuiApp {
       }
       this.updateQueueFooter();
       await this.submitPrompt(item.prompt, { renderPrompt: item.renderPromptAtSubmission });
+      await this.drainForegroundGoalSupervisor();
     }
     this.clearQueueFooter();
+  }
+
+  private async drainForegroundGoalSupervisor(): Promise<void> {
+    if (this.#goalSupervisorActive) {
+      return;
+    }
+    if (!this.app.config.model_setup.base_url || !this.app.config.model_setup.model) {
+      return;
+    }
+    this.#goalSupervisorActive = true;
+    try {
+      let iteration = 0;
+      for (; iteration < FOREGROUND_GOAL_MAX_ITERATIONS && this.#running && !this.#promptQueue.length; iteration += 1) {
+        const session = this.optionalSession();
+        if (!session) {
+          return;
+        }
+        const state = readGoalState(this.app.store, session.session_id);
+        if (!this.shouldRunForegroundGoal(state)) {
+          return;
+        }
+        if (isGoalFrontierExhausted(state.goal)) {
+          const shouldContinue = await this.runForegroundGoalAudit(session.session_id, state);
+          if (!shouldContinue) {
+            return;
+          }
+          continue;
+        }
+        const result = await this.submitPrompt(buildGoalWorkPrompt(state.goal.objective), {
+          renderPrompt: false,
+          requestClass: "interactive",
+          activityLabel: "Continuing goal frontier",
+        });
+        if (!result || !this.goalUpdatedDuringRun(session.session_id, result.run_id)) {
+          this.renderGoalSupervisorRecord("Goal waiting", "last foreground turn did not update the frontier");
+          return;
+        }
+      }
+      if (iteration < FOREGROUND_GOAL_MAX_ITERATIONS || !this.#running || this.#promptQueue.length) {
+        return;
+      }
+      const session = this.optionalSession();
+      const state = session ? readGoalState(this.app.store, session.session_id) : undefined;
+      if (session && this.shouldRunForegroundGoal(state)) {
+        this.pauseForegroundGoal(session.session_id, state, undefined, "max_iterations");
+      }
+    } finally {
+      this.#goalSupervisorActive = false;
+    }
+  }
+
+  private async runForegroundGoalAudit(sessionId: string, state: GoalState): Promise<boolean> {
+    const auditRunId = randomId("run");
+    writeGoalState(this.app.store, sessionId, markGoalAuditStarted(state, auditRunId), auditRunId);
+    this.app.store.appendEvent({
+      session_id: sessionId,
+      run_id: auditRunId,
+      type: "goal.audit.started",
+      data: { goal_id: state.goal.id, frontier_generation: state.goal.frontier_generation, supervisor: "foreground" },
+    });
+    await this.submitPrompt(buildGoalAuditPrompt(state.goal.objective), {
+      renderPrompt: false,
+      requestClass: "audit",
+      visibility: "internal",
+      runId: auditRunId,
+      activityLabel: "Auditing goal frontier",
+      suppressTranscript: true,
+    });
+    const audited = readGoalState(this.app.store, sessionId);
+    if (!audited || audited.goal.status === "complete" || audited.goal.status === "dropped") {
+      return false;
+    }
+    if (audited.goal.last_audit_run_id !== auditRunId || audited.goal.audit_status !== "completed") {
+      this.pauseForegroundGoal(sessionId, audited, auditRunId, "audit_missing_decision");
+      return false;
+    }
+    if (audited.goal.last_audit_decision === "expand") {
+      this.renderGoalSupervisorRecord("Goal audit", auditDetail("expanded frontier", audited.goal.last_audit_summary, audited.goal.frontier_generation), 75);
+      return true;
+    }
+    if (audited.goal.last_audit_decision === "done") {
+      try {
+        const completed = completeGoalAfterAudit(audited, audited.goal.last_audit_summary);
+        writeGoalState(this.app.store, sessionId, completed, auditRunId);
+        recordGoalCompletionReport(this.app.store, sessionId, auditRunId);
+        this.renderGoalSupervisorRecord("Goal complete", audited.goal.last_audit_summary ?? "audit found no remaining frontier", 48);
+      } catch (error) {
+        this.pauseForegroundGoal(sessionId, audited, auditRunId, error instanceof Error ? error.message : String(error));
+      }
+      return false;
+    }
+    this.pauseForegroundGoal(sessionId, audited, auditRunId, audited.goal.blocker ?? audited.goal.last_audit_decision ?? "audit_decision");
+    return false;
+  }
+
+  private shouldRunForegroundGoal(state: GoalState | undefined): state is GoalState {
+    return Boolean(state?.enabled && state.goal.status === "active");
+  }
+
+  private goalUpdatedDuringRun(sessionId: string, runId: string): boolean {
+    return this.app.store.listEvents(sessionId).some((event) => event.run_id === runId && event.type === "goal.updated");
+  }
+
+  private pauseForegroundGoal(sessionId: string, state: GoalState, runId: string | undefined, reason: string): void {
+    const next = cloneGoalState(state);
+    next.enabled = false;
+    next.goal.status = "paused";
+    next.goal.blocker = reason;
+    next.goal.updated_at = new Date().toISOString();
+    writeGoalState(this.app.store, sessionId, next, runId);
+    this.app.store.appendEvent({
+      session_id: sessionId,
+      run_id: runId,
+      type: "goal.supervisor.paused",
+      data: { goal_id: state.goal.id, reason, supervisor: "foreground" },
+    });
+    this.renderGoalSupervisorRecord("Goal paused", reason, 220);
   }
 
   private updateQueueFooter(): void {
@@ -1052,11 +1187,8 @@ export class TuiApp {
         case "autoresearch":
           await this.renderAutoresearchView(args);
           return;
-        case "cache":
-          this.renderCacheView();
-          return;
-        case "rtk":
-          this.renderRtkView();
+        case "tokenmaxxing":
+          this.renderTokenmaxxingView();
           return;
         case "context":
           await this.renderContextView(args);
@@ -1066,9 +1198,6 @@ export class TuiApp {
           return;
         case "sessions":
           await this.renderSessionsView(args);
-          return;
-        case "activity":
-          this.renderFormattedEventView("Activity", isActivityEvent, renderSessionActivityLines);
           return;
         case "jobs":
           await this.renderJobsView(args);
@@ -2279,6 +2408,17 @@ export class TuiApp {
     this.renderPanel("RTK", renderRtkSessionLines(this.app.store.listEvents(session.session_id), terminalWidth()));
   }
 
+  private renderTokenmaxxingView(): void {
+    const session = this.optionalSession();
+    if (!session) {
+      this.renderPanel("Tokenmaxxing", ["No active session yet. Run a prompt first."]);
+      return;
+    }
+    const events = this.app.store.listEvents(session.session_id);
+    const evidence = this.app.store.listEndpointEvidence(session.session_id);
+    this.renderPanel("Tokenmaxxing", renderTokenmaxxingLines(events, evidence, terminalWidth()));
+  }
+
   private async renderContextView(args = ""): Promise<void> {
     const action = args.trim().toLowerCase();
     if (action === "reindex" || action === "rebuild") {
@@ -2847,22 +2987,7 @@ export class TuiApp {
     if (!session) {
       return;
     }
-    const job = await queueDaemonGoal({
-      stateDir: this.options.stateDir,
-      workspaceRoot: this.app.workspace.root,
-      sessionId: session.session_id,
-      configPath: this.app.configFiles[0],
-      prompt: [
-        `Goal objective: ${objective}`,
-        "If this goal is broad or multi-step, call the goal tool with op=decompose to create internal steps before risky edits.",
-        "Execute the goal while keeping step status, notes, and evidence current with goal op=update_step. Completion is handled only after an internal audit finds no new frontier.",
-      ].join("\n"),
-    });
-    const status = await startDaemon({ stateDir: this.options.stateDir });
-    this.renderPanel("Goal Supervisor", [
-      `${fg256(48, "•")} ${this.jobLabel(job)}`,
-      `${fg256(39, "Daemon")} ${status.alive ? `alive pid ${status.pid}` : "start requested"}`,
-    ]);
+    this.enqueuePrompt(buildGoalWorkPrompt(objective), { renderPrompt: false });
   }
 
   private enqueueGoalPlanningContinuation(objective: string): void {
@@ -3710,7 +3835,7 @@ export class TuiApp {
       jobs.map((job) => ({
         value: job.job_id,
         label: `${job.job_id.slice(0, 12)} · ${job.status}`,
-        description: `${job.session_id.slice(0, 12)} · ${truncateToWidth(job.prompt, 70)}`,
+        description: `${job.session_id.slice(0, 12)} · ${truncateToWidth(oneLine(job.prompt), 70)}`,
       })),
     );
     return jobs.find((job) => job.job_id === selected);
@@ -3720,7 +3845,7 @@ export class TuiApp {
     const session = this.app.store.getSession(job.session_id);
     const sessionLabel = session ? `${session.session_id.slice(0, 12)} · ${session.title}` : job.session_id.slice(0, 12);
     const kind = job.kind === "goal" ? "goal" : "run";
-    return `${job.status.padEnd(16)} ${kind.padEnd(4)} ${job.job_id.slice(0, 12)} · ${sessionLabel} · ${truncateToWidth(job.prompt, Math.max(24, terminalWidth() - 60))}`;
+    return `${job.status.padEnd(16)} ${kind.padEnd(4)} ${job.job_id.slice(0, 12)} · ${sessionLabel} · ${truncateToWidth(oneLine(job.prompt), Math.max(24, terminalWidth() - 60))}`;
   }
 
   private renderFormattedEventView(title: string, filter: (event: SessionEvent) => boolean, render: (events: SessionEvent[]) => string[]): void {
@@ -3830,9 +3955,9 @@ export class TuiApp {
     ]);
   }
 
-  private async submitPrompt(prompt: string, options: { renderPrompt?: boolean } = {}): Promise<void> {
+  private async submitPrompt(prompt: string, options: SubmitPromptOptions = {}): Promise<RuntimeRunResult | undefined> {
     if (!(await this.waitForCodeIntelligenceBeforeChat())) {
-      return;
+      return undefined;
     }
     if (options.renderPrompt !== false) {
       this.renderSubmittedPrompt(prompt);
@@ -3843,7 +3968,7 @@ export class TuiApp {
       lastSegment: "none",
     };
     const liveToolCallIds = new Set<string>();
-    const activity = this.startActivityIndicator("Prefill with Inferoa");
+    const activity = this.startActivityIndicator(options.activityLabel ?? "Prefill with Inferoa");
     let sawModelDelta = false;
     const abort = new AbortController();
     this.#activeAbort = abort;
@@ -3852,11 +3977,17 @@ export class TuiApp {
         prompt,
         session_id: this.#sessionId,
         client_id: randomId("tui"),
+        request_class: options.requestClass,
+        visibility: options.visibility,
+        run_id: options.runId,
         signal: abort.signal,
         onDelta: (text) => {
           if (!sawModelDelta) {
             sawModelDelta = true;
             activity.status("Decode with Inferoa");
+          }
+          if (options.suppressTranscript) {
+            return;
           }
           const rendered = markdown.write(text);
           if (!rendered) {
@@ -3877,12 +4008,20 @@ export class TuiApp {
             activity.status(formatCompressionStartActivity(event));
           }
           if (event.type === "compression_end") {
-            activity.record(formatCompressionActivityLine(event));
+            if (options.suppressTranscript) {
+              activity.status("Compacted goal context");
+            } else {
+              activity.record(formatCompressionActivityLine(event));
+            }
           }
           if (event.type === "tool_start") {
             activity.status(event.summary ?? toolActivityAction(event.tool_name));
           }
           if (event.type === "tool_end") {
+            if (options.suppressTranscript) {
+              activity.status(formatToolActivityLine(event.tool_name, event.ok, event.summary, event.duration_ms));
+              return;
+            }
             let output = "";
             const flushed = markdown.flush();
             if (flushed) {
@@ -3922,25 +4061,33 @@ export class TuiApp {
         renderState.lastSegment = "assistant";
       }
       this.#sessionId = result.session.session_id;
-      const evidence = this.latestTurnEvidence(result.session.session_id, result.run_id);
-      const toolSummary = this.toolSummaryBlock(result.session.session_id, result.run_id, renderState.lastSegment === "assistant", liveToolCallIds);
-      if (toolSummary) {
-        finalOutput += toolSummary;
-        renderState.lastSegment = "tool";
+      if (!options.suppressTranscript) {
+        const evidence = this.latestTurnEvidence(result.session.session_id, result.run_id);
+        const toolSummary = this.toolSummaryBlock(result.session.session_id, result.run_id, renderState.lastSegment === "assistant", liveToolCallIds);
+        if (toolSummary) {
+          finalOutput += toolSummary;
+          renderState.lastSegment = "tool";
+        }
+        const footer = renderCacheFooter({
+          ...evidence,
+          latencyMs: Date.now() - startedAt,
+          cacheKind: cacheTurnKind(this.app.store.listEvents(result.session.session_id), result.run_id),
+        });
+        this.#composerFooter = footer || undefined;
+        this.writeTranscript(withConversationGap(finalOutput));
       }
-      const footer = renderCacheFooter({
-        ...evidence,
-        latencyMs: Date.now() - startedAt,
-        cacheKind: cacheTurnKind(this.app.store.listEvents(result.session.session_id), result.run_id),
-      });
-      this.#composerFooter = footer || undefined;
-      this.writeTranscript(withConversationGap(finalOutput));
+      return result;
     } catch (error) {
       activity.stop({ redraw: false });
       const flushed = markdown.flush();
       const message = error instanceof Error ? error.message : String(error);
       const renderedError = isAbortError(error) ? fg256(244, `Interrupted current loop: ${message}`) : fg256(203, message);
-      this.writeTranscript(`${flushed}${flushed ? "\n" : ""}${renderedError}\n\n`);
+      if (options.suppressTranscript) {
+        this.renderGoalSupervisorRecord("Goal run failed", message, 203);
+      } else {
+        this.writeTranscript(`${flushed}${flushed ? "\n" : ""}${renderedError}\n\n`);
+      }
+      return undefined;
     } finally {
       if (this.#activeAbort === abort) {
         this.#activeAbort = undefined;
@@ -4094,6 +4241,18 @@ export class TuiApp {
     return `${leadingGap ? "\n" : ""}${lines.join("\n")}\n`;
   }
 
+  private renderGoalSupervisorRecord(action: string, detail?: string, color = 75): void {
+    this.writeTranscript(withConversationGap(renderActivityRecordLine({
+      marker: "•",
+      markerColor: color,
+      action,
+      actionColor: color,
+      detail: detail ? oneLine(detail) : undefined,
+      detailColor: 250,
+      width: safeTerminalWidth(),
+    })));
+  }
+
   private latestTurnEvidence(sessionId: string, runId: string): ChatTurnEvidence {
     const evidence = this.app.store.listEndpointEvidence(sessionId).slice().reverse().find((item) => item.run_id === runId) ?? {};
     const events = this.app.store.listEvents(sessionId).filter((event) => event.run_id === runId && event.type === "model.response.settled");
@@ -4138,11 +4297,12 @@ export class TuiApp {
   private renderInlinePanel(title: string, body: string[]): void {
     this.eraseInlinePanel();
     const width = safeTerminalWidth();
+    const line = (text = "") => bgLine(236, terminalLine(text), width);
     const lines = [
-      bg256(236, padRight(`  ${title}`, width)),
-      bg256(236, padRight("", width)),
-      ...body.map((line) => bg256(236, padRight(`  ${line}`, width))),
-      bg256(236, padRight("", width)),
+      line(`  ${title}`),
+      line(),
+      ...body.map((item) => line(`  ${item}`)),
+      line(),
     ];
     this.#inlineRenderedLines = lines.length;
     this.#inlinePanelStartRow = undefined;
@@ -4951,6 +5111,22 @@ function compressionReasonLabel(reason: string): string {
 function titleFromPrompt(prompt: string): string {
   const firstLine = prompt.trim().split(/\r?\n/)[0] ?? "";
   return firstLine ? `daemon:${truncateToWidth(firstLine, 48)}` : "daemon task";
+}
+
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function terminalLine(text: string): string {
+  return text.replace(/[\r\n]+/g, " ");
+}
+
+function auditDetail(action: string, summary: string | undefined, frontierGeneration: number): string {
+  const parts = [`${action} generation ${frontierGeneration}`];
+  if (summary) {
+    parts.push(summary);
+  }
+  return parts.join(" · ");
 }
 
 function safeTerminalWidth(): number {

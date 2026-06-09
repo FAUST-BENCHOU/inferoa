@@ -365,7 +365,7 @@ function renderWelcomeMark(): string[] {
   ];
   return [
     ...logo.map((line, index) => `${ansi.bold}${fg256(index < 2 ? 244 : 252, line)}${ansi.reset}`),
-    center(fg256(244, "inference optimized agent harness"), visibleWidth(logo[0] ?? "")),
+    center(fg256(244, "Inference-native Tokenmaxxing Agent Harness"), visibleWidth(logo[0] ?? "")),
   ];
 }
 
