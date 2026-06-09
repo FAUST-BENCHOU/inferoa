@@ -66,14 +66,15 @@ export class ContextCompressor {
         ? previousCompaction.data.compacted_through_event_id
         : (previousCompaction?.id ?? 0);
     const compactedRegion = events.filter((event) => (event.id ?? 0) > previousCutoff);
-    const protection = protectedLoopContext(events, options.activeRunId, options.currentPrompt, this.config.context.protected_recent_loops ?? 3);
+    const summaryRegion = compactedRegion.filter((event) => !isInternalRawEvent(event));
+    const protection = protectedLoopContext(events.filter((event) => !isInternalRawEvent(event)), options.activeRunId, options.currentPrompt, this.config.context.protected_recent_loops ?? 3);
     const protectedPromptExcerpts = protection.protected_user_prompts.map(protectedPromptExcerpt);
     const raw = JSON.stringify(compactedRegion, null, 2);
     const resource = this.store.putResource(session.session_id, "compaction.archive", raw, {
       reason,
       event_count: compactedRegion.length,
     });
-    let summary = deterministicSummary(session, this.workspace.root, compactedRegion, previousSummary, protectedPromptExcerpts);
+    let summary = deterministicSummary(session, this.workspace.root, summaryRegion, previousSummary, protectedPromptExcerpts);
     if (this.config.model_setup.base_url && this.config.model_setup.model && compactedRegion.length > 0) {
       try {
         const runId = randomId("run");
@@ -90,7 +91,7 @@ export class ContextCompressor {
               archive_resource: resource.uri,
               protected_user_prompts: protectedPromptExcerpts,
               protected_loops: protection.protected_loops.map(boundProtectedLoop),
-              compacted_events: summarizeEventsForCompaction(compactedRegion, protection.protected_user_prompts),
+              compacted_events: summarizeEventsForCompaction(summaryRegion, protection.protected_user_prompts),
             }),
           },
         ];
@@ -341,6 +342,26 @@ function summarizeEventForCompaction(event: { type: string; data: JsonObject; cr
       created_at: event.created_at,
     };
   }
+  if (event.type === "goal.audit.completed") {
+    return {
+      type: event.type,
+      decision: event.data.decision,
+      frontier_generation: event.data.frontier_generation,
+      summary: stringSummary(event.data.summary),
+      verification_evidence: event.data.verification_evidence,
+      blocker: stringSummary(event.data.blocker),
+      created_at: event.created_at,
+    };
+  }
+  if (event.type === "goal.frontier.expanded") {
+    return {
+      type: event.type,
+      frontier_generation: event.data.frontier_generation,
+      step_count: event.data.step_count,
+      active_step_id: event.data.active_step_id,
+      created_at: event.created_at,
+    };
+  }
   if (event.type === "model.request.started") {
     return {
       type: event.type,
@@ -439,6 +460,13 @@ function summarizeEventForCompaction(event: { type: string; data: JsonObject; cr
     type: event.type,
     created_at: event.created_at,
   };
+}
+
+function isInternalRawEvent(event: { type: string; data: JsonObject }): boolean {
+  if (event.data.visibility !== "internal" && event.data.request_class !== "audit") {
+    return false;
+  }
+  return event.type === "user.prompt" || event.type === "model.response.settled" || event.type === "tool.call" || event.type === "tool.result" || event.type === "web.prefetch";
 }
 
 function summarizeRunLifecycle(event: { type: string; data: JsonObject; created_at?: string }): JsonObject {

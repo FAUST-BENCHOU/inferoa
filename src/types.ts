@@ -198,7 +198,7 @@ export interface ModelRequest {
   tools: ToolDefinition[];
   temperature?: number;
   max_tokens?: number;
-  request_class?: "interactive" | "tool" | "verification" | "compaction" | "background";
+  request_class?: "interactive" | "tool" | "verification" | "compaction" | "background" | "audit";
   prompt_hash?: string;
   tool_schema_hash?: string;
   prompt_epoch_id?: string;

@@ -53,7 +53,11 @@ export interface SupervisorJob {
   session_id: string;
   workspace_root: string;
   prompt: string;
-  status: "queued" | "running" | "detached" | "cancel_requested" | "cancelled" | "failed" | "complete";
+  status: "queued" | "running" | "detached" | "cancel_requested" | "cancelled" | "failed" | "complete" | "paused" | "blocked";
+  kind: "run" | "goal";
+  goal_id?: string;
+  iteration: number;
+  metadata: JsonObject;
   run_id?: string;
   created_at: string;
   updated_at: string;
@@ -238,12 +242,28 @@ export class SessionStore {
         workspace_root TEXT NOT NULL,
         prompt TEXT NOT NULL,
         status TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'run',
+        goal_id TEXT,
+        iteration INTEGER NOT NULL DEFAULT 0,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
         run_id TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY(session_id) REFERENCES sessions(session_id)
       );
     `);
+    this.ensureColumn("supervisor_jobs", "kind", "TEXT NOT NULL DEFAULT 'run'");
+    this.ensureColumn("supervisor_jobs", "goal_id", "TEXT");
+    this.ensureColumn("supervisor_jobs", "iteration", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("supervisor_jobs", "metadata_json", "TEXT NOT NULL DEFAULT '{}'");
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (columns.some((item) => item.name === column)) {
+      return;
+    }
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 
   upsertWorkspace(workspace: WorkspaceIdentity): void {
@@ -693,7 +713,12 @@ export class SessionStore {
     return { seq, text };
   }
 
-  createSupervisorJob(sessionId: string, workspaceRoot: string, prompt: string): SupervisorJob {
+  createSupervisorJob(
+    sessionId: string,
+    workspaceRoot: string,
+    prompt: string,
+    options: { kind?: "run" | "goal"; goal_id?: string; iteration?: number; metadata?: JsonObject } = {},
+  ): SupervisorJob {
     const now = nowIso();
     const job: SupervisorJob = {
       job_id: randomId("j"),
@@ -701,43 +726,71 @@ export class SessionStore {
       workspace_root: workspaceRoot,
       prompt,
       status: "queued",
+      kind: options.kind ?? "run",
+      goal_id: options.goal_id,
+      iteration: Math.max(0, Math.trunc(options.iteration ?? 0)),
+      metadata: options.metadata ?? {},
       created_at: now,
       updated_at: now,
     };
     this.db
       .prepare(
-        "INSERT INTO supervisor_jobs(job_id, session_id, workspace_root, prompt, status, run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO supervisor_jobs(job_id, session_id, workspace_root, prompt, status, kind, goal_id, iteration, metadata_json, run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(job.job_id, job.session_id, job.workspace_root, job.prompt, job.status, null, now, now);
+      .run(job.job_id, job.session_id, job.workspace_root, job.prompt, job.status, job.kind, job.goal_id ?? null, job.iteration, JSON.stringify(job.metadata), null, now, now);
     this.appendEvent({
       session_id: sessionId,
-      type: "daemon.job.queued",
-      data: { job_id: job.job_id, prompt },
+      type: job.kind === "goal" ? "goal.supervisor.queued" : "daemon.job.queued",
+      data: { job_id: job.job_id, prompt, kind: job.kind, goal_id: job.goal_id },
     });
     return job;
   }
 
-  updateSupervisorJob(jobId: string, changes: Partial<Pick<SupervisorJob, "status" | "run_id">>): void {
+  updateSupervisorJob(jobId: string, changes: Partial<Pick<SupervisorJob, "status" | "run_id" | "iteration" | "metadata">>): void {
     const current = this.getSupervisorJob(jobId);
     if (!current) {
       throw new Error(`Unknown supervisor job: ${jobId}`);
     }
     this.db
-      .prepare("UPDATE supervisor_jobs SET status = ?, run_id = ?, updated_at = ? WHERE job_id = ?")
-      .run(changes.status ?? current.status, changes.run_id ?? current.run_id ?? null, nowIso(), jobId);
+      .prepare("UPDATE supervisor_jobs SET status = ?, run_id = ?, iteration = ?, metadata_json = ?, updated_at = ? WHERE job_id = ?")
+      .run(
+        changes.status ?? current.status,
+        changes.run_id ?? current.run_id ?? null,
+        changes.iteration ?? current.iteration,
+        JSON.stringify(changes.metadata ?? current.metadata ?? {}),
+        nowIso(),
+        jobId,
+      );
   }
 
   getSupervisorJob(jobId: string): SupervisorJob | undefined {
-    const row = this.db.prepare("SELECT * FROM supervisor_jobs WHERE job_id = ?").get(jobId) as SupervisorJob | undefined;
-    return row ? { ...row } : undefined;
+    const row = this.db.prepare("SELECT * FROM supervisor_jobs WHERE job_id = ?").get(jobId) as Record<string, unknown> | undefined;
+    return row ? parseSupervisorJob(row) : undefined;
   }
 
   listSupervisorJobs(status?: string): SupervisorJob[] {
     const rows = status
       ? (this.db
           .prepare("SELECT * FROM supervisor_jobs WHERE status = ? ORDER BY updated_at DESC")
-          .all(status) as SupervisorJob[])
-      : (this.db.prepare("SELECT * FROM supervisor_jobs ORDER BY updated_at DESC").all() as SupervisorJob[]);
-    return rows.map((row) => ({ ...row }));
+          .all(status) as Record<string, unknown>[])
+      : (this.db.prepare("SELECT * FROM supervisor_jobs ORDER BY updated_at DESC").all() as Record<string, unknown>[]);
+    return rows.map(parseSupervisorJob);
   }
+}
+
+function parseSupervisorJob(row: Record<string, unknown>): SupervisorJob {
+  return {
+    job_id: String(row.job_id),
+    session_id: String(row.session_id),
+    workspace_root: String(row.workspace_root),
+    prompt: String(row.prompt),
+    status: String(row.status) as SupervisorJob["status"],
+    kind: row.kind === "goal" ? "goal" : "run",
+    goal_id: typeof row.goal_id === "string" && row.goal_id ? row.goal_id : undefined,
+    iteration: typeof row.iteration === "number" && Number.isFinite(row.iteration) ? Math.max(0, Math.trunc(row.iteration)) : 0,
+    metadata: parseJsonObject(String(row.metadata_json ?? "{}")),
+    run_id: typeof row.run_id === "string" && row.run_id ? row.run_id : undefined,
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at),
+  };
 }

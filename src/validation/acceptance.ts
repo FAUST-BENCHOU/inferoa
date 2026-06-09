@@ -127,7 +127,7 @@ export async function runFinalAcceptance(options: {
       failures.push("background process stop/cancel event was not persisted");
     }
     if (options.daemon) {
-      const daemonEvidence = await validateDaemonAcceptance(options.stateDir, workspace.root, run.session.session_id);
+      const daemonEvidence = await validateDaemonAcceptance(options.stateDir, workspace.root, run.session.session_id, options.configPath);
       evidence["daemon"] = daemonEvidence;
       if (!daemonEvidence.ok) {
         failures.push(...daemonEvidence.failures);
@@ -184,6 +184,7 @@ async function validateDaemonAcceptance(
   stateDir: string | undefined,
   workspaceRoot: string,
   sessionId: string,
+  configPath?: string,
 ): Promise<{ ok: boolean; failures: string[]; evidence: Record<string, unknown> }> {
   const failures: string[] = [];
   const status = await startDaemon({ stateDir });
@@ -194,6 +195,7 @@ async function validateDaemonAcceptance(
     stateDir,
     workspaceRoot,
     sessionId,
+    configPath,
     prompt:
       "Daemon validation for the same final acceptance task: run git_status, start a short background process with run_command, read_process, stop_process, then complete_step with daemon evidence.",
   });
@@ -204,6 +206,7 @@ async function validateDaemonAcceptance(
     stateDir,
     workspaceRoot,
     sessionId,
+    configPath,
     prompt: "Daemon cancellation validation: this job should be cancelled before execution.",
   });
   const cancelled = await cancelDaemonJob(stateDir, cancelledJob.job_id);

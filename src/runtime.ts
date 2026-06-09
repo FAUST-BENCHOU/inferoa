@@ -10,6 +10,7 @@ import type {
   RtkSavingsSummary,
   SessionRecord,
   ToolCall,
+  ToolDefinition,
   ToolResult,
   VllmAgentConfig,
   WorkspaceIdentity,
@@ -37,7 +38,9 @@ export interface RuntimeRunOptions {
   onStatus?: (event: RuntimeStatusEvent) => void;
   onClarify?: (request: ClarifyRequest) => Promise<ClarifyResponse>;
   max_tool_rounds?: number;
-  request_class?: "interactive" | "background";
+  request_class?: ModelRequest["request_class"];
+  visibility?: "normal" | "internal";
+  run_id?: string;
   signal?: AbortSignal;
 }
 
@@ -115,7 +118,9 @@ export class Runtime {
   async run(options: RuntimeRunOptions): Promise<RuntimeRunResult> {
     const session = options.session_id ? this.requiredSession(options.session_id) : await this.createSession(options.title ?? titleFromPrompt(options.prompt));
     const clientId = options.client_id ?? randomId("c");
-    const runId = randomId("run");
+    const runId = options.run_id ?? randomId("run");
+    const requestClass = options.request_class ?? "interactive";
+    const visibility = options.visibility ?? (requestClass === "audit" ? "internal" : "normal");
     const startedAt = Date.now();
     let goalTokenUsage = 0;
     let toolRounds = 0;
@@ -130,7 +135,7 @@ export class Runtime {
       const discoveredSkills = await this.skills.discover();
       const enabledSkillNames = this.config.skills.enabled.slice().sort();
       const loadedSkills = await this.skills.loadEnabled(discoveredSkills);
-      const availableTools = this.tools.list();
+      const availableTools = toolsForRequestClass(this.tools.list(), requestClass);
       this.store.appendEvent({
         session_id: session.session_id,
         run_id: runId,
@@ -146,9 +151,9 @@ export class Runtime {
         session_id: session.session_id,
         run_id: runId,
         type: "user.prompt",
-        data: { prompt: options.prompt },
+        data: { prompt: options.prompt, request_class: requestClass, visibility },
       });
-      toolCalls += await this.prefetchPromptUrls(options.prompt, session.session_id, runId, options.onStatus, options.signal);
+      toolCalls += await this.prefetchPromptUrls(options.prompt, session.session_id, runId, requestClass, visibility, options.onStatus, options.signal);
 
       let currentPrompt = options.prompt;
       let response: ModelResponse | undefined;
@@ -219,7 +224,7 @@ export class Runtime {
           model: this.config.model_setup.model ?? "",
           messages: rebuilt.messages,
           tools: availableTools,
-          request_class: options.request_class ?? "interactive",
+          request_class: requestClass,
           prompt_hash: rebuilt.prompt_hash,
           tool_schema_hash: rebuilt.tool_schema_hash,
           prompt_epoch_id: rebuilt.epoch.prompt_epoch_id,
@@ -238,6 +243,7 @@ export class Runtime {
             tool_schema_hash: request.tool_schema_hash,
             estimated_tokens: rebuilt.estimated_tokens,
             prompt_epoch_id: request.prompt_epoch_id,
+            visibility,
           },
         });
         options.onStatus?.({ type: "model_start", model: request.model });
@@ -269,6 +275,8 @@ export class Runtime {
             request_id: response.request_id,
             response_id: response.response_id,
             model: response.model,
+            request_class: requestClass,
+            visibility,
           },
         });
         goalTokenUsage += modelUsageTokenCost(response.usage);
@@ -282,7 +290,7 @@ export class Runtime {
         toolRounds += 1;
         for (const call of response.tool_calls) {
           throwIfAborted(options.signal);
-          await this.executeToolCall(call, session.session_id, runId, options.onStatus, options.onClarify);
+          await this.executeToolCall(call, session.session_id, runId, requestClass, visibility, options.onStatus, options.onClarify);
           toolCalls += 1;
           throwIfAborted(options.signal);
         }
@@ -589,7 +597,15 @@ export class Runtime {
     this.codeIntelligence.dispose();
   }
 
-  private async prefetchPromptUrls(prompt: string, sessionId: string, runId: string, onStatus?: RuntimeRunOptions["onStatus"], signal?: AbortSignal): Promise<number> {
+  private async prefetchPromptUrls(
+    prompt: string,
+    sessionId: string,
+    runId: string,
+    requestClass: ModelRequest["request_class"],
+    visibility: "normal" | "internal",
+    onStatus?: RuntimeRunOptions["onStatus"],
+    signal?: AbortSignal,
+  ): Promise<number> {
     const urls = directHttpUrls(prompt).slice(0, 3);
     let toolCalls = 0;
     for (const url of urls) {
@@ -598,6 +614,8 @@ export class Runtime {
         { id: randomId("prefetch"), name: "web_fetch", arguments: { url, max_bytes: 1_000_000 } },
         sessionId,
         runId,
+        requestClass,
+        visibility,
         onStatus,
       );
       toolCalls += 1;
@@ -613,6 +631,8 @@ export class Runtime {
           resource_uri: result.resource_uri,
           data: result.data as JsonObject | undefined,
           error: result.error as JsonObject | undefined,
+          request_class: requestClass,
+          visibility,
         },
       });
     }
@@ -623,6 +643,8 @@ export class Runtime {
     call: ToolCall,
     sessionId: string,
     runId: string,
+    requestClass: ModelRequest["request_class"],
+    visibility: "normal" | "internal",
     onStatus?: RuntimeRunOptions["onStatus"],
     onClarify?: RuntimeRunOptions["onClarify"],
   ): Promise<ToolResult> {
@@ -637,7 +659,7 @@ export class Runtime {
     });
     let result: ToolResult;
     try {
-      result = await this.tools.call(call, { session_id: sessionId, run_id: runId, clarify: onClarify });
+      result = await this.tools.call(call, { session_id: sessionId, run_id: runId, request_class: requestClass, visibility, clarify: onClarify });
     } catch (error) {
       result = fail("tool_runtime_exception", error instanceof Error ? error.message : String(error));
       this.store.appendEvent({
@@ -647,6 +669,8 @@ export class Runtime {
         data: {
           tool_call_id: call.id,
           tool_name: call.name,
+          request_class: requestClass,
+          visibility,
           result: result as unknown as JsonObject,
         },
       });
@@ -952,6 +976,28 @@ function directHttpUrls(text: string): string[] {
     }
   }
   return urls;
+}
+
+function toolsForRequestClass(tools: ToolDefinition[], requestClass: ModelRequest["request_class"]): ToolDefinition[] {
+  if (requestClass !== "audit") {
+    return tools;
+  }
+  const allowed = new Set([
+    "ast_grep",
+    "file_search",
+    "git_diff",
+    "git_show",
+    "git_status",
+    "glob",
+    "goal",
+    "list_dir",
+    "lsp",
+    "read_file",
+    "read_resource",
+    "run_command",
+    "session_note",
+  ]);
+  return tools.filter((tool) => allowed.has(tool.name));
 }
 
 function mergeEndpointEvidence(snapshot: EndpointSignalSnapshot, response: EndpointSignalSnapshot): EndpointSignalSnapshot {

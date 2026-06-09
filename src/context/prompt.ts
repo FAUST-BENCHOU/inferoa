@@ -199,7 +199,7 @@ export class PromptBuilder {
 
   private tailMessages(events: SessionEvent[], currentUserPrompt: string, activeRunId?: string): ModelMessage[] {
     const messages: ModelMessage[] = [];
-    const history = events.slice();
+    const history = events.filter((event) => !isInternalPromptReplayEvent(event));
     const currentPromptIndex = history.findLastIndex((event) => isCurrentRunUserPrompt(event, currentUserPrompt, activeRunId));
     if (currentPromptIndex >= 0) {
       history.splice(currentPromptIndex, 1);
@@ -271,7 +271,9 @@ export class PromptBuilder {
     if (autoresearchMode) {
       messages.push({ role: "user", content: `<autoresearch.mode>\n${autoresearchMode}\n</autoresearch.mode>` });
     }
-    const webPrefetches = events.filter((event) => event.type === "web.prefetch" && (!activeRunId || event.run_id === activeRunId)).slice(-5);
+    const webPrefetches = events
+      .filter((event) => event.type === "web.prefetch" && !isInternalPromptReplayEvent(event) && (!activeRunId || event.run_id === activeRunId))
+      .slice(-5);
     if (webPrefetches.length) {
       messages.push({
         role: "user",
@@ -310,6 +312,13 @@ function isCurrentRunUserPrompt(event: SessionEvent, currentUserPrompt: string, 
 
 function sameRunScope(eventRunId: string | undefined, responseRunId: string | undefined): boolean {
   return responseRunId ? eventRunId === responseRunId : true;
+}
+
+function isInternalPromptReplayEvent(event: SessionEvent): boolean {
+  if (event.data.visibility !== "internal" && event.data.request_class !== "audit") {
+    return false;
+  }
+  return event.type === "user.prompt" || event.type === "model.response.settled" || event.type === "tool.result" || event.type === "web.prefetch";
 }
 
 function toolCallId(value: unknown): string | undefined {

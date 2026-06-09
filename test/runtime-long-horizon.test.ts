@@ -490,7 +490,7 @@ test("runtime reports goal completion metrics after a completing tool loop", asy
                   {
                     id: "call_goal_complete",
                     type: "function",
-                    function: { name: "goal", arguments: JSON.stringify({ op: "complete", summary: "Finished the goal." }) },
+                    function: { name: "goal", arguments: JSON.stringify({ op: "complete", summary: "Finished the goal.", force: true }) },
                   },
                 ],
               },
@@ -592,7 +592,7 @@ test("runtime preserves goal completion report when final response fails", async
                   {
                     id: "call_goal_complete_before_failure",
                     type: "function",
-                    function: { name: "goal", arguments: JSON.stringify({ op: "complete", summary: "Finished before final response." }) },
+                    function: { name: "goal", arguments: JSON.stringify({ op: "complete", summary: "Finished before final response.", force: true }) },
                   },
                 ],
               },

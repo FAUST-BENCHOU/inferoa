@@ -373,7 +373,12 @@ async function debugDaemon(options: ParsedCli, rest: string[]): Promise<void> {
       const prompt = args.join(" ");
       const app = await loadApp(options);
       try {
-        const job = await queueDaemonRun({ stateDir: options.stateDir, workspaceRoot: app.workspace.root, prompt });
+        const job = await queueDaemonRun({
+          stateDir: options.stateDir,
+          workspaceRoot: app.workspace.root,
+          prompt,
+          configPath: app.configFiles[0],
+        });
         const status = await startDaemon({ stateDir: options.stateDir });
         print({ job, daemon: status }, options.json);
       } finally {

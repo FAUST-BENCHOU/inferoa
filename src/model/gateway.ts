@@ -316,6 +316,9 @@ export class ModelGateway {
     headers.set("x-session-id", request.session_id);
     headers.set("x-inferoa-session-id", request.session_id);
     headers.set("x-inferoa-run-id", request.run_id);
+    if (request.request_class) {
+      headers.set("x-inferoa-request-class", request.request_class);
+    }
     const body = {
       model: request.model || setup.model,
       instructions: openAiResponsesInstructions(request.messages),

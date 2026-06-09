@@ -1,4 +1,4 @@
-import type { ClarifyRequest, ClarifyResponse, JsonObject, ToolResult, VllmAgentConfig, WorkspaceIdentity } from "../types.js";
+import type { ClarifyRequest, ClarifyResponse, JsonObject, ModelRequest, ToolResult, VllmAgentConfig, WorkspaceIdentity } from "../types.js";
 import { SessionStore } from "../session/store.js";
 
 export interface ToolExecutionContext {
@@ -6,6 +6,8 @@ export interface ToolExecutionContext {
   workspace: WorkspaceIdentity;
   session_id: string;
   run_id?: string;
+  request_class?: ModelRequest["request_class"];
+  visibility?: "normal" | "internal";
   tool_call_id?: string;
   tool_name?: string;
   store: SessionStore;

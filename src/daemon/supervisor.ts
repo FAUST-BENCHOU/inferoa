@@ -6,8 +6,18 @@ import { loadConfig } from "../config/config.js";
 import { resolveWorkspace } from "../session/workspace.js";
 import { SessionStore, type SupervisorJob } from "../session/store.js";
 import { Runtime } from "../runtime.js";
+import type { JsonObject } from "../types.js";
 import { homeStateDir, pathExists } from "../util/fs.js";
 import { randomId } from "../util/hash.js";
+import {
+  completeGoalAfterAudit,
+  incompleteGoalPlanningSteps,
+  isGoalFrontierExhausted,
+  markGoalAuditStarted,
+  readGoalState,
+  recordGoalCompletionReport,
+  writeGoalState,
+} from "../goals/state.js";
 
 export interface DaemonStatus {
   pid?: number;
@@ -76,8 +86,10 @@ export async function queueDaemonRun(options: {
   sessionId?: string;
   prompt: string;
   title?: string;
+  configPath?: string;
 }): Promise<SupervisorJob> {
-  const { config } = await loadConfig(options.workspaceRoot);
+  const configPath = daemonConfigPath(options.workspaceRoot, options.stateDir, options.configPath);
+  const { config } = await loadConfig(options.workspaceRoot, configPath);
   const workspace = await resolveWorkspace(options.workspaceRoot, config, options.workspaceRoot);
   const store = await SessionStore.open(options.stateDir);
   try {
@@ -87,7 +99,40 @@ export async function queueDaemonRun(options: {
     if (!session) {
       throw new Error(`Unknown session for daemon run: ${options.sessionId}`);
     }
-    return store.createSupervisorJob(session.session_id, workspace.root, options.prompt);
+    return store.createSupervisorJob(session.session_id, workspace.root, options.prompt, {
+      metadata: metadataWithConfigPath({}, configPath),
+    });
+  } finally {
+    store.close();
+  }
+}
+
+export async function queueDaemonGoal(options: {
+  stateDir?: string;
+  workspaceRoot: string;
+  sessionId: string;
+  prompt?: string;
+  maxIterations?: number;
+  configPath?: string;
+}): Promise<SupervisorJob> {
+  const configPath = daemonConfigPath(options.workspaceRoot, options.stateDir, options.configPath);
+  const { config } = await loadConfig(options.workspaceRoot, configPath);
+  const workspace = await resolveWorkspace(options.workspaceRoot, config, options.workspaceRoot);
+  const store = await SessionStore.open(options.stateDir);
+  try {
+    const session = store.getSession(options.sessionId) ?? store.findSessionByPrefix(workspace.id, options.sessionId);
+    if (!session) {
+      throw new Error(`Unknown session for daemon goal: ${options.sessionId}`);
+    }
+    const goal = readGoalState(store, session.session_id);
+    if (!goal || goal.goal.status === "complete" || goal.goal.status === "dropped") {
+      throw new Error("No active goal is available for daemon supervision.");
+    }
+    return store.createSupervisorJob(session.session_id, workspace.root, options.prompt ?? buildGoalWorkPrompt(goal.goal.objective), {
+      kind: "goal",
+      goal_id: goal.goal.id,
+      metadata: metadataWithConfigPath({ max_iterations: options.maxIterations ?? 1000 }, configPath),
+    });
   } finally {
     store.close();
   }
@@ -220,6 +265,10 @@ async function runJob(store: SessionStore, job: SupervisorJob, stateDir?: string
   if (job.status === "cancelled") {
     return;
   }
+  if (job.kind === "goal") {
+    await runGoalJob(store, job, stateDir);
+    return;
+  }
   const runId = randomId("run");
   store.updateSupervisorJob(job.job_id, { status: "running", run_id: runId });
   store.appendEvent({
@@ -229,7 +278,7 @@ async function runJob(store: SessionStore, job: SupervisorJob, stateDir?: string
     data: { job_id: job.job_id },
   });
   try {
-    const { config } = await loadConfig(job.workspace_root);
+    const { config } = await loadConfig(job.workspace_root, configPathFromMetadata(job.metadata));
     const workspace = await resolveWorkspace(job.workspace_root, config, job.workspace_root);
     const runtime = new Runtime(config, workspace, store);
     await runtime.run({
@@ -256,6 +305,175 @@ async function runJob(store: SessionStore, job: SupervisorJob, stateDir?: string
       data: { job_id: job.job_id, error: error instanceof Error ? error.message : String(error) },
     });
   }
+}
+
+async function runGoalJob(store: SessionStore, job: SupervisorJob, stateDir?: string): Promise<void> {
+  const startedRunId = randomId("run");
+  store.updateSupervisorJob(job.job_id, { status: "running", run_id: startedRunId });
+  store.appendEvent({
+    session_id: job.session_id,
+    run_id: startedRunId,
+    type: "goal.supervisor.continued",
+    data: { job_id: job.job_id, goal_id: job.goal_id, iteration: job.iteration },
+  });
+  try {
+    const { config } = await loadConfig(job.workspace_root, configPathFromMetadata(job.metadata));
+    const workspace = await resolveWorkspace(job.workspace_root, config, job.workspace_root);
+    const runtime = new Runtime(config, workspace, store);
+    const maxIterations = numberMeta(job.metadata.max_iterations, 1000);
+    let iteration = job.iteration;
+    while (iteration < maxIterations) {
+      const latestJob = store.getSupervisorJob(job.job_id);
+      if (!latestJob || latestJob.status === "cancel_requested" || latestJob.status === "cancelled") {
+        store.updateSupervisorJob(job.job_id, { status: "cancelled", iteration });
+        store.appendEvent({ session_id: job.session_id, run_id: startedRunId, type: "daemon.job.cancelled", data: { job_id: job.job_id } });
+        return;
+      }
+      const state = readGoalState(store, job.session_id);
+      if (!state || state.goal.status === "complete" || state.goal.status === "dropped") {
+        store.updateSupervisorJob(job.job_id, { status: "complete", iteration });
+        store.appendEvent({ session_id: job.session_id, run_id: startedRunId, type: "daemon.job.complete", data: { job_id: job.job_id, kind: "goal" } });
+        return;
+      }
+      if (!state.enabled || state.goal.status === "paused" || state.goal.status === "budget-limited") {
+        store.updateSupervisorJob(job.job_id, { status: "paused", iteration });
+        store.appendEvent({
+          session_id: job.session_id,
+          run_id: startedRunId,
+          type: "goal.supervisor.paused",
+          data: { job_id: job.job_id, goal_id: state.goal.id, status: state.goal.status },
+        });
+        return;
+      }
+
+      iteration += 1;
+      store.updateSupervisorJob(job.job_id, { status: "running", iteration });
+      if (isGoalFrontierExhausted(state.goal)) {
+        const auditRunId = randomId("run");
+        writeGoalState(store, job.session_id, markGoalAuditStarted(state, auditRunId), auditRunId);
+        store.appendEvent({
+          session_id: job.session_id,
+          run_id: auditRunId,
+          type: "goal.audit.started",
+          data: { job_id: job.job_id, goal_id: state.goal.id, frontier_generation: state.goal.frontier_generation },
+        });
+        await runtime.run({
+          prompt: buildGoalAuditPrompt(state.goal.objective),
+          session_id: job.session_id,
+          client_id: `daemon:${process.pid}:goal-audit`,
+          owner_kind: "daemon",
+          request_class: "audit",
+          visibility: "internal",
+          run_id: auditRunId,
+        });
+        const audited = readGoalState(store, job.session_id);
+        if (!audited || audited.goal.status === "complete" || audited.goal.status === "dropped") {
+          continue;
+        }
+        if (audited.goal.last_audit_run_id !== auditRunId) {
+          store.updateSupervisorJob(job.job_id, { status: "paused", iteration, metadata: { ...latestJob.metadata, pause_reason: "audit_missing_decision" } });
+          store.appendEvent({
+            session_id: job.session_id,
+            run_id: auditRunId,
+            type: "goal.supervisor.paused",
+            data: { job_id: job.job_id, goal_id: audited.goal.id, reason: "audit_missing_decision" },
+          });
+          return;
+        }
+        if (audited.goal.last_audit_decision === "expand") {
+          continue;
+        }
+        if (audited.goal.last_audit_decision === "done") {
+          const completed = completeGoalAfterAudit(audited, audited.goal.last_audit_summary);
+          writeGoalState(store, job.session_id, completed, auditRunId);
+          recordGoalCompletionReport(store, job.session_id, auditRunId);
+          store.updateSupervisorJob(job.job_id, { status: "complete", iteration });
+          store.appendEvent({ session_id: job.session_id, run_id: auditRunId, type: "daemon.job.complete", data: { job_id: job.job_id, kind: "goal" } });
+          return;
+        }
+        store.updateSupervisorJob(job.job_id, {
+          status: audited.goal.last_audit_decision === "blocked" ? "blocked" : "paused",
+          iteration,
+          metadata: { ...latestJob.metadata, pause_reason: audited.goal.last_audit_decision ?? "audit_decision" },
+        });
+        store.appendEvent({
+          session_id: job.session_id,
+          run_id: auditRunId,
+          type: "goal.supervisor.paused",
+          data: { job_id: job.job_id, goal_id: audited.goal.id, reason: audited.goal.last_audit_decision, blocker: audited.goal.blocker },
+        });
+        return;
+      }
+
+      const workRun = await runtime.run({
+        prompt: buildGoalWorkPrompt(state.goal.objective),
+        session_id: job.session_id,
+        client_id: `daemon:${process.pid}:goal`,
+        owner_kind: "daemon",
+        request_class: "background",
+      });
+      store.updateSupervisorJob(job.job_id, { run_id: workRun.run_id, iteration });
+      const afterWork = readGoalState(store, job.session_id);
+      if (afterWork && afterWork.goal.planning && incompleteGoalPlanningSteps(afterWork.goal).length === 0) {
+        continue;
+      }
+    }
+    store.updateSupervisorJob(job.job_id, { status: "paused", iteration, metadata: { ...job.metadata, pause_reason: "max_iterations" } });
+    store.appendEvent({
+      session_id: job.session_id,
+      run_id: startedRunId,
+      type: "goal.supervisor.paused",
+      data: { job_id: job.job_id, goal_id: job.goal_id, reason: "max_iterations", max_iterations: maxIterations },
+    });
+  } catch (error) {
+    store.updateSupervisorJob(job.job_id, { status: "failed" });
+    store.appendEvent({
+      session_id: job.session_id,
+      run_id: startedRunId,
+      type: "daemon.job.failed",
+      data: { job_id: job.job_id, kind: "goal", error: error instanceof Error ? error.message : String(error) },
+    });
+  }
+}
+
+function buildGoalWorkPrompt(objective: string): string {
+  return [
+    `Goal objective: ${objective}`,
+    "Continue the active goal frontier. If no frontier exists, decompose it with the goal tool first.",
+    "Keep step status, notes, and evidence current with goal op=update_step. Do not complete the goal merely because the current frontier is empty.",
+  ].join("\n");
+}
+
+function buildGoalAuditPrompt(objective: string): string {
+  return [
+    `Goal objective: ${objective}`,
+    "Run an internal read-only frontier exhaustion audit for the active goal.",
+    "Use available read/search/git/code-intelligence/verification tools as needed to decide whether the top-level objective has more undiscovered frontier.",
+    "Do not edit files or execute new business work in this audit.",
+    "Finish by calling goal op=audit exactly once.",
+    "Use decision=expand with concrete new steps if more frontier exists.",
+    "Use decision=done only if no new frontier exists and include verification_evidence.",
+    "Use decision=blocked or retry with blocker details when completion cannot be determined.",
+  ].join("\n");
+}
+
+function numberMeta(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : fallback;
+}
+
+function daemonConfigPath(workspaceRoot: string, stateDir: string | undefined, configPath: string | undefined): string | undefined {
+  if (configPath) {
+    return path.resolve(workspaceRoot, configPath);
+  }
+  return stateDir ? path.join(stateDir, "config.yaml") : undefined;
+}
+
+function metadataWithConfigPath(metadata: JsonObject, configPath: string | undefined): JsonObject {
+  return configPath ? { ...metadata, config_path: configPath } : metadata;
+}
+
+function configPathFromMetadata(metadata: JsonObject): string | undefined {
+  return typeof metadata.config_path === "string" && metadata.config_path.trim() ? metadata.config_path : undefined;
 }
 
 function processAlive(pid: number): boolean {

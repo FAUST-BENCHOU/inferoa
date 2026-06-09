@@ -5,6 +5,8 @@ import { truncateText } from "../util/limit.js";
 
 export type GoalStatus = "active" | "paused" | "budget-limited" | "complete" | "dropped";
 export type GoalStepStatus = "pending" | "in_progress" | "completed" | "blocked" | "skipped";
+export type GoalAuditDecision = "expand" | "done" | "blocked" | "retry";
+export type GoalAuditStatus = "running" | "completed";
 
 const PLAN_PROMPT_BODY_LIMIT = 6000;
 
@@ -18,6 +20,13 @@ export interface GoalRecord {
   time_used_seconds: number;
   tool_rounds_used: number;
   tool_calls_used: number;
+  frontier_generation: number;
+  audit_status?: GoalAuditStatus;
+  last_audit_run_id?: string;
+  last_audit_decision?: GoalAuditDecision;
+  last_audit_summary?: string;
+  verification_evidence?: JsonObject;
+  blocker?: string;
   planning?: GoalPlanningState;
   plan?: GoalPlanSnapshot;
   summary?: string;
@@ -61,6 +70,15 @@ export interface GoalStepUpdateInput {
   status?: GoalStepStatus;
   notes?: string;
   evidence?: JsonObject;
+  active_step_id?: string;
+}
+
+export interface GoalAuditInput {
+  decision: GoalAuditDecision;
+  summary?: string;
+  verification_evidence?: JsonObject;
+  blocker?: string;
+  steps?: GoalPlanningStepInput[];
   active_step_id?: string;
 }
 
@@ -114,6 +132,7 @@ export function createGoalState(input: GoalCreateInput, now = new Date()): GoalS
       time_used_seconds: 0,
       tool_rounds_used: 0,
       tool_calls_used: 0,
+      frontier_generation: 0,
       created_at: timestamp,
       updated_at: timestamp,
     },
@@ -122,8 +141,66 @@ export function createGoalState(input: GoalCreateInput, now = new Date()): GoalS
 
 export function replaceGoalPlanning(state: GoalState, input: GoalPlanningInput, now = new Date()): GoalState {
   const next = cloneGoalState(state);
+  const hadPlanning = Boolean(next.goal.planning);
   next.goal.planning = createGoalPlanning(input, now);
+  if (!hadPlanning && next.goal.frontier_generation <= 0) {
+    next.goal.frontier_generation = 1;
+  }
   next.goal.updated_at = next.goal.planning.updated_at;
+  return next;
+}
+
+export function markGoalAuditStarted(state: GoalState, runId: string, now = new Date()): GoalState {
+  const next = cloneGoalState(state);
+  next.goal.audit_status = "running";
+  next.goal.last_audit_run_id = runId;
+  next.goal.updated_at = now.toISOString();
+  return next;
+}
+
+export function completeGoalAudit(state: GoalState, input: GoalAuditInput, runId: string, now = new Date()): GoalState {
+  const timestamp = now.toISOString();
+  let next = cloneGoalState(state);
+  next.goal.audit_status = "completed";
+  next.goal.last_audit_run_id = runId;
+  next.goal.last_audit_decision = input.decision;
+  next.goal.last_audit_summary = cleanOptionalString(input.summary);
+  next.goal.verification_evidence = input.verification_evidence ? cloneJsonObject(input.verification_evidence) : undefined;
+  next.goal.blocker = cleanOptionalString(input.blocker);
+  if (input.decision === "expand") {
+    if (!input.steps?.length) {
+      throw new Error("audit decision expand requires new steps");
+    }
+    next.goal.frontier_generation = Math.max(0, next.goal.frontier_generation) + 1;
+    next.goal.planning = createGoalPlanning(
+      {
+        summary: input.summary ?? next.goal.planning?.summary,
+        active_step_id: input.active_step_id,
+        steps: input.steps,
+      },
+      now,
+    );
+  }
+  if (input.decision === "done" && !input.verification_evidence) {
+    throw new Error("audit decision done requires verification_evidence");
+  }
+  next.goal.updated_at = timestamp;
+  return next;
+}
+
+export function completeGoalAfterAudit(state: GoalState, summary: string | undefined, now = new Date()): GoalState {
+  const auditMessage = goalCompletionAuditBlockMessage(state.goal);
+  if (auditMessage) {
+    throw new Error(auditMessage);
+  }
+  const next = cloneGoalState(state);
+  const trimmed = summary?.trim() || next.goal.last_audit_summary;
+  if (trimmed) {
+    next.goal.summary = trimmed;
+  }
+  next.enabled = false;
+  next.goal.status = "complete";
+  next.goal.updated_at = now.toISOString();
   return next;
 }
 
@@ -400,14 +477,17 @@ export function renderGoalModeSection(state: GoalState | undefined): string | un
     loopLine,
     `time used seconds: ${goal.time_used_seconds}`,
     `time used ms: ${goalDurationMs(goal)}`,
+    goal.frontier_generation > 0 ? `frontier generation: ${goal.frontier_generation}` : undefined,
     goal.planning ? renderGoalPlanning(goal.planning) : "Internal goal plan: not decomposed yet.",
+    renderLatestAudit(goal),
     goal.plan ? renderApprovedPlan(goal.plan, Boolean(goal.planning)) : undefined,
     goal.planning
       ? "Keep the internal goal plan current with goal op=update_step as findings, edits, and verification change."
       : "For broad or multi-step work, call goal op=decompose with concrete steps before risky edits.",
     "Work on the objective until it is genuinely handled. Use the goal tool to inspect, resume, complete, or drop goal state when appropriate.",
+    "When the current frontier appears exhausted, a tool-enabled internal audit run must verify whether more frontier exists before completion.",
     "When completing the goal, include a completion summary in the goal tool call.",
-    "Do not mark the goal complete merely because the turn is ending or the budget is low.",
+    "Do not mark the goal complete merely because the current checklist is empty, the turn is ending, or the budget is low.",
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
@@ -442,6 +522,7 @@ export function cloneGoalState(state: GoalState): GoalState {
     enabled: state.enabled,
     goal: {
       ...state.goal,
+      verification_evidence: state.goal.verification_evidence ? cloneJsonObject(state.goal.verification_evidence) : undefined,
       planning: state.goal.planning ? cloneGoalPlanning(state.goal.planning) : undefined,
       plan: state.goal.plan ? { ...state.goal.plan } : undefined,
     },
@@ -460,6 +541,20 @@ export function incompleteGoalPlanningMessage(goal: GoalRecord): string | undefi
   const visible = incomplete.slice(0, 8).map((step) => step.id);
   const suffix = incomplete.length > visible.length ? `, and ${incomplete.length - visible.length} more` : "";
   return `Cannot complete goal with unfinished internal plan steps: ${visible.join(", ")}${suffix}`;
+}
+
+export function isGoalFrontierExhausted(goal: GoalRecord): boolean {
+  return Boolean(goal.planning && incompleteGoalPlanningSteps(goal).length === 0);
+}
+
+export function goalCompletionAuditBlockMessage(goal: GoalRecord): string | undefined {
+  if (goal.last_audit_decision !== "done") {
+    return "Cannot complete goal until a tool-enabled audit run records decision=done.";
+  }
+  if (!goal.verification_evidence || Object.keys(goal.verification_evidence).length === 0) {
+    return "Cannot complete goal until the latest done audit records verification_evidence.";
+  }
+  return undefined;
 }
 
 export function goalPlanningProgressSummary(planning: GoalPlanningState): string {
@@ -532,6 +627,14 @@ function goalCompletionForRun(store: SessionStore, sessionId: string, runId: str
   return report ? { objective: state.goal.objective, report } : undefined;
 }
 
+export function parseGoalAuditDecision(value: unknown): GoalAuditDecision | undefined {
+  return value === "expand" || value === "done" || value === "blocked" || value === "retry" ? value : undefined;
+}
+
+function parseGoalAuditStatus(value: unknown): GoalAuditStatus | undefined {
+  return value === "running" || value === "completed" ? value : undefined;
+}
+
 function isActiveGoalPromptStatus(status: GoalStatus): boolean {
   return status === "active" || status === "budget-limited";
 }
@@ -553,6 +656,8 @@ function parseGoalState(data: JsonObject): GoalState | undefined {
     return undefined;
   }
   const tokenBudget = numericOrUndefined(candidate.token_budget);
+  const planning = parseGoalPlanning(candidate.planning);
+  const frontierGeneration = numeric(candidate.frontier_generation) || (planning ? 1 : 0);
   return {
     enabled: data.enabled === true,
     goal: {
@@ -565,7 +670,14 @@ function parseGoalState(data: JsonObject): GoalState | undefined {
       time_used_seconds: numeric(candidate.time_used_seconds),
       tool_rounds_used: numeric(candidate.tool_rounds_used),
       tool_calls_used: numeric(candidate.tool_calls_used),
-      planning: parseGoalPlanning(candidate.planning),
+      frontier_generation: frontierGeneration,
+      audit_status: parseGoalAuditStatus(candidate.audit_status),
+      last_audit_run_id: optionalString(candidate.last_audit_run_id),
+      last_audit_decision: parseGoalAuditDecision(candidate.last_audit_decision),
+      last_audit_summary: optionalString(candidate.last_audit_summary),
+      verification_evidence: parseJsonObject(candidate.verification_evidence),
+      blocker: optionalString(candidate.blocker),
+      planning,
       plan: parseGoalPlan(candidate.plan),
       summary: optionalString(candidate.summary),
       created_at: typeof candidate.created_at === "string" ? candidate.created_at : "",
@@ -594,6 +706,22 @@ function renderGoalPlanning(planning: GoalPlanningState): string {
     active ? `Active step: ${escapeXmlText(active.id)} ${escapeXmlText(active.title)}` : undefined,
     `Progress: ${goalPlanningProgressSummary(planning)}`,
     ...planning.steps.flatMap((step) => renderGoalPlanningStep(step)),
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
+function renderLatestAudit(goal: GoalRecord): string | undefined {
+  if (!goal.audit_status && !goal.last_audit_decision && !goal.last_audit_summary && !goal.verification_evidence && !goal.blocker) {
+    return undefined;
+  }
+  return [
+    "Latest internal audit:",
+    goal.audit_status ? `status: ${goal.audit_status}` : undefined,
+    goal.last_audit_decision ? `decision: ${goal.last_audit_decision}` : undefined,
+    goal.last_audit_summary ? `summary: ${escapeXmlText(truncateEvidenceText(goal.last_audit_summary, 1000))}` : undefined,
+    goal.blocker ? `blocker: ${escapeXmlText(truncateEvidenceText(goal.blocker, 1000))}` : undefined,
+    goal.verification_evidence ? `verification evidence: ${escapeXmlText(compactEvidenceSummary(goal.verification_evidence))}` : undefined,
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");

@@ -3,11 +3,14 @@ import { fail, ok } from "../util/limit.js";
 import type { ToolExecutionContext } from "./context.js";
 import {
   cloneGoalState,
+  completeGoalAudit,
   completionBudgetReport,
   createGoalState,
   formatGoalDuration,
+  goalCompletionAuditBlockMessage,
   incompleteGoalPlanningMessage,
   goalPlanningProgressSummary,
+  parseGoalAuditDecision,
   parseGoalStepStatus,
   readGoalState,
   replaceGoalPlanning,
@@ -32,6 +35,8 @@ export async function goalTool(args: JsonObject, context: ToolExecutionContext):
         return updateGoalPlan(args, context, op);
       case "update_step":
         return updateGoalStep(args, context);
+      case "audit":
+        return recordGoalAudit(args, context);
       case "resume":
         return resumeGoal(context);
       case "complete":
@@ -149,6 +154,64 @@ function updateGoalStep(args: JsonObject, context: ToolExecutionContext): ToolRe
   }
 }
 
+function recordGoalAudit(args: JsonObject, context: ToolExecutionContext): ToolResult {
+  const state = readGoalState(context.store, context.session_id);
+  if (!state) {
+    return fail("goal_missing", "No goal to audit.");
+  }
+  if (state.goal.status === "complete" || state.goal.status === "dropped") {
+    return fail("goal_closed", `Cannot audit a ${state.goal.status} goal.`);
+  }
+  const decision = parseGoalAuditDecision(stringArg(args.decision));
+  if (!decision) {
+    return fail("goal_audit_decision_required", "decision is required for op=audit and must be expand, done, blocked, or retry");
+  }
+  try {
+    const next = completeGoalAudit(
+      state,
+      {
+        decision,
+        summary: stringArg(args.summary),
+        verification_evidence: objectArg(args.verification_evidence) ?? objectArg(args.evidence),
+        blocker: stringArg(args.blocker),
+        steps: stepsArg(args.steps),
+        active_step_id: stringArg(args.active_step_id),
+      },
+      context.run_id ?? "",
+    );
+    const saved = writeGoalState(context.store, context.session_id, next, context.run_id);
+    context.store.appendEvent({
+      session_id: context.session_id,
+      run_id: context.run_id,
+      type: "goal.audit.completed",
+      data: {
+        goal_id: saved.goal.id,
+        frontier_generation: saved.goal.frontier_generation,
+        decision,
+        summary: saved.goal.last_audit_summary,
+        verification_evidence: saved.goal.verification_evidence,
+        blocker: saved.goal.blocker,
+      },
+    });
+    if (decision === "expand") {
+      context.store.appendEvent({
+        session_id: context.session_id,
+        run_id: context.run_id,
+        type: "goal.frontier.expanded",
+        data: {
+          goal_id: saved.goal.id,
+          frontier_generation: saved.goal.frontier_generation,
+          step_count: saved.goal.planning?.steps.length ?? 0,
+          active_step_id: saved.goal.planning?.active_step_id,
+        },
+      });
+    }
+    return describeGoal(saved, decision === "expand" ? "Goal frontier expanded" : "Goal audit recorded");
+  } catch (error) {
+    return fail("goal_audit_failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
 function resumeGoal(context: ToolExecutionContext): ToolResult {
   const state = readGoalState(context.store, context.session_id);
   if (!state) {
@@ -178,17 +241,21 @@ function finishGoal(args: JsonObject, context: ToolExecutionContext, status: "co
   if (status === "complete" && state.goal.status === "complete") {
     return fail("goal_complete", "Goal is already complete.");
   }
+  const summary = stringArg(args.summary)?.trim();
+  if (status === "complete" && !summary) {
+    return failGoalWithState(state, "goal_summary_required", "summary is required when completing a goal");
+  }
   if (status === "complete" && !booleanArg(args.force)) {
     const incompleteMessage = incompleteGoalPlanningMessage(state.goal);
     if (incompleteMessage) {
       return failGoalWithState(state, "goal_incomplete_plan", incompleteMessage);
     }
+    const auditMessage = goalCompletionAuditBlockMessage(state.goal);
+    if (auditMessage) {
+      return failGoalWithState(state, "goal_audit_required", auditMessage);
+    }
   }
   const next = cloneGoalState(state);
-  const summary = stringArg(args.summary)?.trim();
-  if (status === "complete" && !summary) {
-    return failGoalWithState(state, "goal_summary_required", "summary is required when completing a goal");
-  }
   if (summary) {
     next.goal.summary = summary;
   }
@@ -240,11 +307,15 @@ function goalSummary(prefix: string, goal: GoalRecord): string {
     lines.push(`Time: ${formatGoalDuration(goal)}`);
   }
   if (goal.planning) {
+    lines.push(`Frontier generation: ${goal.frontier_generation}`);
     lines.push(`Plan: ${goalPlanningProgressSummary(goal.planning)}`);
     const active = goal.planning.active_step_id ? goal.planning.steps.find((step) => step.id === goal.planning!.active_step_id) : undefined;
     if (active) {
       lines.push(`Active step: ${active.id} ${active.title}`);
     }
+  }
+  if (goal.last_audit_decision) {
+    lines.push(`Last audit: ${goal.last_audit_decision}${goal.last_audit_summary ? ` - ${goal.last_audit_summary}` : ""}`);
   }
   if (goal.status === "complete" && goal.summary) {
     lines.push(`Completion summary: ${goal.summary}`);

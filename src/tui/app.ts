@@ -19,7 +19,7 @@ import {
 import { resolveRtkStatus, type RtkStatus } from "../rtk/manager.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { SkillRegistry, type SkillDescriptor } from "../skills/registry.js";
-import { attachDaemonJob, cancelDaemonJob, daemonStatus, detachDaemonJob, queueDaemonRun, startDaemon } from "../daemon/supervisor.js";
+import { attachDaemonJob, cancelDaemonJob, daemonStatus, detachDaemonJob, queueDaemonGoal, queueDaemonRun, startDaemon } from "../daemon/supervisor.js";
 import type { RuntimeStatusEvent } from "../runtime.js";
 import { runFinalAcceptance } from "../validation/acceptance.js";
 import {
@@ -27,6 +27,7 @@ import {
   cloneGoalState,
   createGoalState,
   incompleteGoalPlanningMessage,
+  goalCompletionAuditBlockMessage,
   goalPlanningProgressSummary,
   readGoalState,
   recordGoalCompletionReport,
@@ -2760,7 +2761,7 @@ export class TuiApp {
       next.goal.updated_at = new Date().toISOString();
       const saved = writeGoalState(this.app.store, session.session_id, next);
       this.renderGoalPanel(saved);
-      this.enqueueGoalContinuation(saved.goal.objective);
+      await this.enqueueGoalContinuation(saved.goal.objective);
       return;
     }
 
@@ -2804,6 +2805,14 @@ export class TuiApp {
         this.renderNotice("Completion summary is required.");
         return;
       }
+      if (parsed.action === "complete") {
+        const auditMessage = goalCompletionAuditBlockMessage(current.goal);
+        if (auditMessage) {
+          this.renderNotice(auditMessage);
+          this.renderGoalPanel(current);
+          return;
+        }
+      }
       if (summary) {
         next.goal.summary = summary;
       }
@@ -2822,22 +2831,34 @@ export class TuiApp {
   private async startGoal(session: SessionRecord, objective: string): Promise<void> {
     const state = writeGoalState(this.app.store, session.session_id, createGoalState({ objective }));
     this.renderGoalPanel(state);
-    this.enqueueGoalContinuation(objective);
+    await this.enqueueGoalContinuation(objective);
   }
 
-  private enqueueGoalContinuation(objective: string): void {
+  private async enqueueGoalContinuation(objective: string): Promise<void> {
     if (!this.app.config.model_setup.base_url || !this.app.config.model_setup.model) {
       this.renderNotice("Goal is saved. Configure a model with /setup before triggering model work.");
       return;
     }
-    this.enqueuePrompt(
-      [
+    const session = this.optionalSession();
+    if (!session) {
+      return;
+    }
+    const job = await queueDaemonGoal({
+      stateDir: this.options.stateDir,
+      workspaceRoot: this.app.workspace.root,
+      sessionId: session.session_id,
+      configPath: this.app.configFiles[0],
+      prompt: [
         `Goal objective: ${objective}`,
         "If this goal is broad or multi-step, call the goal tool with op=decompose to create internal steps before risky edits.",
-        "Execute the goal while keeping step status, notes, and evidence current with goal op=update_step. Complete only when the objective is genuinely handled.",
+        "Execute the goal while keeping step status, notes, and evidence current with goal op=update_step. Completion is handled only after an internal audit finds no new frontier.",
       ].join("\n"),
-      { renderPrompt: false },
-    );
+    });
+    const status = await startDaemon({ stateDir: this.options.stateDir });
+    this.renderPanel("Goal Supervisor", [
+      `${fg256(48, "•")} ${this.jobLabel(job)}`,
+      `${fg256(39, "Daemon")} ${status.alive ? `alive pid ${status.pid}` : "start requested"}`,
+    ]);
   }
 
   private enqueueGoalPlanningContinuation(objective: string): void {
@@ -2868,6 +2889,15 @@ export class TuiApp {
     }
     if (goal.summary) {
       lines.push(`${fg256(39, "summary")} ${goal.summary}`);
+    }
+    if (goal.frontier_generation > 0) {
+      lines.push(`${fg256(39, "frontier")} generation ${goal.frontier_generation}`);
+    }
+    if (goal.last_audit_decision) {
+      lines.push(`${fg256(39, "audit")} ${goal.last_audit_decision}${goal.last_audit_summary ? ` · ${goal.last_audit_summary}` : ""}`);
+    }
+    if (goal.blocker) {
+      lines.push(`${fg256(203, "blocker")} ${goal.blocker}`);
     }
     if (goal.planning) {
       lines.push(`${fg256(39, "plan")} ${goalPlanningProgressSummary(goal.planning)}`);
@@ -3616,6 +3646,7 @@ export class TuiApp {
       sessionId: this.#sessionId,
       prompt: trimmed,
       title: titleFromPrompt(trimmed),
+      configPath: this.app.configFiles[0],
     });
     const status = await startDaemon({ stateDir: this.options.stateDir });
     this.#sessionId = job.session_id;
@@ -3684,7 +3715,8 @@ export class TuiApp {
   private jobLabel(job: SupervisorJob): string {
     const session = this.app.store.getSession(job.session_id);
     const sessionLabel = session ? `${session.session_id.slice(0, 12)} · ${session.title}` : job.session_id.slice(0, 12);
-    return `${job.status.padEnd(16)} ${job.job_id.slice(0, 12)} · ${sessionLabel} · ${truncateToWidth(job.prompt, Math.max(24, terminalWidth() - 54))}`;
+    const kind = job.kind === "goal" ? "goal" : "run";
+    return `${job.status.padEnd(16)} ${kind.padEnd(4)} ${job.job_id.slice(0, 12)} · ${sessionLabel} · ${truncateToWidth(job.prompt, Math.max(24, terminalWidth() - 60))}`;
   }
 
   private renderFormattedEventView(title: string, filter: (event: SessionEvent) => boolean, render: (events: SessionEvent[]) => string[]): void {
@@ -4759,6 +4791,10 @@ function isActivityEvent(event: SessionEvent): boolean {
     event.type.includes("evidence") ||
     event.type === "resource.created" ||
     event.type === "goal.completion_report" ||
+    event.type === "goal.audit.started" ||
+    event.type === "goal.audit.completed" ||
+    event.type === "goal.frontier.expanded" ||
+    event.type.startsWith("goal.supervisor.") ||
     event.type === "run.completed" ||
     event.type === "run.stopped" ||
     event.type === "run.failed"

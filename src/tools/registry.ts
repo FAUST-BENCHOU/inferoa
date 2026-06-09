@@ -98,7 +98,7 @@ export class ToolRegistry {
     return [...configuredToolDefinitions(this.config), ...this.codeIntelligence.toolDefinitions()].sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  async call(call: ToolCall, context: { session_id: string; run_id?: string; clarify?: ToolExecutionContext["clarify"] }): Promise<ToolResult> {
+  async call(call: ToolCall, context: { session_id: string; run_id?: string; request_class?: ToolExecutionContext["request_class"]; visibility?: ToolExecutionContext["visibility"]; clarify?: ToolExecutionContext["clarify"] }): Promise<ToolResult> {
     const definition = this.list().find((tool) => tool.name === call.name);
     if (!definition) {
       const result = fail("unknown_tool", `Unknown tool: ${call.name}`);
@@ -107,6 +107,11 @@ export class ToolRegistry {
       return result;
     }
     this.recordCall(context, call);
+    if (context.request_class === "audit" && !auditToolAllowed(call)) {
+      const blocked = fail("audit_tool_denied", `Tool ${call.name} is not allowed during internal goal audit runs`);
+      this.recordResult(context, call, blocked);
+      return blocked;
+    }
     const decision = this.policy.decide(definition, call.arguments);
     if (decision.status !== "allow") {
       this.store.appendEvent({
@@ -116,6 +121,8 @@ export class ToolRegistry {
         data: {
           tool_call_id: call.id,
           tool_name: call.name,
+          request_class: context.request_class,
+          visibility: context.visibility,
           decision: decision as unknown as JsonObject,
         },
       });
@@ -130,6 +137,8 @@ export class ToolRegistry {
         data: {
           tool_call_id: call.id,
           tool_name: call.name,
+          request_class: context.request_class,
+          visibility: context.visibility,
           result: blocked as unknown as JsonObject,
         },
       });
@@ -142,6 +151,8 @@ export class ToolRegistry {
       data: {
         tool_call_id: call.id,
         tool_name: call.name,
+        request_class: context.request_class,
+        visibility: context.visibility,
         decision: decision as unknown as JsonObject,
       },
     });
@@ -150,6 +161,8 @@ export class ToolRegistry {
       workspace: this.workspace,
       session_id: context.session_id,
       run_id: context.run_id,
+      request_class: context.request_class,
+      visibility: context.visibility,
       tool_call_id: call.id,
       tool_name: call.name,
       store: this.store,
@@ -189,7 +202,7 @@ export class ToolRegistry {
     return result;
   }
 
-  private recordCall(context: { session_id: string; run_id?: string }, call: ToolCall): void {
+  private recordCall(context: { session_id: string; run_id?: string; request_class?: ToolExecutionContext["request_class"]; visibility?: ToolExecutionContext["visibility"] }, call: ToolCall): void {
     this.store.appendEvent({
       session_id: context.session_id,
       run_id: context.run_id,
@@ -197,12 +210,14 @@ export class ToolRegistry {
       data: {
         tool_call_id: call.id,
         tool_name: call.name,
+        request_class: context.request_class,
+        visibility: context.visibility,
         arguments: call.arguments,
       },
     });
   }
 
-  private recordResult(context: { session_id: string; run_id?: string }, call: ToolCall, result: ToolResult): void {
+  private recordResult(context: { session_id: string; run_id?: string; request_class?: ToolExecutionContext["request_class"]; visibility?: ToolExecutionContext["visibility"] }, call: ToolCall, result: ToolResult): void {
     this.store.appendEvent({
       session_id: context.session_id,
       run_id: context.run_id,
@@ -210,8 +225,39 @@ export class ToolRegistry {
       data: {
         tool_call_id: call.id,
         tool_name: call.name,
+        request_class: context.request_class,
+        visibility: context.visibility,
         result: result as unknown as JsonObject,
       },
     });
   }
+}
+
+function auditToolAllowed(call: ToolCall): boolean {
+  const allowed = new Set([
+    "ast_grep",
+    "file_search",
+    "git_diff",
+    "git_show",
+    "git_status",
+    "glob",
+    "goal",
+    "list_dir",
+    "lsp",
+    "read_file",
+    "read_resource",
+    "session_note",
+  ]);
+  if (allowed.has(call.name)) {
+    return true;
+  }
+  if (call.name === "run_command") {
+    return auditReadOnlyCommandAllowed(String(call.arguments.command ?? ""));
+  }
+  return false;
+}
+
+function auditReadOnlyCommandAllowed(command: string): boolean {
+  const normalized = command.trim().replace(/\s+/g, " ");
+  return /^(pwd|ls\b|find\b|rg\b|grep\b|sed -n\b|cat\b|head\b|tail\b|wc\b|git (status|diff|log|show)\b|npm (test|run test|run check)\b|node --test\b|pytest\b|cargo test\b|go test\b|make test\b|pnpm test\b|yarn test\b)/.test(normalized);
 }

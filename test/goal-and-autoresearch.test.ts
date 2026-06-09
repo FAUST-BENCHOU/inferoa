@@ -71,6 +71,16 @@ test("goal tool persists state and PromptBuilder injects active goal context", a
     assert.match(goalContext, /Ship &lt;fast&gt; mode/);
     assert.match(goalContext, /token budget: 200/);
 
+    const audited = await registry.call(
+      {
+        id: "goal_audit",
+        name: "goal",
+        arguments: { op: "audit", decision: "done", summary: "No remaining frontier.", verification_evidence: { checked: true } },
+      },
+      { session_id: session.session_id, run_id: "run_goal" },
+    );
+    assert.equal(audited.ok, true, JSON.stringify(audited));
+
     const completed = await registry.call(
       { id: "goal_2", name: "goal", arguments: { op: "complete", summary: "Shipped prompt and tool wiring." } },
       { session_id: session.session_id, run_id: "run_goal" },
@@ -661,6 +671,16 @@ test("goal completion requires a summary and accepts long summaries", async () =
     assert.equal((missingSummary.data?.goal as { status?: string } | undefined)?.status, "active");
     assert.equal(readGoalState(store, session.session_id)?.goal.status, "active");
 
+    const audit = await registry.call(
+      {
+        id: "gs_audit",
+        name: "goal",
+        arguments: { op: "audit", decision: "done", summary: "No additional frontier.", verification_evidence: { git_status: "clean enough" } },
+      },
+      { session_id: session.session_id, run_id: "run_gs" },
+    );
+    assert.equal(audit.ok, true, JSON.stringify(audit));
+
     const longSummary = `${"Verified final state. ".repeat(80)}accepted`;
     const completed = await registry.call(
       { id: "gs_2b", name: "goal", arguments: { op: "complete", summary: longSummary } },
@@ -669,6 +689,147 @@ test("goal completion requires a summary and accepts long summaries", async () =
     assert.equal(completed.ok, true, JSON.stringify(completed));
     assert.equal(readGoalState(store, session.session_id)?.goal.status, "complete");
     assert.equal(readGoalState(store, session.session_id)?.goal.summary, longSummary);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("goal audit gates completion and can expand a new frontier generation", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-audit-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_goal_audit", root: dir, alias: "goal-audit" };
+    const session = store.createSession(workspace, "goal-audit");
+    const registry = new ToolRegistry(config(), workspace, store);
+
+    const created = await registry.call(
+      {
+        id: "ga_create",
+        name: "goal",
+        arguments: {
+          op: "create",
+          objective: "Finish hidden frontier",
+          steps: [{ id: "first", title: "First frontier", status: "completed" }],
+        },
+      },
+      { session_id: session.session_id, run_id: "run_ga" },
+    );
+    assert.equal(created.ok, true, JSON.stringify(created));
+    assert.equal(readGoalState(store, session.session_id)?.goal.frontier_generation, 1);
+
+    const blockedComplete = await registry.call(
+      { id: "ga_complete_early", name: "goal", arguments: { op: "complete", summary: "Done too early." } },
+      { session_id: session.session_id, run_id: "run_ga" },
+    );
+    assert.equal(blockedComplete.ok, false);
+    assert.equal(blockedComplete.error?.code, "goal_audit_required");
+
+    const expanded = await registry.call(
+      {
+        id: "ga_expand",
+        name: "goal",
+        arguments: {
+          op: "audit",
+          decision: "expand",
+          summary: "Found another frontier.",
+          steps: [{ id: "second", title: "Second frontier", status: "pending" }],
+        },
+      },
+      { session_id: session.session_id, run_id: "run_audit_expand" },
+    );
+    assert.equal(expanded.ok, true, JSON.stringify(expanded));
+    const afterExpand = readGoalState(store, session.session_id)?.goal;
+    assert.equal(afterExpand?.frontier_generation, 2);
+    assert.equal(afterExpand?.last_audit_decision, "expand");
+    assert.equal(afterExpand?.planning?.active_step_id, "second");
+    assert.ok(store.listEvents(session.session_id).some((event) => event.type === "goal.frontier.expanded"));
+
+    const missingEvidence = await registry.call(
+      { id: "ga_done_missing", name: "goal", arguments: { op: "audit", decision: "done", summary: "No more work." } },
+      { session_id: session.session_id, run_id: "run_audit_done_missing" },
+    );
+    assert.equal(missingEvidence.ok, false);
+    assert.equal(missingEvidence.error?.code, "goal_audit_failed");
+
+    const completedSecond = await registry.call(
+      { id: "ga_step_done", name: "goal", arguments: { op: "update_step", step_id: "second", status: "completed", notes: "Verified second frontier." } },
+      { session_id: session.session_id, run_id: "run_second_done" },
+    );
+    assert.equal(completedSecond.ok, true, JSON.stringify(completedSecond));
+
+    const done = await registry.call(
+      {
+        id: "ga_done",
+        name: "goal",
+        arguments: { op: "audit", decision: "done", summary: "No more work.", verification_evidence: { git_status: "checked" } },
+      },
+      { session_id: session.session_id, run_id: "run_audit_done" },
+    );
+    assert.equal(done.ok, true, JSON.stringify(done));
+
+    const completed = await registry.call(
+      { id: "ga_complete", name: "goal", arguments: { op: "complete", summary: "Verified no more frontier." } },
+      { session_id: session.session_id, run_id: "run_ga_complete" },
+    );
+    assert.equal(completed.ok, true, JSON.stringify(completed));
+    assert.equal(readGoalState(store, session.session_id)?.goal.status, "complete");
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("internal audit raw history is excluded from prompt replay while audit summary remains", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-audit-prompt-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_goal_audit_prompt", root: dir, alias: "goal-audit-prompt" };
+    const session = store.createSession(workspace, "goal-audit-prompt");
+    const registry = new ToolRegistry(config(), workspace, store);
+    await registry.call(
+      { id: "gap_create", name: "goal", arguments: { op: "create", objective: "Audit prompt hygiene" } },
+      { session_id: session.session_id, run_id: "run_gap" },
+    );
+    store.appendEvent({
+      session_id: session.session_id,
+      run_id: "run_audit_internal",
+      type: "user.prompt",
+      data: { prompt: "INTERNAL AUDIT PROMPT SHOULD NOT REPLAY", request_class: "audit", visibility: "internal" },
+    });
+    store.appendEvent({
+      session_id: session.session_id,
+      run_id: "run_audit_internal",
+      type: "model.response.settled",
+      data: { content: "INTERNAL AUDIT MODEL SHOULD NOT REPLAY", tool_calls: [], request_class: "audit", visibility: "internal" },
+    });
+    store.appendEvent({
+      session_id: session.session_id,
+      run_id: "run_audit_internal",
+      type: "tool.result",
+      data: { tool_name: "read_file", tool_call_id: "audit_tool", result: { ok: true, summary: "INTERNAL TOOL RESULT" }, request_class: "audit", visibility: "internal" },
+    });
+    const audit = await registry.call(
+      {
+        id: "gap_audit",
+        name: "goal",
+        arguments: { op: "audit", decision: "done", summary: "Audit summary survives.", verification_evidence: { resource_uri: "resource://audit/evidence" } },
+      },
+      { session_id: session.session_id, run_id: "run_audit_internal", request_class: "audit", visibility: "internal" },
+    );
+    assert.equal(audit.ok, true, JSON.stringify(audit));
+
+    const context = new PromptBuilder(config(), store, workspace).build(
+      store.getSession(session.session_id)!,
+      "continue main work",
+      CORE_TOOL_DEFINITIONS,
+    );
+    const replay = context.messages.map((message) => String(message.content)).join("\n");
+    assert.doesNotMatch(replay, /INTERNAL AUDIT PROMPT SHOULD NOT REPLAY/);
+    assert.doesNotMatch(replay, /INTERNAL AUDIT MODEL SHOULD NOT REPLAY/);
+    assert.doesNotMatch(replay, /INTERNAL TOOL RESULT/);
+    assert.match(findContextMessage(context.messages, "<goal.mode>"), /Audit summary survives\./);
+    assert.match(findContextMessage(context.messages, "<goal.mode>"), /resource_uri/);
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });
