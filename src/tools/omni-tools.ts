@@ -6,6 +6,7 @@ import { fail, ok, truncateText } from "../util/limit.js";
 import { delay, numberOrDefault, stringField } from "../util/types.js";
 import { resolveReadablePath } from "../util/fs.js";
 import type { ToolExecutionContext } from "./context.js";
+import { dataUriToBuffer, mediaFromResource, resolveResourceReference } from "./resource-resolver.js";
 
 export async function visionUnderstanding(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   return await understanding("vision", "vision", args, context, "image_url");
@@ -78,6 +79,13 @@ export async function audioGeneration(args: JsonObject, context: ToolExecutionCo
   const body = generationJsonBody(args, endpointModel("audio_generation", context), ["input", "prompt"]);
   if (body.input === undefined && body.prompt !== undefined) {
     body.input = body.prompt;
+  }
+  if (typeof body.input === "string") {
+    const normalized = normalizeTextPrompt(body.input, context);
+    if (!normalized.ok) {
+      return normalized.result;
+    }
+    body.input = normalized.text;
   }
   if (body.audio_length === undefined && body.duration !== undefined) {
     body.audio_length = body.duration;
@@ -257,7 +265,11 @@ async function videoGenerationJob(args: JsonObject, context: ToolExecutionContex
     return endpoint.result;
   }
 
-  const form = videoForm(args, endpoint.config.model);
+  const referenceConflict = videoReferenceConflict(args);
+  if (referenceConflict) {
+    return referenceConflict;
+  }
+  const form = await videoForm(args, endpoint.config.model, context);
   const submitted = await postFormJson(endpoint.config, "/videos", form);
   if (!submitted.ok) {
     return fail("video_generation_failed", submitted.error);
@@ -312,7 +324,11 @@ async function videoGenerationSync(args: JsonObject, context: ToolExecutionConte
   if (!endpoint.ok) {
     return endpoint.result;
   }
-  const form = videoForm(args, endpoint.config.model);
+  const referenceConflict = videoReferenceConflict(args);
+  if (referenceConflict) {
+    return referenceConflict;
+  }
+  const form = await videoForm(args, endpoint.config.model, context);
   const response = await postFormBytes(endpoint.config, "/videos/sync", form);
   if (!response.ok) {
     return fail("video_generation_failed", response.error);
@@ -320,7 +336,7 @@ async function videoGenerationSync(args: JsonObject, context: ToolExecutionConte
   return managedBytesResult("video_generation", endpoint.config.model, formFieldsPreview(form), response.bytes, response.content_type, context, response.headers);
 }
 
-function videoForm(args: JsonObject, model: string | undefined): FormData {
+async function videoForm(args: JsonObject, model: string | undefined, context: ToolExecutionContext): Promise<FormData> {
   const form = new FormData();
   form.set("model", String(args.model ?? model));
   form.set("prompt", String(args.prompt));
@@ -349,13 +365,28 @@ function videoForm(args: JsonObject, model: string | undefined): FormData {
     "frame_interpolation_model_path",
     "lora",
     "extra_params",
-    "image_reference",
-    "input_reference",
   ]);
   if (args.extra_params && typeof args.extra_params === "object") {
     form.set("extra_params", JSON.stringify(args.extra_params));
   }
+  if (typeof args.input_reference === "string") {
+    await appendFormFileInput(form, "input_reference", args.input_reference, context);
+  }
+  if (typeof args.image_reference === "string") {
+    form.set("image_reference", JSON.stringify({ image_url: await normalizeInput(args.image_reference, context) }));
+  }
+  if (typeof args.video_reference === "string") {
+    form.set("video_reference", JSON.stringify({ video_url: await normalizeInput(args.video_reference, context) }));
+  }
   return form;
+}
+
+function videoReferenceConflict(args: JsonObject): ToolResult | undefined {
+  const present = ["input_reference", "image_reference", "video_reference"].filter((key) => typeof args[key] === "string" && args[key]);
+  if (present.length <= 1) {
+    return undefined;
+  }
+  return fail("video_generation_reference_conflict", `Use only one video reference input at a time: ${present.join(", ")}.`);
 }
 
 function endpointModel(endpointKey: OmniEndpointName, context: ToolExecutionContext): string | undefined {
@@ -569,24 +600,53 @@ function managedJsonResult(
   response: JsonObject,
   context: ToolExecutionContext,
 ): ToolResult {
-  const media = extractMedia(response);
-  const content = JSON.stringify({ capability, request, response }, null, 2);
-  const resource = context.store.putResource(context.session_id, `omni.${capability}`, content, {
+  const mediaItems = extractEmbeddedMedia(response, request);
+  const mediaResources = mediaItems.map((item, index) =>
+    context.store.putResource(context.session_id, `omni.${capability}.media`, item.bytes.toString("base64"), {
+      capability,
+      model,
+      content_type: item.contentType,
+      encoding: "base64",
+      bytes: item.bytes.length,
+      media_index: index,
+      revised_prompt: item.revisedPrompt,
+    }),
+  );
+  const mediaResourceUris = mediaResources.map((resource) => resource.uri);
+  const content = JSON.stringify(
+    {
+      capability,
+      request,
+      response,
+      primary_media_resource: mediaResourceUris[0],
+      media_resources: mediaResourceUris,
+    },
+    null,
+    2,
+  );
+  const evidenceResource = context.store.putResource(context.session_id, `omni.${capability}`, content, {
     capability,
     model,
-    media_count: media.length,
+    media_count: mediaResources.length,
+    primary_media_resource: mediaResourceUris[0],
+    media_resources: mediaResourceUris as never,
     content_type: "application/json",
   });
+  const resources = [
+    ...mediaResources.map((resource, index) => resourceSummary(resource.uri, mediaItems[index]?.contentType ?? "application/octet-stream", mediaItems[index]?.bytes.length ?? 0)),
+    resourceSummary(evidenceResource.uri, "application/json", Buffer.byteLength(content)),
+  ];
+  const outputResource = mediaResources[0]?.uri ?? evidenceResource.uri;
   return {
     ok: true,
-    summary: `${capability} completed with ${media.length} media item(s); output stored as ${resource.uri}`,
+    summary: `${capability} completed with ${mediaResources.length} media item(s); output stored as ${outputResource}`,
     data: {
       capability,
       model,
-      media_count: media.length,
-      resources: [resourceSummary(resource.uri, "application/json", Buffer.byteLength(content))] as never,
+      media_count: mediaResources.length,
+      resources: resources as never,
     },
-    resource_uri: resource.uri,
+    resource_uri: evidenceResource.uri,
   };
 }
 
@@ -657,10 +717,41 @@ async function appendFormInput(form: FormData, key: string, input: string, conte
     form.set(key, input);
     return;
   }
-  const file = input.startsWith("data:") ? await dataUriFile(input, key) : await localFile(input, context);
+  const file = await fileInput(input, key, context);
   const blobBytes = new Uint8Array(file.bytes.length);
   blobBytes.set(file.bytes);
   form.set(key, new Blob([blobBytes], { type: file.contentType }), file.name);
+}
+
+async function appendFormFileInput(form: FormData, key: string, input: string, context: ToolExecutionContext): Promise<void> {
+  if (/^https?:/.test(input)) {
+    throw new Error(`${key} expects a resource URI, data URI, or readable local file path for multipart upload.`);
+  }
+  const file = await fileInput(input, key, context);
+  const blobBytes = new Uint8Array(file.bytes.length);
+  blobBytes.set(file.bytes);
+  form.set(key, new Blob([blobBytes], { type: file.contentType }), file.name);
+}
+
+async function fileInput(input: string, fallbackName: string, context: ToolExecutionContext): Promise<{ bytes: Buffer; contentType: string; name: string }> {
+  if (input.startsWith("data:")) {
+    return dataUriFile(input, fallbackName);
+  }
+  const resolved = resourceInput(input, context);
+  if (resolved) {
+    if (!resolved.ok) {
+      throw new Error(resolved.failure.message);
+    }
+    const media = mediaFromResource(resolved.resource, context);
+    if (!media.ok) {
+      throw new Error(media.failure.message);
+    }
+    if (!media.media.bytes) {
+      throw new Error(`Resource does not contain embedded bytes: ${resolved.resource.uri}`);
+    }
+    return { bytes: media.media.bytes, contentType: media.media.contentType, name: media.media.name };
+  }
+  return await localFile(input, context);
 }
 
 async function localFile(input: string, context: ToolExecutionContext): Promise<{ bytes: Buffer; contentType: string; name: string }> {
@@ -671,23 +762,62 @@ async function localFile(input: string, context: ToolExecutionContext): Promise<
 }
 
 async function dataUriFile(input: string, fallbackName: string): Promise<{ bytes: Buffer; contentType: string; name: string }> {
-  const match = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(input);
-  if (!match) {
-    throw new Error("Invalid data URI.");
-  }
-  const contentType = match[1] || "application/octet-stream";
-  const data = match[3] ?? "";
-  const bytes = match[2] ? Buffer.from(data, "base64") : Buffer.from(decodeURIComponent(data), "utf8");
-  return { bytes, contentType, name: `${fallbackName}.${extensionForMime(contentType)}` };
+  return dataUriToBuffer(input, fallbackName);
 }
 
 async function normalizeInput(input: string, context: ToolExecutionContext): Promise<string> {
   if (/^(https?:|data:)/.test(input)) {
     return input;
   }
+  const resolved = resourceInput(input, context);
+  if (resolved) {
+    if (!resolved.ok) {
+      throw new Error(resolved.failure.message);
+    }
+    const media = mediaFromResource(resolved.resource, context);
+    if (!media.ok) {
+      throw new Error(media.failure.message);
+    }
+    if (media.media.remoteUrl) {
+      return media.media.remoteUrl;
+    }
+    if (!media.media.bytes) {
+      throw new Error(`Resource does not contain embedded bytes: ${resolved.resource.uri}`);
+    }
+    return `data:${media.media.contentType};base64,${media.media.bytes.toString("base64")}`;
+  }
   const file = resolveReadablePath(context.workspace.root, input).file;
   const bytes = await fs.readFile(file);
   return `data:${mimeType(file)};base64,${bytes.toString("base64")}`;
+}
+
+function normalizeTextPrompt(input: string, context: ToolExecutionContext): { ok: true; text: string } | { ok: false; result: ToolResult } {
+  if (!input.startsWith("resource://")) {
+    return { ok: true, text: input };
+  }
+  const resolved = resolveResourceReference(input, context);
+  if (!resolved.ok) {
+    return {
+      ok: false,
+      result: fail(resolved.failure.code, resolved.failure.message),
+    };
+  }
+  const media = mediaFromResource(resolved.resource, context);
+  if (media.ok) {
+    return {
+      ok: false,
+      result: fail("invalid_resource_for_text_prompt", `audio_generation input expects a text resource, but ${resolved.resource.uri} contains media.`),
+    };
+  }
+  return { ok: true, text: resolved.resource.content };
+}
+
+function resourceInput(input: string, context: ToolExecutionContext): ReturnType<typeof resolveResourceReference> | undefined {
+  const resolved = resolveResourceReference(input, context);
+  if (resolved.ok || resolved.failure.code === "resource_uri_ambiguous" || input.startsWith("resource://")) {
+    return resolved;
+  }
+  return undefined;
 }
 
 function mimeType(file: string): string {
@@ -704,15 +834,6 @@ function mimeType(file: string): string {
   return "application/octet-stream";
 }
 
-function extensionForMime(contentType: string): string {
-  if (contentType.includes("png")) return "png";
-  if (contentType.includes("jpeg")) return "jpg";
-  if (contentType.includes("webp")) return "webp";
-  if (contentType.includes("wav")) return "wav";
-  if (contentType.includes("mpeg")) return "mp3";
-  return "bin";
-}
-
 function extractChatText(json: JsonObject): string {
   const choices = json.choices as JsonObject[] | undefined;
   const message = choices?.[0]?.message as JsonObject | undefined;
@@ -723,20 +844,37 @@ function extractChatText(json: JsonObject): string {
   return JSON.stringify(json);
 }
 
-function extractMedia(json: JsonObject): JsonObject[] {
+interface EmbeddedMediaItem {
+  bytes: Buffer;
+  contentType: string;
+  revisedPrompt?: string;
+}
+
+function extractEmbeddedMedia(json: JsonObject, request: JsonObject): EmbeddedMediaItem[] {
   const data = json.data as JsonObject[] | undefined;
-  if (Array.isArray(data)) {
-    return data.map((item) => ({
-      url: item.url,
-      b64_json: typeof item.b64_json === "string" ? `[base64:${item.b64_json.length} chars]` : undefined,
-      revised_prompt: item.revised_prompt,
-    }));
+  if (!Array.isArray(data)) {
+    return [];
   }
-  const output = json.output as JsonObject[] | undefined;
-  if (Array.isArray(output)) {
-    return output;
-  }
-  return [];
+  return data
+    .map((item): EmbeddedMediaItem | undefined => {
+      if (typeof item.b64_json !== "string" || !item.b64_json) {
+        return undefined;
+      }
+      return {
+        bytes: Buffer.from(item.b64_json, "base64"),
+        contentType: imageContentTypeFromRequest(request),
+        revisedPrompt: typeof item.revised_prompt === "string" ? item.revised_prompt : undefined,
+      };
+    })
+    .filter((item): item is EmbeddedMediaItem => Boolean(item));
+}
+
+function imageContentTypeFromRequest(request: JsonObject): string {
+  const format = typeof request.output_format === "string" ? request.output_format : typeof request.response_format === "string" ? request.response_format : "png";
+  if (format === "jpeg" || format === "jpg") return "image/jpeg";
+  if (format === "webp") return "image/webp";
+  if (format === "gif") return "image/gif";
+  return "image/png";
 }
 
 function statusText(json: JsonObject): string {
