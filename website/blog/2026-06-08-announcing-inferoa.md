@@ -144,9 +144,8 @@ Key results:
   [CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph)-style
   symbol/range context saved **80.8%** of inspected context,
   [RTK](https://github.com/rtk-ai/rtk) command records saved **61.4%** of
-  command-token footprint, and routing projections lifted the DeepSeek-priced
-  same-budget reference from **39.6%** single-model accuracy to **91.0%**
-  oracle-routed accuracy.
+  command-token footprint, and intelligent routing reduced model-route cost
+  against a Big-3-only reference at comparable benchmark accuracy.
 
 ![Inferoa optimization surfaces](/img/experiments/inferoa-optimization-surfaces.svg)
 

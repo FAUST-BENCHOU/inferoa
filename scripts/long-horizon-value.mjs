@@ -975,33 +975,39 @@ function compressionContinuityFigure(dataset) {
 function optimizationSurfacesFigure(dataset) {
   const s = dataset.summary;
   const router = dataset.routing_projection;
+  const prefixCacheDiscountPct = (1 - dataset.scaled_projection.cache_discount_factor) * 100;
+  const routingCostSavedPct = pct(router.big3_cost_usd - router.full_pool_cost_usd, router.big3_cost_usd);
   const values = [
-    { label: "Prefix cache prefill saved", value: pct(dataset.simulator.find((row) => row.label === "64 loops")?.prefill_work_saved_by_cache_tokens, dataset.simulator.find((row) => row.label === "64 loops")?.prompt_tokens), color: "#1976d2" },
-    { label: "CodeGraph context saved", value: s.codegraph_context_savings_pct, color: "#00796b" },
-    { label: "RTK command saved", value: s.rtk_savings_pct, color: "#8e24aa" },
-    { label: "Router accuracy gain", value: router.deepseek_same_budget_accuracy_gain_pct, color: "#ef6c00" },
-    { label: "Big-3 extra cost avoided", value: router.big3_extra_cost_pct, color: "#c62828" },
+    { label: "Prefix cache cached-token discount", value: prefixCacheDiscountPct, color: "#1976d2" },
+    { label: "CodeGraph context reduced", value: s.codegraph_context_savings_pct, color: "#00796b" },
+    { label: "RTK tool output reduced", value: s.rtk_savings_pct, color: "#8e24aa" },
+    { label: "Intelligent routing cost saved", value: routingCostSavedPct, color: "#ef6c00" },
   ].filter((item) => typeof item.value === "number" && Number.isFinite(item.value));
-  const w = 920;
-  const h = 470;
-  const p = { left: 86, right: 42, top: 60, bottom: 118 };
+  const w = 980;
+  const h = 420;
+  const p = { left: 286, right: 82, top: 78, bottom: 72 };
   const plotW = w - p.left - p.right;
   const plotH = h - p.top - p.bottom;
   const maxV = Math.max(100, ...values.map((item) => item.value));
-  const barW = plotW / values.length - 28;
+  const rowH = plotH / values.length;
+  const barH = Math.min(38, rowH * 0.56);
   return svg(w, h, `
-    ${chartTitle("Inferoa value comes from several compounding surfaces", 28, 34)}
-    ${axis(p, plotW, plotH, "Percent improvement")}
-    ${gridY(p, plotW, plotH, [0, 25, 50, 75, 100], maxV)}
-    ${values
-      .map((item, i) => {
-        const x = p.left + i * (plotW / values.length) + 16;
-        const height = (plotH * item.value) / maxV;
-        const y = p.top + plotH - height;
-        return `<rect x="${x}" y="${y}" width="${barW}" height="${height}" rx="4" fill="${item.color}"/><text x="${x + barW / 2}" y="${y - 8}" text-anchor="middle" font-size="15" font-weight="700" fill="#263238">${item.value.toFixed(1)}%</text><text x="${x + barW / 2}" y="${h - 74}" text-anchor="middle" font-size="13" fill="#263238">${wrapSvgLabel(item.label, x + barW / 2, h - 74, 17)}</text>`;
+    ${chartTitle("Tokenmaxxing reduces token and model-route cost", 28, 34)}
+    <line x1="${p.left}" y1="${p.top + plotH}" x2="${p.left + plotW}" y2="${p.top + plotH}" stroke="#b0bec5"/>
+    ${[0, 25, 50, 75, 100]
+      .map((tick) => {
+        const xx = p.left + (plotW * tick) / maxV;
+        return `<line x1="${xx}" y1="${p.top}" x2="${xx}" y2="${p.top + plotH}" stroke="#eceff1"/><text x="${xx}" y="${p.top + plotH + 22}" text-anchor="middle" font-size="12" fill="#607d8b">${tick}%</text>`;
       })
       .join("")}
-    <text x="${p.left}" y="${h - 22}" font-size="13" fill="#607d8b">Sources: Inferoa Runtime stress suite, RTK command records, CodeGraph context projection, and routing benchmark projection.</text>
+    ${values
+      .map((item, i) => {
+        const y = p.top + i * rowH + (rowH - barH) / 2;
+        const width = (plotW * item.value) / maxV;
+        return `<text x="${p.left - 18}" y="${y + barH / 2 + 5}" text-anchor="end" font-size="14" fill="#263238">${escapeXml(item.label)}</text><rect x="${p.left}" y="${y}" width="${width}" height="${barH}" rx="4" fill="${item.color}"/><text x="${p.left + width + 10}" y="${y + barH / 2 + 5}" font-size="15" font-weight="700" fill="#263238">${item.value.toFixed(1)}%</text>`;
+      })
+      .join("")}
+    <text x="${p.left}" y="${h - 22}" font-size="13" fill="#607d8b">Sources: prefix-cache cost model, CodeGraph projection, RTK records, and routing cost projection.</text>
   `);
 }
 

@@ -162,29 +162,31 @@ def render_compression_continuity(data: dict, path: Path) -> None:
 def render_optimization_surfaces(data: dict, path: Path) -> None:
     summary = data["summary"]
     router = data["routing_projection"]
-    longest = next(row for row in data["simulator"] if row["label"] == "64 loops")
+    prefix_cache_discount_pct = (1 - data["scaled_projection"]["cache_discount_factor"]) * 100
+    routing_cost_saved_pct = percent(router["big3_cost_usd"] - router["full_pool_cost_usd"], router["big3_cost_usd"])
     values = [
-        ("Prefix cache\nprefill saved", percent(longest["prefill_work_saved_by_cache_tokens"], longest["prompt_tokens"]), COLORS["blue"]),
-        ("CodeGraph context\nsaved", summary["codegraph_context_savings_pct"], COLORS["green"]),
-        ("RTK command\nsaved", summary["rtk_savings_pct"], COLORS["purple"]),
-        ("Router accuracy\ngain", router["deepseek_same_budget_accuracy_gain_pct"], COLORS["orange"]),
-        ("Big-3 extra cost\navoided", router["big3_extra_cost_pct"], COLORS["red"]),
+        ("Prefix cache cached-token discount", prefix_cache_discount_pct, COLORS["blue"]),
+        ("CodeGraph context reduced", summary["codegraph_context_savings_pct"], COLORS["green"]),
+        ("RTK tool output reduced", summary["rtk_savings_pct"], COLORS["purple"]),
+        ("Intelligent routing cost saved", routing_cost_saved_pct, COLORS["orange"]),
     ]
 
-    fig, ax = plt.subplots(figsize=(9.8, 5.2), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(9.8, 4.8), constrained_layout=True)
     labels = [item[0] for item in values]
-    heights = [item[1] for item in values]
-    bars = ax.bar(range(len(values)), heights, color=[item[2] for item in values], width=0.66)
-    ax.set_title("Inferoa value comes from several compounding surfaces", loc="left", fontsize=15, fontweight="bold", pad=12)
-    ax.set_ylabel("Percent improvement")
-    ax.set_ylim(0, max(100, max(heights) * 1.18))
-    ax.set_xticks(range(len(values)), labels)
-    ax.grid(axis="y", color=COLORS["grid"], linewidth=0.8)
-    ax.bar_label(bars, labels=[f"{value:.1f}%" for value in heights], padding=4, color=COLORS["text"], fontsize=10)
+    widths = [item[1] for item in values]
+    y = list(range(len(values)))
+    bars = ax.barh(y, widths, color=[item[2] for item in values], height=0.58)
+    ax.set_title("Tokenmaxxing reduces token and model-route cost", loc="left", fontsize=15, fontweight="bold", pad=12)
+    ax.set_xlabel("Token / cost reduction (%)")
+    ax.set_xlim(0, 100)
+    ax.set_yticks(y, labels)
+    ax.invert_yaxis()
+    ax.grid(axis="x", color=COLORS["grid"], linewidth=0.8)
+    ax.bar_label(bars, labels=[f"{value:.1f}%" for value in widths], padding=4, color=COLORS["text"], fontsize=10)
     ax.text(
         0,
         -0.2,
-        "Sources: Inferoa Runtime stress suite, RTK command records, CodeGraph context projection, and routing benchmark projection.",
+        "Sources: prefix-cache cost model, CodeGraph projection, RTK records, and routing cost projection.",
         transform=ax.transAxes,
         fontsize=9,
         color=COLORS["muted"],
