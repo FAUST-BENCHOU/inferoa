@@ -11,7 +11,7 @@
   ·
   <a href="https://inferoa.agentic-in.ai/docs/intro">Docs</a>
   ·
-  <a href="website/blog/2026-06-08-announcing-inferoa.md">Blog</a>
+  <a href="https://inferoa.agentic-in.ai/blog/announcing-inferoa">Blog</a>
 </p>
 
 Most agents call models as if inference were a **black box**. The agent loop,
@@ -141,8 +141,7 @@ Inferoa is built for and with the vLLM ecosystem:
 - [vLLM Semantic Router](https://github.com/vllm-project/semantic-router)
 - [vLLM Omni](https://github.com/vllm-project/vllm-omni)
 
-Inferoa also uses and acknowledges the projects that make context
-optimization practical inside the agent loop:
+Thanks to the projects behind Inferoa's context optimization:
 
 - [RTK](https://github.com/rtk-ai/rtk)
 - [CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph)
