@@ -66,3 +66,18 @@ Or run the top-level `/resume` slash command to attach to a previous session.
 The resumed session keeps its workspace identity and event log; you can keep
 using `/goal`, `/plan`, `/autoresearch`, and the rest of the TUI surfaces
 without losing continuity.
+
+## Next Steps
+
+- [Goal mode](../workflows/goal-mode.md) keeps a durable objective active
+  across turns, compaction, and interruptions.
+- [Plan mode](../workflows/plan-mode.md) turns ambiguous scope into an
+  inspectable plan before execution begins.
+- [Autoresearch mode](../workflows/autoresearch-mode.md) runs benchmark-style
+  iteration when the task depends on repeated measurement.
+- [Coding workflow](../workflows/coding-workflow.md) describes the recommended
+  inspect-edit-verify loop for repository work.
+- [Evidence and sessions](../operations/evidence-and-sessions.md) explains the
+  event log model and how to troubleshoot session state.
+- [Context optimization](../concepts/context-optimization.md) covers
+  compression, code intelligence, and how Inferoa keeps the next turn focused.

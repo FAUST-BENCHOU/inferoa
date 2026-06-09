@@ -134,8 +134,9 @@ inferoa --print "Summarize the README in one paragraph."
 - The source tree under `docs/` holds internal design notes (roadmap, TUI
   product design, vLLM-Omni validation, public-source hygiene).
 
-Use the core commands as the task
-grows:
+### Core Commands
+
+Use these commands as the task grows:
 
 - `/goal` keeps a durable objective, decomposition, evidence, and completion
   reflection across long-running work.

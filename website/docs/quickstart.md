@@ -97,3 +97,19 @@ Configuration is stored under `~/.inferoa/`. Endpoint keys are stored in the
 local vault; config files store key references. See the
 [Configuration reference](./reference/configuration.md) for the full schema
 and environment overrides.
+
+## Next Steps
+
+Once Inferoa is running, explore the long-horizon workflows:
+
+- [First session](./getting-started/first-session.md) walks through a complete
+  task loop — describing work, using modes, inspecting evidence, and resuming
+  later.
+- [Goal mode](./workflows/goal-mode.md) keeps a durable objective active until
+  the work is genuinely handled.
+- [Plan mode](./workflows/plan-mode.md) turns ambiguous scope into an
+  inspectable plan before execution.
+- [Autoresearch mode](./workflows/autoresearch-mode.md) runs benchmark-style
+  iteration with metrics and failure evidence.
+- [Architecture](./architecture.md) explains the system model and how the
+  harness, context layer, and inference layer connect.

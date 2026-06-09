@@ -1,6 +1,6 @@
-import type { JsonObject, ModelUsage, RtkSavingsSummary, SessionEvent } from "../types.js";
+import type { JsonObject, RtkSavingsSummary, SessionEvent } from "../types.js";
 import { fg256, terminalWidth, truncateToWidth } from "./ansi.js";
-import { cacheHitRate, cacheTurnKind } from "./cache-footer.js";
+import { cacheTurnKind, type PrefixCacheTurnKind } from "./cache-footer.js";
 import { renderSessionActivityLines } from "./event-view.js";
 
 interface CacheTotals {
@@ -19,6 +19,22 @@ interface RtkTotals {
   toolSavingsPct: number;
 }
 
+interface CacheObservation {
+  runId: string;
+  kind: PrefixCacheTurnKind;
+  promptEpochId?: string;
+  promptTokens: number;
+  cachedTokens?: number;
+  actualHit?: number;
+  oracleHit?: number;
+  cacheDiff?: number;
+}
+
+interface CacheEvidenceSummary {
+  observations: CacheObservation[];
+  byRun: Map<string, CacheObservation>;
+}
+
 interface RunSummary {
   event: SessionEvent;
   index: number;
@@ -26,12 +42,13 @@ interface RunSummary {
   withoutRtkTokens: number;
   toolCalls: number;
   rtk: RtkSavingsSummary;
-  cacheHit?: number;
+  cache?: CacheObservation;
 }
 
 export function renderTokenmaxxingLines(events: SessionEvent[], endpointEvidence: JsonObject[] = [], width = terminalWidth()): string[] {
-  const runs = runSummaries(events, endpointEvidence);
-  const cache = cacheTotals(endpointEvidence, events);
+  const cacheEvidence = buildCacheEvidence(endpointEvidence, events);
+  const runs = runSummaries(events, cacheEvidence.byRun);
+  const cache = cacheTotals(cacheEvidence.observations);
   const rtk = rtkTotals(runs);
   const actualTokens = runs.reduce((sum, run) => sum + run.actualTokens, 0);
   const estimatedWithout = actualTokens + cache.cachedTokens + rtk.savedTokens;
@@ -48,7 +65,7 @@ export function renderTokenmaxxingLines(events: SessionEvent[], endpointEvidence
     "",
     cacheLine(cache),
     rtkLine(rtk),
-    fg256(244, "model selection pending · cost rates unavailable"),
+    fg256(244, "model selection · cost compute rates pending"),
   ];
 
   if (runs.length) {
@@ -66,15 +83,7 @@ export function renderTokenmaxxingLines(events: SessionEvent[], endpointEvidence
   return lines.map((line) => truncateToWidth(line, width));
 }
 
-function runSummaries(events: SessionEvent[], endpointEvidence: JsonObject[]): RunSummary[] {
-  const cacheByRun = new Map<string, number>();
-  for (const item of endpointEvidence) {
-    const runId = stringField(item.run_id);
-    const hit = cacheHitRate(objectField(item.usage) as ModelUsage);
-    if (runId && hit !== undefined && cacheTurnKind(events, runId) !== "warmup") {
-      cacheByRun.set(runId, hit);
-    }
-  }
+function runSummaries(events: SessionEvent[], cacheByRun: Map<string, CacheObservation>): RunSummary[] {
   return events
     .filter(isRunEvent)
     .map((event, index) => {
@@ -87,27 +96,59 @@ function runSummaries(events: SessionEvent[], endpointEvidence: JsonObject[]): R
         withoutRtkTokens: rtk.estimated_without_rtk_tokens || actualTokens,
         toolCalls: numberField(event.data.tool_calls) || rtk.tool_calls,
         rtk,
-        cacheHit: event.run_id ? cacheByRun.get(event.run_id) : undefined,
+        cache: event.run_id ? cacheByRun.get(event.run_id) : undefined,
       };
     });
 }
 
-function cacheTotals(evidence: JsonObject[], events: readonly SessionEvent[]): CacheTotals {
-  const totals: CacheTotals = { promptTokens: 0, cachedTokens: 0, turns: 0, promptTurns: 0, warmupTurns: 0 };
+function buildCacheEvidence(evidence: JsonObject[], events: readonly SessionEvent[]): CacheEvidenceSummary {
+  const observations: CacheObservation[] = [];
+  const byRun = new Map<string, CacheObservation>();
+  const previousPromptByEpoch = new Map<string, number>();
   for (const item of evidence) {
-    totals.turns += 1;
     const runId = stringField(item.run_id);
-    if (cacheTurnKind(events, runId) === "warmup") {
+    const usage = objectField(item.usage);
+    const prompt = optionalNumberField(usage.prompt_tokens) ?? optionalNumberField(item.prompt_tokens);
+    if (!runId || prompt === undefined || prompt <= 0) {
+      continue;
+    }
+    const cached = optionalNumberField(usage.cached_prompt_tokens) ?? optionalNumberField(item.cached_prompt_tokens);
+    const promptEpochId = stringField(item.prompt_epoch_id);
+    const epochKey = promptEpochId ?? "__session__";
+    const previousPrompt = previousPromptByEpoch.get(epochKey);
+    const kind = previousPrompt === undefined ? (promptEpochId ? "warmup" : cacheTurnKind(events, runId)) : "hit";
+    const actualHit = cached === undefined ? undefined : ratio(cached, prompt);
+    const oracleHit = kind === "hit" && previousPrompt !== undefined ? ratio(Math.min(previousPrompt, prompt), prompt) : undefined;
+    const cacheDiff = actualHit === undefined || oracleHit === undefined ? undefined : Math.max(0, oracleHit - actualHit);
+    const observation: CacheObservation = {
+      runId,
+      kind,
+      promptEpochId,
+      promptTokens: prompt,
+      cachedTokens: cached,
+      actualHit,
+      oracleHit,
+      cacheDiff,
+    };
+    observations.push(observation);
+    byRun.set(runId, observation);
+    previousPromptByEpoch.set(epochKey, prompt);
+  }
+  return { observations, byRun };
+}
+
+function cacheTotals(observations: CacheObservation[]): CacheTotals {
+  const totals: CacheTotals = { promptTokens: 0, cachedTokens: 0, turns: 0, promptTurns: 0, warmupTurns: 0 };
+  for (const item of observations) {
+    totals.turns += 1;
+    if (item.kind === "warmup") {
       totals.warmupTurns += 1;
       continue;
     }
-    const usage = objectField(item.usage);
-    const prompt = numberField(usage.prompt_tokens);
-    const cached = numberField(usage.cached_prompt_tokens);
-    if (prompt > 0) {
+    if (item.cachedTokens !== undefined) {
       totals.promptTurns += 1;
-      totals.promptTokens += prompt;
-      totals.cachedTokens += cached;
+      totals.promptTokens += item.promptTokens;
+      totals.cachedTokens += item.cachedTokens;
     }
   }
   return totals;
@@ -140,7 +181,7 @@ function cacheLine(cache: CacheTotals): string {
 
 function rtkLine(rtk: RtkTotals): string {
   if (!rtk.commands) {
-    return fg256(244, "rtk unavailable · no rewritten commands");
+    return fg256(244, "tool compress · no rewritten commands");
   }
   return [
     `${fg256(39, "rtk")} ${rtk.commands} cmds`,
@@ -154,11 +195,30 @@ function turnLine(run: RunSummary, width: number): string {
   const parts = [
     `turn ${run.index}`,
     `tokens ${run.actualTokens}/${run.withoutRtkTokens}`,
-    run.cacheHit !== undefined ? `cache ${(run.cacheHit * 100).toFixed(1)}%` : undefined,
+    turnCacheLabel(run.cache),
     run.rtk.rtk_commands > 0 ? `rtk ${run.rtk.saved_tokens}` : undefined,
     `tools ${run.toolCalls}`,
   ];
   return truncateToWidth(parts.filter((part): part is string => Boolean(part)).join(" · "), width);
+}
+
+function turnCacheLabel(cache?: CacheObservation): string | undefined {
+  if (!cache) {
+    return undefined;
+  }
+  if (cache.kind === "warmup") {
+    return "cache warmup";
+  }
+  if (cache.actualHit !== undefined && cache.oracleHit !== undefined) {
+    return `actual/oracle cache ${formatPercent(cache.actualHit)}/${formatPercent(cache.oracleHit)} · cache diff ${formatCacheDiff(cache.cacheDiff ?? 0)}`;
+  }
+  if (cache.actualHit !== undefined) {
+    return `cache ${formatPercent(cache.actualHit)}`;
+  }
+  if (cache.oracleHit !== undefined) {
+    return `oracle cache ${formatPercent(cache.oracleHit)}`;
+  }
+  return undefined;
 }
 
 function isRunEvent(event: SessionEvent): boolean {
@@ -193,6 +253,35 @@ function numberField(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+function optionalNumberField(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 function stringField(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function ratio(numerator: number, denominator: number): number {
+  if (denominator <= 0) {
+    return 0;
+  }
+  return Math.max(0, Math.min(1, numerator / denominator));
+}
+
+function formatPercent(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatCacheDiff(value: number): string {
+  return fg256(cacheDiffColor(value), formatPercent(value));
+}
+
+function cacheDiffColor(value: number): number {
+  if (value < 0.1) {
+    return 48;
+  }
+  if (value < 0.25) {
+    return 220;
+  }
+  return 203;
 }
