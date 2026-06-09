@@ -31,16 +31,8 @@ capability.
 ## TUI Preview
 
 <div align="center">
-  <table>
-    <tr>
-      <th>Welcome</th>
-      <th>Tokenmaxxing</th>
-    </tr>
-    <tr>
-      <td align="center"><img src="website/static/gif/welcome.gif" alt="Inferoa welcome screen" width="420" /></td>
-      <td align="center"><img src="website/static/img/screenshots/tokenmaxxing.png" alt="Inferoa tokenmaxxing report" width="420" /></td>
-    </tr>
-  </table>
+  <p><strong>Welcome</strong></p>
+  <img src="website/static/gif/welcome.gif" alt="Welcome" width="860" />
   <p><strong>Goal Mode</strong></p>
   <img src="website/static/gif/goal.gif" alt="Inferoa goal mode" width="860" />
   <p><strong>Plan Mode</strong></p>
@@ -139,7 +131,9 @@ Thanks to the projects behind Inferoa's context optimization:
 ## Contributors
 
 <p align="center">
-  <img src="assets/agentic-intelligence-lab-lockup.png" alt="Agentic Intelligence Lab" width="320" />
+  <a href="https://agentic-in.ai">
+    <img src="assets/agentic-intelligence-lab-lockup.png" alt="Agentic Intelligence Lab" width="320" />
+  </a>
 </p>
 
 <p align="center">

@@ -75,7 +75,7 @@ still running.
 This is the core design: the agent is not merely calling an inference system.
 It is shaped by it.
 
-## 快速一览 Inferoa
+## Inferoa At A Glance
 
 Inferoa is a terminal-first harness, but the product surface is not just a
 shell. It makes long-horizon state visible while the agent works.
