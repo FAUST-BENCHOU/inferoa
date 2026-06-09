@@ -43,24 +43,36 @@ jobs:
         timeout-minutes: 5
         run: npm test
 
-      - name: Pack dry run
-        run: npm pack --dry-run
-
       - name: Read package coordinates
         id: package
         run: |
           node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
           import pkg from "./package.json" with { type: "json" };
+          const isMainPush = process.env.GITHUB_EVENT_NAME === "push" && process.env.GITHUB_REF === "refs/heads/main";
+          const baseVersion = pkg.version.replace(/-.*/, "");
+          const shortSha = (process.env.GITHUB_SHA ?? "").slice(0, 7);
+          const publishVersion = isMainPush
+            ? `${baseVersion}-dev.${process.env.GITHUB_RUN_NUMBER}.${shortSha}`
+            : pkg.version;
           console.log(`name=${pkg.name}`);
           console.log(`version=${pkg.version}`);
+          console.log(`publish_version=${publishVersion}`);
+          console.log(`dist_tag=${isMainPush ? "dev" : "latest"}`);
           NODE
+
+      - name: Prepare publish version
+        if: steps.package.outputs.publish_version != steps.package.outputs.version
+        run: npm version "${{ steps.package.outputs.publish_version }}" --no-git-tag-version --allow-same-version
+
+      - name: Pack dry run
+        run: npm pack --dry-run
 
       - name: Check npm version
         id: npm
         run: |
-          if npm view "${{ steps.package.outputs.name }}@${{ steps.package.outputs.version }}" version >/dev/null 2>&1; then
+          if npm view "${{ steps.package.outputs.name }}@${{ steps.package.outputs.publish_version }}" version >/dev/null 2>&1; then
             echo "published=true" >> "$GITHUB_OUTPUT"
-            echo "${{ steps.package.outputs.name }}@${{ steps.package.outputs.version }} is already published; skipping."
+            echo "${{ steps.package.outputs.name }}@${{ steps.package.outputs.publish_version }} is already published; skipping."
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
@@ -72,9 +84,9 @@ jobs:
         run: |
           if [ -n "${NPM_TOKEN:-}" ]; then
             echo "Publishing with NPM_TOKEN."
-            NODE_AUTH_TOKEN="$NPM_TOKEN" npm publish --access public --tag latest
+            NODE_AUTH_TOKEN="$NPM_TOKEN" npm publish --access public --tag "${{ steps.package.outputs.dist_tag }}"
           else
             echo "Publishing with npm Trusted Publishing OIDC."
             echo "For the first release, configure the npm Trusted Publisher for this package or add an NPM_TOKEN repository secret."
-            npm publish --access public --tag latest
+            npm publish --access public --tag "${{ steps.package.outputs.dist_tag }}"
           fi
