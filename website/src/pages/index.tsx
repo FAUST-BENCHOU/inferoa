@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Head from "@docusaurus/Head";
 import Link from "@docusaurus/Link";
 import useBaseUrl from "@docusaurus/useBaseUrl";
@@ -63,10 +63,12 @@ const sessionScreens = [
 
 export default function Home(): JSX.Element {
   const canvasRef = useRef<HTMLDivElement>(null);
+  const [installCopied, setInstallCopied] = useState(false);
   const vllmLogo = useBaseUrl("/img/vllm-logo-text-light.png");
   const srLogo = useBaseUrl("/img/vllm-sr-logo.light.png");
   const omniLogo = useBaseUrl("/img/vllm-omni-logo.png");
   const shareImage = "https://inferoa.agentic-in.ai/img/inferoa-line-hero.png";
+  const installCommand = "npm install -g inferoa@dev";
   const ecosystem = [
     {
       name: "vLLM Engine",
@@ -218,6 +220,24 @@ export default function Home(): JSX.Element {
     };
   }, []);
 
+  async function copyInstallCommand() {
+    try {
+      await navigator.clipboard.writeText(installCommand);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = installCommand;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    setInstallCopied(true);
+    window.setTimeout(() => setInstallCopied(false), 1400);
+  }
+
   return (
     <>
       <Head>
@@ -274,11 +294,12 @@ export default function Home(): JSX.Element {
             </div>
 
             <footer className={`${styles.edgeNav} ${styles.bottomNav}`}>
-              <div className={styles.contactBlock}>
-                <span className={styles.sayHi}>Init</span>
-                <Link className={styles.emailLink} to="/docs/quickstart">
-                  inferoa.agentic-in.ai/start
-                </Link>
+              <div className={styles.installBlock}>
+                <span className={styles.installLabel}>{installCopied ? "Copied" : "Install latest dev"}</span>
+                <button className={styles.installCommand} type="button" onClick={copyInstallCommand} aria-label={`Copy ${installCommand}`}>
+                  <span className={styles.promptMark}>$</span>
+                  <code>{installCommand}</code>
+                </button>
               </div>
             </footer>
           </div>
