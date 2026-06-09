@@ -28,7 +28,7 @@ tokenmaxxing: prefix-cache discipline, context optimization, intelligent
 routing, high-throughput and memory-efficient vLLM serving, multimodal
 capability.
 
-## TUI Preview
+## Preview
 
 <div align="center">
   <p><strong>Welcome</strong></p>

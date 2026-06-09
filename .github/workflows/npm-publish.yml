@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - v*
   workflow_dispatch:
 
 permissions:
@@ -45,20 +47,7 @@ jobs:
 
       - name: Read package coordinates
         id: package
-        run: |
-          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
-          import pkg from "./package.json" with { type: "json" };
-          const isMainPush = process.env.GITHUB_EVENT_NAME === "push" && process.env.GITHUB_REF === "refs/heads/main";
-          const baseVersion = pkg.version.replace(/-.*/, "");
-          const shortSha = (process.env.GITHUB_SHA ?? "").slice(0, 7);
-          const publishVersion = isMainPush
-            ? `${baseVersion}-dev.${process.env.GITHUB_RUN_NUMBER}.${shortSha}`
-            : pkg.version;
-          console.log(`name=${pkg.name}`);
-          console.log(`version=${pkg.version}`);
-          console.log(`publish_version=${publishVersion}`);
-          console.log(`dist_tag=${isMainPush ? "dev" : "latest"}`);
-          NODE
+        run: node dist/src/release/npm-publish-coordinates.js >> "$GITHUB_OUTPUT"
 
       - name: Prepare publish version
         if: steps.package.outputs.publish_version != steps.package.outputs.version
