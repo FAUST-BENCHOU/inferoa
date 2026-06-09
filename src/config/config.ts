@@ -77,12 +77,28 @@ export async function loadConfig(cwd: string, explicit?: string): Promise<{ conf
       model: process.env.INFEROA_OMNI_IMAGE_MODEL ?? config.omni.endpoints.image_generation?.model,
     };
   }
+  if (process.env.INFEROA_OMNI_IMAGE_EDIT_URL) {
+    config.omni.enabled = true;
+    config.omni.endpoints.image_edit = {
+      ...(config.omni.endpoints.image_edit ?? {}),
+      base_url: process.env.INFEROA_OMNI_IMAGE_EDIT_URL,
+      model: process.env.INFEROA_OMNI_IMAGE_EDIT_MODEL ?? config.omni.endpoints.image_edit?.model,
+    };
+  }
   if (process.env.INFEROA_OMNI_VIDEO_URL) {
     config.omni.enabled = true;
     config.omni.endpoints.video_generation = {
       ...(config.omni.endpoints.video_generation ?? {}),
       base_url: process.env.INFEROA_OMNI_VIDEO_URL,
       model: process.env.INFEROA_OMNI_VIDEO_MODEL ?? config.omni.endpoints.video_generation?.model,
+    };
+  }
+  if (process.env.INFEROA_OMNI_SPEECH_URL) {
+    config.omni.enabled = true;
+    config.omni.endpoints.speech = {
+      ...(config.omni.endpoints.speech ?? {}),
+      base_url: process.env.INFEROA_OMNI_SPEECH_URL,
+      model: process.env.INFEROA_OMNI_SPEECH_MODEL ?? config.omni.endpoints.speech?.model,
     };
   }
   if (!config.workspace) {
@@ -221,10 +237,12 @@ function pruneConfig(config: VllmAgentConfig): void {
   pruneKeys(config.omni?.endpoints, [
     "vision",
     "image_generation",
+    "image_edit",
     "video_understanding",
     "video_generation",
     "audio_understanding",
     "audio_generation",
+    "speech",
   ]);
   for (const endpoint of Object.values(config.omni?.endpoints ?? {})) {
     pruneKeys(endpoint, ["base_url", "model", "api_key_ref", "api_key", "headers"]);
