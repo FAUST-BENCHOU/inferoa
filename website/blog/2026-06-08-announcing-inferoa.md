@@ -36,9 +36,9 @@ agent loop around **tokenmaxxing**: **prefix-cache discipline**,
 long-horizon running modes**: **goal**, **plan**, and **autoresearch** with
 **tokenmaxxing observability**.
 
-<!-- truncate -->
+![Inferoa welcome session](/gif/welcome.gif)
 
-![Inferoa welcome session](/img/screenshots/inferoa-welcome.png)
+<!-- truncate -->
 
 ## What Breaks
 
@@ -75,40 +75,36 @@ still running.
 This is the core design: the agent is not merely calling an inference system.
 It is shaped by it.
 
-## What You Can Do Today
+## 快速一览 Inferoa
 
 Inferoa is a terminal-first harness, but the product surface is not just a
 shell. It makes long-horizon state visible while the agent works.
-
-Start with **`/tokenmaxxing`**. It is the savings ledger for prefix-cache reuse,
-context optimization, [RTK](https://github.com/rtk-ai/rtk) tool-output savings,
-recent turn usage, and model-selection pressure. This is the place to see
-whether the harness is actually tokenmaxxing the session, not just reporting
-token usage after the fact.
-
-![Inferoa tokenmaxxing report](/img/screenshots/tokenmaxxing.png)
 
 Goal mode keeps the objective durable. The agent can decompose work, update
 steps, attach evidence, and avoid mistaking an empty checklist for a finished
 goal.
 
-![Inferoa goal mode](/img/screenshots/inferoa-goal.png)
+![Inferoa goal mode](/gif/goal.gif)
 
 Plan mode turns ambiguous scope into an inspectable decision. A plan can stay in
 drafting, move to approval, or become executable context without becoming a
 hard runtime failure.
 
-![Inferoa plan mode](/img/screenshots/inferoa-plan-ready.png)
-
-Prefix-cache reporting separates warmup from steady state. The harness tracks
-prompt epochs, schema hashes, cache salt, and cached-token evidence so the user
-can see whether the session shape is staying reusable.
+![Inferoa plan mode](/gif/plan.gif)
 
 Autoresearch mode makes the evaluation loop native: define the experiment, run
 the harness, record failures, patch the implementation, and keep the metric
 trail inside the same session.
 
-![Inferoa autoresearch iteration](/img/screenshots/inferoa-autoresearch-iteration.png)
+![Inferoa autoresearch iteration](/gif/research.gif)
+
+Tokenmaxxing is the savings ledger for prefix-cache reuse, context optimization,
+[RTK](https://github.com/rtk-ai/rtk) tool-output savings, recent turn usage, and
+model-selection pressure. This is the place to see whether the harness is
+actually tokenmaxxing the session, not just reporting token usage after the
+fact.
+
+![Inferoa tokenmaxxing report](/img/screenshots/tokenmaxxing.png)
 
 The core command surface stays small: `/goal` for durable objectives, `/plan`
 for inspectable scope, `/autoresearch` for metric-driven iteration, and

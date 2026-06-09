@@ -37,26 +37,16 @@ capability.
       <th>Tokenmaxxing</th>
     </tr>
     <tr>
-      <td align="center"><img src="website/static/img/screenshots/inferoa-welcome.png" alt="Inferoa welcome screen" width="420" /></td>
+      <td align="center"><img src="website/static/gif/welcome.gif" alt="Inferoa welcome screen" width="420" /></td>
       <td align="center"><img src="website/static/img/screenshots/tokenmaxxing.png" alt="Inferoa tokenmaxxing report" width="420" /></td>
     </tr>
-    <tr>
-      <th>Prefix Cache Status</th>
-      <th>Goal Mode</th>
-    </tr>
-    <tr>
-      <td align="center"><img src="website/static/img/screenshots/inferoa-prefix-cache-status.png" alt="Inferoa prefix cache response status" width="420" /></td>
-      <td align="center"><img src="website/static/img/screenshots/inferoa-goal.png" alt="Inferoa goal mode" width="420" /></td>
-    </tr>
-    <tr>
-      <th>Plan Mode</th>
-      <th>Autoresearch Mode</th>
-    </tr>
-    <tr>
-      <td align="center"><img src="website/static/img/screenshots/inferoa-plan-ready.png" alt="Inferoa plan mode screen" width="420" /></td>
-      <td align="center"><img src="website/static/img/screenshots/inferoa-autoresearch-iteration.png" alt="Inferoa autoresearch mode screen" width="420" /></td>
-    </tr>
   </table>
+  <p><strong>Goal Mode</strong></p>
+  <img src="website/static/gif/goal.gif" alt="Inferoa goal mode" width="860" />
+  <p><strong>Plan Mode</strong></p>
+  <img src="website/static/gif/plan.gif" alt="Inferoa plan mode" width="860" />
+  <p><strong>Autoresearch Mode</strong></p>
+  <img src="website/static/gif/research.gif" alt="Inferoa autoresearch mode" width="860" />
 </div>
 
 ## Why Inferoa
