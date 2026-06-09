@@ -155,6 +155,78 @@ test("runtime freezes available tool schemas for a run", async () => {
   }
 });
 
+test("runtime tool start summaries name concrete Omni actions", async () => {
+  let chatCalls = 0;
+  const statuses: RuntimeStatusEvent[] = [];
+  const modelServer = createServer((req, res) => {
+    if (serveEndpointSignal(req.url, res)) {
+      return;
+    }
+    if (req.method === "POST" && req.url === "/v1/images/generations") {
+      req.resume();
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ data: [{ b64_json: Buffer.from("fake-image").toString("base64") }] }));
+      return;
+    }
+    req.resume();
+    req.on("end", () => {
+      chatCalls += 1;
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+      if (chatCalls === 1) {
+        writeSse(res, {
+          id: "resp_image_generation",
+          model: "long-horizon-test",
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    id: "call_image_generation",
+                    type: "function",
+                    function: { name: "image_generation", arguments: JSON.stringify({ prompt: "tiny mascot" }) },
+                  },
+                ],
+              },
+            },
+          ],
+        });
+        writeSse(res, { choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 20, completion_tokens: 2 } });
+      } else {
+        writeSse(res, { id: "resp_final", model: "long-horizon-test", choices: [{ delta: { content: "generated image" } }] });
+        writeSse(res, { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 21, completion_tokens: 3 } });
+      }
+      res.end("data: [DONE]\n\n");
+    });
+  });
+  modelServer.listen(0, "127.0.0.1");
+  await once(modelServer, "listening");
+  const address = modelServer.address() as AddressInfo;
+
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-omni-tool-summary-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const baseUrl = `http://127.0.0.1:${address.port}/v1`;
+    const runtimeConfig = config(baseUrl);
+    runtimeConfig.omni.enabled = true;
+    runtimeConfig.omni.endpoints.image_generation = { base_url: baseUrl, model: "image-model" };
+    const workspace: WorkspaceIdentity = { id: "w_omni_tool_summary", root: dir, alias: "omni-tool-summary" };
+    const runtime = new Runtime(runtimeConfig, workspace, store);
+
+    const result = await runtime.run({
+      prompt: "generate an image",
+      onStatus: (event) => statuses.push(event),
+    });
+
+    assert.equal(result.content, "generated image");
+    assert.ok(statuses.some((event) => event.type === "tool_start" && event.tool_name === "image_generation" && event.summary === "Image generation"));
+    assert.equal(statuses.some((event) => event.type === "tool_start" && event.summary === "Calling Omni endpoint"), false);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+    await new Promise<void>((resolve) => modelServer.close(() => resolve()));
+  }
+});
+
 test("runtime freezes enabled skill prompt state for a run", async () => {
   let chatCalls = 0;
   const requestBodies: Array<Record<string, unknown>> = [];

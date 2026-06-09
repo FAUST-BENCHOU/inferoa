@@ -982,9 +982,27 @@ function summarizeToolStart(name: string, args: JsonObject): string {
       return startSummary("Fetching", stringField(args.url));
     case "web_open":
       return startSummary("Opening", stringField(args.url));
+    case "vision_understanding":
+      return "Vision understanding";
+    case "image_generation":
+      return "Image generation";
+    case "image_edit":
+      return "Image edit";
+    case "video_understanding":
+      return "Video understanding";
+    case "video_generation":
+      return "Video generation";
+    case "audio_understanding":
+      return "Audio understanding";
+    case "audio_generation":
+      return "Audio generation";
+    case "speech_generation":
+      return "Speech generation";
+    case "speech_voices":
+      return "Speech voices";
     default:
       if (name.includes("image") || name.includes("vision") || name.includes("video") || name.includes("audio")) {
-        return "Calling Omni endpoint";
+        return startSummary("Running", humanizeToolName(name));
       }
       return startSummary("Running tool", name);
   }
@@ -992,6 +1010,10 @@ function summarizeToolStart(name: string, args: JsonObject): string {
 
 function startSummary(verb: string, detail?: string): string {
   return detail ? `${verb} ${detail}` : verb;
+}
+
+function humanizeToolName(name: string): string {
+  return name.replace(/_/g, " ");
 }
 
 function summarizeGoalStart(args: JsonObject): string {
