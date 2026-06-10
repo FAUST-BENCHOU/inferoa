@@ -129,6 +129,13 @@ test("CodeIntelligenceHub builds a small CodeGraph index and serves native tool 
     );
     assert.equal(files.ok, true, JSON.stringify(files));
     assert.match(String(files.data?.content ?? ""), /src\/sample\.ts/);
+
+    const statusWithBlankProjectPath = await registry.call(
+      { id: "cg_status_blank_project", name: "codegraph_status", arguments: { projectPath: "" } },
+      { session_id: session.session_id },
+    );
+    assert.equal(statusWithBlankProjectPath.ok, true, JSON.stringify(statusWithBlankProjectPath));
+
     hub.dispose();
   } finally {
     store.close();

@@ -6,6 +6,7 @@ import { once } from "node:events";
 import { DEFAULT_CONFIG } from "../src/config/defaults.js";
 import { normalizeUsage } from "../src/model/endpoint-signals.js";
 import { ModelGateway } from "../src/model/gateway.js";
+import { buildPromptCacheKey } from "../src/model/prompt-cache.js";
 import { CORE_TOOL_DEFINITIONS } from "../src/tools/schemas.js";
 import type { ToolDefinition, VllmAgentConfig } from "../src/types.js";
 
@@ -71,11 +72,17 @@ test("Codex Responses requests send system prompt as instructions", async () => 
       ],
       tools: [],
       max_tokens: 16,
+      prompt_epoch_id: "pe_cache_epoch",
     });
     assert.equal(response.content, "ok");
     assert.equal(requestPath, "/backend-api/codex/responses");
     assert.equal(requestBody?.instructions, "Be concise.");
     assert.equal(requestBody?.store, false);
+    assert.equal(
+      requestBody?.prompt_cache_key,
+      buildPromptCacheKey({ provider_id: "openai-codex", model: "gpt-5.4", session_id: "s", prompt_epoch_id: "pe_cache_epoch" }),
+    );
+    assert.equal(requestBody?.prompt_cache_retention, "24h");
     assert.equal(Object.hasOwn(requestBody ?? {}, "temperature"), false);
     assert.equal(Object.hasOwn(requestBody ?? {}, "max_output_tokens"), false);
     const input = requestBody?.input as Array<Record<string, unknown>>;
@@ -205,10 +212,13 @@ test("Copilot GPT-5 models use Responses payload shape", async () => {
         { role: "user", content: "ping" },
       ],
       tools: [],
+      prompt_epoch_id: "pe_copilot_cache_epoch",
     });
     assert.equal(response.content, "ok");
     assert.equal(requestPath, "/responses");
     assert.equal(requestBody?.instructions, "System prompt.");
+    assert.equal(Object.hasOwn(requestBody ?? {}, "prompt_cache_key"), false);
+    assert.equal(Object.hasOwn(requestBody ?? {}, "prompt_cache_retention"), false);
   } finally {
     server.close();
   }

@@ -21,6 +21,8 @@ export interface ModelSetup {
   cache_salt?: string;
 }
 
+export type PromptCacheRetention = "24h";
+
 export interface OmniEndpointConfig {
   base_url?: string;
   model?: string;
@@ -233,6 +235,8 @@ export interface ModelRequest {
   tool_schema_hash?: string;
   prompt_epoch_id?: string;
   cache_salt?: string;
+  prompt_cache_key?: string;
+  prompt_cache_retention?: PromptCacheRetention;
 }
 
 export interface ModelUsage {
@@ -280,6 +284,8 @@ export interface EndpointSignalSnapshot {
   prompt_hash?: string;
   tool_schema_hash?: string;
   prompt_epoch_id?: string;
+  prompt_cache_key?: string;
+  prompt_cache_retention?: PromptCacheRetention;
   cache_hit_rate?: number;
   router?: JsonObject;
   usage?: ModelUsage;

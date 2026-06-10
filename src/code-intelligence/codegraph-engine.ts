@@ -332,10 +332,10 @@ export class CodeGraphContextEngine {
     if (projectPath === undefined || projectPath === null) {
       return { ok: true, args };
     }
-    if (typeof projectPath !== "string" || !projectPath.trim()) {
+    if (typeof projectPath !== "string") {
       return { ok: false, result: fail("project_path_invalid", "projectPath must be a non-empty string") };
     }
-    const resolved = path.resolve(this.workspace.root, projectPath);
+    const resolved = projectPath.trim() ? path.resolve(this.workspace.root, projectPath) : this.workspace.root;
     const relative = path.relative(this.workspace.root, resolved);
     if (relative.startsWith("..") || path.isAbsolute(relative)) {
       return {
@@ -413,7 +413,7 @@ const CODEGRAPH_TOOL_DEFINITIONS: ToolDefinition[] = ([
       query: stringSchema("Symbol name or partial name."),
       kind: { type: "string", description: "Optional node kind filter.", enum: ["function", "method", "class", "interface", "type", "variable", "route", "component"] },
       limit: numberSchema("Maximum results. Defaults to 10."),
-      projectPath: stringSchema("Optional project path inside the current workspace."),
+      projectPath: projectPathSchema(),
     }, ["query"]),
   },
   {
@@ -423,7 +423,7 @@ const CODEGRAPH_TOOL_DEFINITIONS: ToolDefinition[] = ([
     parameters: objectSchema({
       symbol: stringSchema("Function, method, or class name."),
       limit: numberSchema("Maximum callers. Defaults to 20."),
-      projectPath: stringSchema("Optional project path inside the current workspace."),
+      projectPath: projectPathSchema(),
     }, ["symbol"]),
   },
   {
@@ -433,7 +433,7 @@ const CODEGRAPH_TOOL_DEFINITIONS: ToolDefinition[] = ([
     parameters: objectSchema({
       symbol: stringSchema("Function, method, or class name."),
       limit: numberSchema("Maximum callees. Defaults to 20."),
-      projectPath: stringSchema("Optional project path inside the current workspace."),
+      projectPath: projectPathSchema(),
     }, ["symbol"]),
   },
   {
@@ -443,7 +443,7 @@ const CODEGRAPH_TOOL_DEFINITIONS: ToolDefinition[] = ([
     parameters: objectSchema({
       symbol: stringSchema("Symbol to analyze."),
       depth: numberSchema("Traversal depth. Defaults to 2."),
-      projectPath: stringSchema("Optional project path inside the current workspace."),
+      projectPath: projectPathSchema(),
     }, ["symbol"]),
   },
   {
@@ -455,7 +455,7 @@ const CODEGRAPH_TOOL_DEFINITIONS: ToolDefinition[] = ([
       includeCode: { type: "boolean", description: "Include source code. Defaults to false." },
       file: stringSchema("Optional file path or basename to disambiguate."),
       line: numberSchema("Optional line number to disambiguate."),
-      projectPath: stringSchema("Optional project path inside the current workspace."),
+      projectPath: projectPathSchema(),
     }, ["symbol"]),
   },
   {
@@ -465,7 +465,7 @@ const CODEGRAPH_TOOL_DEFINITIONS: ToolDefinition[] = ([
     parameters: objectSchema({
       query: stringSchema("Natural-language question, symbol names, file names, or code terms to explore."),
       maxFiles: numberSchema("Maximum source files/code blocks to include. Defaults to 8."),
-      projectPath: stringSchema("Optional project path inside the current workspace."),
+      projectPath: projectPathSchema(),
     }, ["query"]),
   },
   {
@@ -473,7 +473,7 @@ const CODEGRAPH_TOOL_DEFINITIONS: ToolDefinition[] = ([
     description: "Context index health, graph size, language coverage, and watcher state.",
     permission: "read",
     parameters: objectSchema({
-      projectPath: stringSchema("Optional project path inside the current workspace."),
+      projectPath: projectPathSchema(),
     }),
   },
   {
@@ -484,7 +484,7 @@ const CODEGRAPH_TOOL_DEFINITIONS: ToolDefinition[] = ([
       path: stringSchema("Optional path prefix."),
       pattern: stringSchema("Optional wildcard pattern such as *.ts or **/*.test.ts."),
       format: { type: "string", description: "Output format.", enum: ["tree", "flat", "grouped"] },
-      projectPath: stringSchema("Optional project path inside the current workspace."),
+      projectPath: projectPathSchema(),
     }),
   },
 ] satisfies ToolDefinition[]).sort((a, b) => a.name.localeCompare(b.name));
@@ -495,6 +495,14 @@ function objectSchema(properties: Record<string, JsonObject>, required: string[]
 
 function stringSchema(description: string): JsonObject {
   return { type: "string", description };
+}
+
+function projectPathSchema(): JsonObject {
+  return {
+    type: "string",
+    description: "Optional project path inside the current workspace. Omit this field or use '.' for the current workspace; do not send an empty string.",
+    minLength: 1,
+  };
 }
 
 function numberSchema(description: string): JsonObject {

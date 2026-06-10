@@ -15,6 +15,7 @@ import { throwIfAborted } from "../util/abort.js";
 import { stableJson } from "../util/hash.js";
 import { authHeaders, modelBaseUrl, normalizeUsage, providerId, signalHeaders } from "./endpoint-signals.js";
 import { externalProviderById, externalProviderProfileForModel, externalProviderRequiresApiKey } from "./providers.js";
+import { openAiResponsesPromptCacheControls } from "./prompt-cache.js";
 
 interface OpenAiToolCallAccumulator {
   id?: string;
@@ -326,6 +327,7 @@ export class ModelGateway {
       store: false,
       tools: sortedTools(request.tools).map(toOpenAiResponseTool),
       stream: true,
+      ...openAiResponsesPromptCacheControls(setup, request),
     };
     const response = await fetch(`${base}/responses`, {
       method: "POST",
@@ -427,6 +429,7 @@ export class ModelGateway {
   }
 
   evidenceFromResponse(request: ModelRequest, response: ModelResponse): EndpointSignalSnapshot {
+    const promptCache = openAiResponsesPromptCacheControls(this.config.model_setup, request);
     return {
       mode: this.config.model_setup.mode,
       provider_id: providerId(this.config),
@@ -439,6 +442,8 @@ export class ModelGateway {
       prompt_hash: request.prompt_hash,
       tool_schema_hash: request.tool_schema_hash,
       prompt_epoch_id: request.prompt_epoch_id,
+      prompt_cache_key: promptCache.prompt_cache_key,
+      prompt_cache_retention: promptCache.prompt_cache_retention,
       router: response.route,
     };
   }
