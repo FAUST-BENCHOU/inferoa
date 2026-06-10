@@ -41,6 +41,11 @@ const config: Config = {
   themes: ["@docusaurus/theme-mermaid"],
   themeConfig: {
     image: "img/inferoa-line-hero.png",
+    colorMode: {
+      defaultMode: "light",
+      disableSwitch: true,
+      respectPrefersColorScheme: false,
+    },
     navbar: {
       title: "Inferoa",
       items: [
@@ -54,7 +59,7 @@ const config: Config = {
       ],
     },
     footer: {
-      style: "dark",
+      style: "light",
       links: [
         {
           title: "Product",

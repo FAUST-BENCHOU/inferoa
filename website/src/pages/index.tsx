@@ -413,6 +413,34 @@ export default function Home(): JSX.Element {
             </div>
           </div>
         </section>
+
+        <footer className={styles.siteFooter}>
+          <div className={styles.siteFooterInner}>
+            <div className={styles.siteFooterBrand}>
+              <Link className={styles.siteFooterLogo} to="/" aria-label="Inferoa home">
+                <span className={styles.promptMark}>›_</span>
+                <span>Infer</span><strong>oa</strong>
+              </Link>
+              <p>Inference-native Tokenmaxxing Agent Harness for long-horizon tasks.</p>
+            </div>
+            <nav className={styles.siteFooterLinks} aria-label="Footer">
+              <div>
+                <h2>Product</h2>
+                <Link to="/docs/intro">Docs</Link>
+                <Link to="/blog/announcing-inferoa">Announcement</Link>
+              </div>
+              <div>
+                <h2>Code</h2>
+                <a href="https://github.com/agentic-in/inferoa">GitHub</a>
+                <a href="https://www.npmjs.com/package/inferoa">npm</a>
+              </div>
+            </nav>
+            <div className={styles.siteFooterBottom}>
+              <code>npm install -g inferoa</code>
+              <span>Copyright © {new Date().getFullYear()} Inferoa contributors.</span>
+            </div>
+          </div>
+        </footer>
       </main>
     </>
   );
