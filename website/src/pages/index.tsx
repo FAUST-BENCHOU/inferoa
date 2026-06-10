@@ -271,7 +271,11 @@ export default function Home(): JSX.Element {
                   <span className={`${styles.heroPill} ${styles.heroPillHarness}`}>Harness</span>
                 </span>
               </h1>
-              <p className={styles.heroTagline}>Inference-native Tokenmaxxing Agent Harness for Loop Engineering</p>
+              <div className={styles.heroTags} aria-label="Inferoa positioning">
+                <span className={styles.heroTag}>Inference-native</span>
+                <span className={styles.heroTag}>Tokenmaxxing</span>
+                <span className={styles.heroTag}>Loop Engineering</span>
+              </div>
             </div>
 
             <footer className={`${styles.edgeNav} ${styles.bottomNav}`}>
