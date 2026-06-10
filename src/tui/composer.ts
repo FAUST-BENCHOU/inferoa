@@ -375,7 +375,7 @@ export function renderWelcomeComposerSurface(options: WelcomeComposerRenderOptio
   let cursorLine = inputStartLine + 1;
   let cursorColumn = left + 3;
   if (options.buffer.length === 0) {
-    const placeholder = fg256(244, options.placeholder ?? "Ask Inferoa");
+    const placeholder = fg256(244, options.placeholder ?? "Start a long-horizon goal...");
     pushInputLine(`  ${placeholder}`);
   } else {
     const cursor = clampCursor(display.buffer, display.cursor);
@@ -465,7 +465,8 @@ function renderWelcomeMark(): string[] {
   ];
   return [
     ...logo.map((line, index) => colorWelcomeLogoRow(line, index)),
-    center(fg256(244, "Inference-native Tokenmaxxing Agent Harness"), visibleWidth(logo[0] ?? "")),
+    center(fg256(244, "Inference-native Tokenmaxxing"), visibleWidth(logo[0] ?? "")),
+    center(fg256(244, "Loop Engineering Agent Harness"), visibleWidth(logo[0] ?? "")),
   ];
 }
 

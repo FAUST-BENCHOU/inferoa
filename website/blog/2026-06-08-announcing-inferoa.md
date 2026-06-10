@@ -1,14 +1,14 @@
 ---
 slug: announcing-inferoa
-title: "Inferoa: Inference-native Tokenmaxxing Agent Harness"
-title_meta: "Inferoa: Inference-native Tokenmaxxing Agent Harness"
-description: "Inferoa is an Inference-native Tokenmaxxing Agent Harness for long-horizon coding work across prefix-cache discipline, context optimization, routing, and high-throughput model serving."
+title: "Inferoa: Inference-native Tokenmaxxing Agent Harness for Loop Engineering"
+title_meta: "Inferoa: Inference-native Tokenmaxxing Agent Harness for Loop Engineering"
+description: "Inferoa is an Inference-native Tokenmaxxing Agent Harness for Loop Engineering, recursive long-horizon goals, context optimization, routing, and high-throughput model serving."
 image: /img/blog/inferoa-banner.png
 authors: []
 tags: [inferoa, tokenmaxxing, agents, inference, vllm]
 ---
 
-![Inferoa: Inference-native Tokenmaxxing Agent Harness](/img/blog/inferoa-banner.png)
+![Inferoa: Inference-native Tokenmaxxing Agent Harness for Loop Engineering](/img/blog/inferoa-banner.png)
 
 Most agents call models as if inference were a black box.
 
@@ -21,19 +21,24 @@ between model paths, and still need to prove the work at the end.
 > Prefix cache stability is ignored. Routing is bolted on later. Context is
 > pasted until it fits. Users pay for that gap.
 
-Inferoa = **Infer**(Inference-native)**o**(Tokenmaxxing)**a**(Agent Harness).
+Inferoa = **Infer**(Inference-native)**o**(Tokenmaxxing Loop
+Engineering)**a**(Agent Harness).
 
-Inferoa is an **Inference-native Tokenmaxxing Agent Harness** for
-**long-horizon coding work**. It starts from the inference stack and designs the
-agent loop around **tokenmaxxing**: **prefix-cache discipline**,
-**context optimization** with
-[CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph) and
-[RTK](https://github.com/rtk-ai/rtk), **intelligent routing** with
+Inferoa is an **Inference-native Tokenmaxxing Agent Harness for Loop
+Engineering**. It is built for **recursive long-horizon goals**: define the
+outcome once, then the agent loop keeps inspecting, changing, testing,
+reflecting, and continuing until the work is proven.
+
+That is what **inference-native** means here: Inferoa starts from the inference
+stack and co-designs loop engineering around **tokenmaxxing**:
+**prefix-cache discipline**, **context optimization** with
+[RTK](https://github.com/rtk-ai/rtk) and
+[CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph),
+**intelligent routing** through
 [vLLM Semantic Router](https://github.com/vllm-project/semantic-router),
-**high-throughput model serving** with
-[vLLM Engine](https://github.com/vllm-project/vllm) and
-[vLLM Omni](https://github.com/vllm-project/vllm-omni), plus **native
-long-horizon running modes**: **goal**, **plan**, and **autoresearch** with
+**high-throughput vLLM serving** with
+[vLLM Engine](https://github.com/vllm-project/vllm), **vLLM Omni** multimodal
+capability, and native **goal**, **plan**, and **autoresearch** loops with
 **tokenmaxxing observability**.
 
 ![Inferoa welcome session](/gif/welcome.gif)
@@ -71,7 +76,8 @@ still running.
 
 | Surface | Substrate | What Inferoa Makes Native | Why It Matters |
 | --- | --- | --- | --- |
-| Agent Harness | [Inferoa](https://github.com/agentic-in/inferoa) | Goals, plans, autoresearch, sessions, tools, recovery, verification, and prefix-cache discipline | Long work stays coherent while preserving reusable prompt prefixes |
+| Loop Engineering | [Inferoa Goal Mode](https://inferoa.agentic-in.ai/docs/workflows/goal-mode) | Recursive long-horizon goals, horizons, candidate work, reflection, and completion evidence | The engineering loop keeps running until the work is proven |
+| Agent Harness | [Inferoa](https://github.com/agentic-in/inferoa) | Sessions, tools, plans, autoresearch, resources, recovery, and prefix-cache discipline | Long work gets a durable runtime while preserving reusable prompt prefixes |
 | Context Optimization | [CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph), [RTK](https://github.com/rtk-ai/rtk) | Compression, graph-shaped repo context, bounded tool output, and evidence selection | The model sees evidence, not raw sprawl |
 | Intelligent Routing | [vLLM Semantic Router](https://github.com/vllm-project/semantic-router) | Model paths respond to cost, safety, privacy, capability, and session pressure | Turns can route between self-hosted vLLM models and external frontier models |
 | Model Serving | [vLLM Engine](https://github.com/vllm-project/vllm), [vLLM Omni](https://github.com/vllm-project/vllm-omni) | High-throughput, memory-efficient serving and multimodal endpoints stay visible to the harness | Self-hosted paths make cost, safety, privacy, and data sovereignty controllable when an external frontier model is unnecessary |
@@ -79,16 +85,29 @@ still running.
 This is the core design: the agent is not merely calling an inference system.
 It is shaped by it.
 
+## Goal Mode: Loop Engineering For Long-Horizon Work
+
+Prompt engineering improves the next answer. Loop engineering designs the
+system that keeps deciding what to do after that answer. In Inferoa, `/goal` is
+the entry point: it starts a recursive long-horizon goal, expands work through
+horizons, preserves evidence, and requires reflection before completion.
+
+![Inferoa goal mode](/gif/goal.gif)
+
+Goal Mode is deliberately not just a persistent note in the prompt. It gives
+the harness a durable outcome, a visible Horizon 0 orientation, a strategy,
+candidate work, step status, verification evidence, and a completion report.
+That is the difference between asking an agent for the next step and engineering
+the loop that keeps taking the next step.
+
 ## Inferoa At A Glance
 
 Inferoa is a terminal-first harness, but the product surface is not just a
 shell. It makes long-horizon state visible while the agent works.
 
-Goal mode keeps the objective durable. The agent can decompose work, update
-steps, attach evidence, and avoid mistaking an empty checklist for a finished
-goal.
-
-![Inferoa goal mode](/gif/goal.gif)
+Run `/goal` to start a long-horizon recursive goal. The agent can decompose
+work, update steps, attach evidence, reflect between horizons, and avoid
+mistaking an empty checklist for a finished goal.
 
 Plan mode turns ambiguous scope into an inspectable decision. A plan can stay in
 drafting, move to approval, or become executable context without becoming a

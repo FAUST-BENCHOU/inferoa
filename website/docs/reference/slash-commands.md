@@ -16,7 +16,7 @@ subcommands.
 | `/system` | Show model, web search, Omni, and runtime status (also `/endpoint`, `/endpoints`) |
 | `/access` | Change this workspace's file and tool access |
 | `/skills` | List discovered skills or manage enabled skills |
-| [`/goal`](../workflows/goal-mode.md) | Start or manage goal mode |
+| [`/goal`](../workflows/goal-mode.md) | Run `/goal` to start a long-horizon recursive goal |
 | [`/plan`](../workflows/plan-mode.md) | Start or manage plan mode |
 | [`/autoresearch`](../workflows/autoresearch-mode.md) | Start or manage autoresearch experiments |
 | `/tokenmaxxing` | Show token, cache, RTK, and routing savings (also `/cache`, `/rtk`, `/activity`, `/evidence`, `/history`) |
@@ -35,6 +35,7 @@ subcommands.
 ```text
 # Goal mode
 /goal show                   Show active goal state
+/goal                        Start a recursive long-horizon goal
 /goal set                    Set or replace the goal objective
 /goal plan                   Update the goal's internal plan
 /goal pause                  Pause the current goal

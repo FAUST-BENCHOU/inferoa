@@ -61,8 +61,8 @@ Slash commands live inside the TUI. See
   configuration.
 - Use `/system` (also `/endpoints`) to inspect model, web search, Omni, and
   runtime status.
-- Use [`/goal set`](./workflows/goal-mode.md) for a durable objective that
-  should survive multiple turns.
+- Run [`/goal`](./workflows/goal-mode.md) to start a recursive long-horizon
+  goal.
 - Use [`/plan set`](./workflows/plan-mode.md) for ambiguous work that needs an
   inspectable plan before execution.
 - Use [`/autoresearch`](./workflows/autoresearch-mode.md) for experiment-shaped
@@ -105,8 +105,8 @@ Once Inferoa is running, explore the long-horizon workflows:
 - [First session](./getting-started/first-session.md) walks through a complete
   task loop — describing work, using modes, inspecting evidence, and resuming
   later.
-- [Goal mode](./workflows/goal-mode.md) keeps a durable objective active until
-  the work is genuinely handled.
+- [Goal mode](./workflows/goal-mode.md) is the loop-engineering surface for
+  recursive long-horizon goals.
 - [Plan mode](./workflows/plan-mode.md) turns ambiguous scope into an
   inspectable plan before execution.
 - [Autoresearch mode](./workflows/autoresearch-mode.md) runs benchmark-style

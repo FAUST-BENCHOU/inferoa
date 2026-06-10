@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Inference-native Tokenmaxxing Agent Harness</strong>
+  <strong>Inference-native Tokenmaxxing Agent Harness for Loop Engineering</strong>
 </p>
 
 <p align="center">
@@ -22,19 +22,24 @@ inference systems make possible.
 > Prefix cache stability is ignored. Routing is
 bolted on later. Context is pasted until it fits. Users pay for that gap.
 
-Inferoa is an **Inference-native Tokenmaxxing Agent Harness** for long-horizon
-tasks. It starts from the inference stack and designs the agent loop around
-tokenmaxxing: prefix-cache discipline, context optimization, intelligent
-routing, high-throughput and memory-efficient vLLM serving, multimodal
-capability.
+Inferoa is an **Inference-native Tokenmaxxing Agent Harness for Loop
+Engineering**. It is built for recursive long-horizon goals: define the outcome
+once, then Inferoa keeps the engineering loop inspecting, changing, testing,
+reflecting, and continuing until the work is proven.
+
+That is what **inference-native** means here: Inferoa starts from the inference
+stack and co-designs loop engineering around **tokenmaxxing**: prefix-cache
+discipline, context optimization, intelligent routing through vLLM Semantic
+Router, high-throughput vLLM serving, vLLM Omni multimodal capability, and
+RTK/CodeGraph-backed context selection.
 
 ## Preview
 
 <div align="center">
-  <p><strong>Welcome</strong></p>
-  <img src="website/static/gif/welcome.gif" alt="Welcome" width="860" />
   <p><strong>Goal Mode</strong></p>
   <img src="website/static/gif/goal.gif" alt="Inferoa goal mode" width="860" />
+  <p><strong>Welcome</strong></p>
+  <img src="website/static/gif/welcome.gif" alt="Welcome" width="860" />
   <p><strong>Plan Mode</strong></p>
   <img src="website/static/gif/plan.gif" alt="Inferoa plan mode" width="860" />
   <p><strong>Autoresearch Mode</strong></p>
@@ -43,17 +48,22 @@ capability.
 
 ## Why Inferoa
 
-Inferoa = **Infer**(Inference-native)**o**(Tokenmaxxing)**a**(Agent Harness).
+Inferoa = **Infer**(Inference-native)**o**(Tokenmaxxing Loop
+Engineering)**a**(Agent Harness).
 
 Long-horizon agents are not one prompt. They are many turns of planning,
 editing, tool use, retries, compaction, cache warmup, route selection, and
 verification. If the harness treats every turn as generic chat traffic, it
 throws away the optimization surface underneath it.
 
-Inferoa makes those tokenmaxxing surfaces first-class:
+Inferoa makes the recursive engineering loop and its tokenmaxxing surfaces
+first-class:
 
+- **Goal mode runs the loop**, not just the next prompt: horizons, evidence,
+  reflection, and completion reports stay attached to the durable objective.
 - **Prefix cache is protected**, not merely reported after the turn.
-- **Goals, plans, and autoresearch** are native long-horizon modes.
+- **Plans and autoresearch** are native companion modes for approved scope and
+  measurement-driven iteration.
 - **Context is optimized** through compression, summaries, graph-shaped code
   context, bounded tool output, and evidence selection instead of pasting until
   the window is full.
@@ -70,7 +80,8 @@ the inference stack:
 
 | Surface | Substrate | Inferoa role | Tokenmaxxing target |
 | --- | --- | --- | --- |
-| Agent Harness | [Inferoa](https://github.com/agentic-in/inferoa) | Goals, plans, autoresearch, sessions, tools, recovery, verification, and prefix-cache discipline | Keep long-horizon work coherent while preserving reusable prompt prefixes |
+| Loop Engineering | [Inferoa Goal Mode](https://github.com/agentic-in/inferoa) | Recursive long-horizon goals, horizons, reflection, completion evidence, and recovery | Keep the engineering loop running until the work is proven |
+| Agent Harness | [Inferoa](https://github.com/agentic-in/inferoa) | Sessions, tools, plans, autoresearch, resources, evidence, and prefix-cache discipline | Give the loop a durable runtime while preserving reusable prompt prefixes |
 | Context Optimization | [CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph), [RTK](https://github.com/rtk-ai/rtk) | Select evidence and shrink mutable context without losing task continuity | Spend fewer prompt and tool-output tokens |
 | Intelligent routing | [vLLM Semantic Router](https://github.com/vllm-project/semantic-router) | Choose model paths by cost, safety, privacy, capability, and session pressure | Avoid one expensive path for every turn |
 | Model Serving | [vLLM Engine](https://github.com/vllm-project/vllm), [vLLM Omni](https://github.com/vllm-project/vllm-omni) | Use high-throughput, memory-efficient serving and multimodal endpoints while respecting inference-engine optimization rules | Control cost, safety, privacy, and data sovereignty when an external frontier model is unnecessary |
@@ -86,8 +97,11 @@ the inference stack:
 
 ## Core Design
 
-- **Long-horizon modes**: goal, plan, and autoresearch are native workflows,
-  not prompt templates.
+- **Goal-driven loop engineering**: `/goal` starts a recursive long-horizon
+  objective, then keeps horizons, evidence, reflection, and completion reports
+  active until the work is proven.
+- **Native companion modes**: plan and autoresearch are workflows for approved
+  scope and measurement-driven iteration, not prompt templates.
 - **Prefix-cache discipline**: stable prompt epochs, deterministic tool schemas,
   bounded context sections, and cache reports protect reusable prefixes.
 - **Continuous context optimization**: compression, summaries, structured repo
@@ -124,6 +138,12 @@ session and submit it as the first user turn:
 inferoa "Inspect this repository and list the test entrypoints."
 ```
 
+Start a recursive long-horizon goal from inside the TUI:
+
+```text
+/goal Improve this repository and prove it with tests.
+```
+
 Run a single non-interactive request without opening the TUI:
 
 ```bash
@@ -145,8 +165,8 @@ inferoa --print "Summarize the README in one paragraph."
 
 Use these commands as the task grows:
 
-- `/goal` keeps a durable objective, decomposition, evidence, and completion
-  reflection across long-running work.
+- `/goal` starts a recursive long-horizon goal: Inferoa keeps the objective,
+  horizons, evidence, and reflection loop active until the work is proven.
 - `/plan` turns ambiguous scope into an inspectable plan before execution.
 - `/autoresearch` runs benchmark-style iteration with metrics and failure
   evidence in the same session.

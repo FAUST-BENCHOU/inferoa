@@ -5,16 +5,16 @@ import useBaseUrl from "@docusaurus/useBaseUrl";
 import styles from "./index.module.css";
 
 const modules = [
-  ["01", "Prefix-cache discipline", "Stable prompt epochs and deterministic tool schemas protect reusable session prefixes."],
-  ["02", "Context Optimization", "Compression, graph-shaped repo context, and bounded tool output reduce token waste while preserving evidence."],
-  ["03", "Intelligent routing", "Route by cost, safety, privacy, capability, and pressure across self-hosted vLLM models and external frontier models."],
-  ["04", "vLLM serving", "High-throughput, memory-efficient inference keeps cache, latency, cost, and multimodal signals native."],
+  ["01", "Loop Engineering", "Run /goal to start a long-horizon recursive goal that keeps inspecting, changing, testing, and reflecting."],
+  ["02", "Tokenmaxxing discipline", "Stable prompt epochs and deterministic tool schemas protect reusable session prefixes."],
+  ["03", "Context + routing", "Compression, graph-shaped repo context, bounded tool output, and route choice reduce token waste while preserving evidence."],
+  ["04", "Inference-native serving", "vLLM Engine and Omni keep cache, latency, cost, and multimodal signals native to the harness."],
 ];
 
 const stackFlow = [
-  ["Agent Harness", "Inferoa + prefix discipline"],
-  ["Context Optimization", "compression, graph, bounded tools"],
-  ["Intelligent Routing", "vLLM SR"],
+  ["Goal Loop", "recursive horizons + reflection"],
+  ["Agent Harness", "sessions, tools, evidence"],
+  ["Tokenmaxxing", "prefix, context, routing"],
   ["vLLM Serving", "Engine + Omni"],
 ];
 
@@ -26,7 +26,7 @@ const sessionDemos = [
   },
   {
     title: "Goal Mode",
-    body: "Long-horizon work keeps objective, plan status, and evidence visible across turns.",
+    body: "Run /goal to start a long-horizon recursive goal with horizons, evidence, and reflection.",
     image: "/gif/goal.gif",
   },
   {
@@ -221,24 +221,24 @@ export default function Home(): JSX.Element {
   return (
     <>
       <Head>
-        <title>Inferoa | Inference-native Tokenmaxxing Agent Harness</title>
+        <title>Inferoa | Inference-native Tokenmaxxing Agent Harness for Loop Engineering</title>
         <meta
           name="description"
-          content="Inferoa is an Inference-native Tokenmaxxing Agent Harness for long-horizon coding work."
+          content="Inferoa is an Inference-native Tokenmaxxing Agent Harness for Loop Engineering, built around vLLM serving, routing, context optimization, and prefix-cache discipline."
         />
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://inferoa.agentic-in.ai/" />
-        <meta property="og:title" content="Inferoa | Inference-native Tokenmaxxing Agent Harness" />
+        <meta property="og:title" content="Inferoa | Inference-native Tokenmaxxing Agent Harness for Loop Engineering" />
         <meta
           property="og:description"
-          content="Tokenmaxx long-horizon coding agents with prefix-cache discipline, context optimization, intelligent routing, and high-performance vLLM serving."
+          content="Run recursive long-horizon goals while tokenmaxxing prefix cache, context optimization, vLLM Semantic Router, vLLM serving, Omni, RTK, and CodeGraph."
         />
         <meta property="og:image" content={shareImage} />
         <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="Inferoa | Inference-native Tokenmaxxing Agent Harness" />
+        <meta name="twitter:title" content="Inferoa | Inference-native Tokenmaxxing Agent Harness for Loop Engineering" />
         <meta
           name="twitter:description"
-          content="Tokenmaxx long-horizon coding agents with prefix-cache discipline, context optimization, intelligent routing, and high-performance vLLM serving."
+          content="Run recursive long-horizon goals while tokenmaxxing prefix cache, context optimization, vLLM Semantic Router, vLLM serving, Omni, RTK, and CodeGraph."
         />
         <meta name="twitter:image" content={shareImage} />
       </Head>
@@ -259,7 +259,7 @@ export default function Home(): JSX.Element {
             </header>
 
             <div className={styles.heroCenter}>
-              <h1 className={styles.heroStatement} aria-label="Inference-native tokenmaxxing agent harness">
+              <h1 className={styles.heroStatement} aria-label="Inference-native tokenmaxxing agent harness for loop engineering">
                 <span className={styles.heroLine}>
                   <span className={`${styles.heroPill} ${styles.heroPillInference}`}>Inference-native</span>
                 </span>
@@ -271,6 +271,7 @@ export default function Home(): JSX.Element {
                   <span className={`${styles.heroPill} ${styles.heroPillHarness}`}>Harness</span>
                 </span>
               </h1>
+              <p className={styles.heroTagline}>Inference-native Tokenmaxxing Agent Harness for Loop Engineering</p>
             </div>
 
             <footer className={`${styles.edgeNav} ${styles.bottomNav}`}>
@@ -305,8 +306,8 @@ export default function Home(): JSX.Element {
         <section className={styles.modules}>
           <div className={styles.sectionInner}>
             <div className={styles.sectionHeader}>
-              <span className={styles.sectionKicker}>Tokenmaxxing surfaces</span>
-              <h2>The Loop</h2>
+              <span className={styles.sectionKicker}>Loop engineering surfaces</span>
+              <h2>The Goal Loop</h2>
             </div>
             <div className={styles.moduleGrid}>
               {modules.map(([number, title, body]) => (
@@ -324,13 +325,13 @@ export default function Home(): JSX.Element {
           <div className={styles.sectionInner}>
             <div className={styles.missionCopy}>
               <span className={styles.sectionKicker}>Mission</span>
-              <h2>Tokenmaxx the agent path.</h2>
+              <h2>Engineer the loop, not the next prompt.</h2>
               <p>
                 <strong>Inferoa</strong> starts with coding because coding
                 exposes <strong>long-horizon pressure</strong> clearly: large
                 repos, changing goals, tool failures, repeated model calls,
                 context limits, and proof through tests. The goal is to
-                co-design the harness and inference stack so every turn spends{" "}
+                co-design the agent harness, goal loop, and inference stack so every turn spends{" "}
                 <strong>context, cache, route choice, and serving capacity</strong>{" "}
                 more deliberately.
               </p>
@@ -338,17 +339,17 @@ export default function Home(): JSX.Element {
             <div className={styles.loopCards} aria-label="Inference loop design points">
               <article>
                 <span>01</span>
-                <strong>Prefix-cache discipline</strong>
-                <p>Stable prompt epochs, bounded context, and fixed tool schemas keep long sessions warm.</p>
+                <strong>Goal mode drives the loop</strong>
+                <p>One durable outcome expands through horizons, evidence, reflection, and completion reports.</p>
               </article>
               <article>
                 <span>02</span>
-                <strong>Context is optimized</strong>
-                <p>Compression, graph-shaped context, and bounded tool output select evidence instead of pasting everything.</p>
+                <strong>Tokenmaxxing keeps it stable</strong>
+                <p>Stable prompt epochs, bounded context, and fixed tool schemas keep long sessions warm.</p>
               </article>
               <article>
                 <span>03</span>
-                <strong>Routing and serving are native</strong>
+                <strong>Routing and serving stay native</strong>
                 <p>vLLM SR chooses paths while vLLM Engine supplies high-throughput, memory-efficient serving.</p>
               </article>
             </div>
@@ -397,7 +398,7 @@ export default function Home(): JSX.Element {
 
         <section className={styles.stack}>
           <div className={styles.sectionInner}>
-            <span className={styles.sectionKicker}>Cross-stack path</span>
+              <span className={styles.sectionKicker}>Cross-stack path</span>
             <div className={styles.stackLayout}>
               <h2>Across the Tokenmaxxing Stack</h2>
               <ol className={styles.stackFlow}>
@@ -421,7 +422,7 @@ export default function Home(): JSX.Element {
                 <span className={styles.promptMark}>›_</span>
                 <span>Infer</span><strong>oa</strong>
               </Link>
-              <p>Inference-native Tokenmaxxing Agent Harness for long-horizon tasks.</p>
+              <p>Inference-native Tokenmaxxing Agent Harness for Loop Engineering.</p>
             </div>
             <nav className={styles.siteFooterLinks} aria-label="Footer">
               <div>

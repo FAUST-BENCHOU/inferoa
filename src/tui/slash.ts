@@ -40,7 +40,7 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: "system", description: "Show model, web search, Omni, and runtime status" },
   { name: "access", description: "Change this workspace's file and tool access" },
   { name: "skills", description: "List skills or manage enabled skills" },
-  { name: "goal", description: "Start or manage goal mode" },
+  { name: "goal", description: "Run /goal to start a long-horizon recursive goal" },
   { name: "plan", description: "Start or manage plan mode" },
   { name: "autoresearch", description: "Start or manage autoresearch experiments" },
   { name: "tokenmaxxing", description: "Show token, cache, RTK, and routing savings" },

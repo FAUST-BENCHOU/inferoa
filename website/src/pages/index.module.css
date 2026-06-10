@@ -188,6 +188,18 @@
   margin-top: clamp(0.65rem, 1.4vw, 1.35rem);
 }
 
+.heroTagline {
+  width: min(920px, 100%);
+  margin: clamp(1.05rem, 2vw, 1.7rem) auto 0;
+  padding: 0.36rem 0.62rem;
+  background: rgba(255, 254, 246, 0.88);
+  color: var(--text-color);
+  font-size: clamp(0.9rem, 1.6vw, 1.24rem);
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+}
+
 .heroWordBlock {
   display: block;
   padding: 0.09em 0.16em 0.12em;
@@ -823,6 +835,11 @@
 
   .heroPill {
     font-size: clamp(1rem, 4.8vw, 1.8rem);
+  }
+
+  .heroTagline {
+    margin-top: 0.9rem;
+    font-size: clamp(0.78rem, 3.4vw, 0.98rem);
   }
 
   .heroLine {

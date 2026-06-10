@@ -29,10 +29,10 @@ inferoa "Inspect this package and add a missing docs build check."
 ## Use Modes Deliberately
 
 - Use plain chat for small questions and one-turn inspections.
+- Run [`/goal`](../workflows/goal-mode.md) when you want to start a recursive
+  long-horizon goal.
 - Use [`/plan set`](../workflows/plan-mode.md) when scope is ambiguous and you
   want a plan before execution.
-- Use [`/goal set`](../workflows/goal-mode.md) when the work should continue
-  until a durable objective is done.
 - Use [`/autoresearch`](../workflows/autoresearch-mode.md) when the task is
   experiment-shaped and needs repeated measurement.
 - Use `/doctor status` when checking the local endpoint setup before a session.
@@ -68,8 +68,8 @@ without losing continuity.
 
 ## Next Steps
 
-- [Goal mode](../workflows/goal-mode.md) keeps a durable objective active
-  across turns, compaction, and interruptions.
+- [Goal mode](../workflows/goal-mode.md) is the loop-engineering surface for
+  recursive long-horizon goals.
 - [Plan mode](../workflows/plan-mode.md) turns ambiguous scope into an
   inspectable plan before execution begins.
 - [Autoresearch mode](../workflows/autoresearch-mode.md) runs benchmark-style

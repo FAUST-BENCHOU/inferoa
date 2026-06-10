@@ -275,10 +275,11 @@ test("welcome composer centers Inferoa wordmark and keeps slash and skill afford
   const plain = rendered.lines.map((line) => stripAnsi(line)).join("\n");
 
   assert.match(plain, /██████╗  ██████╗  █████╗/);
-  assert.match(plain, /Inference-native Tokenmaxxing Agent Harness/);
+  assert.match(plain, /Inference-native Tokenmaxxing/);
+  assert.match(plain, /Loop Engineering Agent Harness/);
   assert.doesNotMatch(plain, /vLLM agent/);
   assert.doesNotMatch(plain, /▟▙/);
-  assert.match(plain, /Ask Inferoa/);
+  assert.match(plain, /Start a long-horizon goal\.\.\./);
   assert.match(plain, /\/ commands/);
   assert.match(plain, /\$ skills/);
   assert.match(plain, /deepseek-v4-pro-tokenhub · 1M/);
@@ -298,7 +299,7 @@ test("welcome composer centers Inferoa wordmark and keeps slash and skill afford
     buffer: "/",
     cursor: 1,
     items: [
-      { label: "/goal", description: "Start goal mode", kind: "command" },
+      { label: "/goal", description: "Run /goal to start a long-horizon recursive goal", kind: "command" },
       { label: "frontend-design", description: "enabled · UI skill", kind: "skill" },
     ],
     selected: 0,
@@ -328,7 +329,7 @@ test("welcome composer can surface compact context engine status", () => {
   });
   const lines = rendered.lines.map((line) => stripAnsi(line));
   const plain = lines.join("\n");
-  const inputLine = lines.find((line) => line.includes("Ask Inferoa"));
+  const inputLine = lines.find((line) => line.includes("Start a long-horizon goal..."));
   const statusLine = lines.find((line) => line.includes("/ commands") && line.includes("index parsing"));
   assert.ok(inputLine);
   assert.ok(statusLine);
@@ -358,7 +359,7 @@ test("welcome composer keeps code intelligence status inside input box edge", ()
     codeIntelligence: "index parsing 531/4942 with very long status text",
   });
   const lines = rendered.lines.map((line) => stripAnsi(line));
-  const inputLine = lines.find((line) => line.includes("Ask Inferoa"));
+  const inputLine = lines.find((line) => line.includes("Start a long-horizon goal..."));
   const statusLine = lines.find((line) => line.includes("/ commands"));
   assert.ok(inputLine);
   assert.ok(statusLine);

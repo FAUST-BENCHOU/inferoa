@@ -4,8 +4,15 @@ title: Inferoa
 sidebar_label: Overview
 ---
 
-Inferoa is an **Inference-native Tokenmaxxing Agent Harness** for long-horizon
-coding and research work in the vLLM ecosystem.
+Inferoa is an **Inference-native Tokenmaxxing Agent Harness for Loop
+Engineering**. It is built for recursive long-horizon goals in coding and
+research work across the vLLM ecosystem.
+
+That is what **inference-native** means here: Inferoa starts from the inference
+stack and co-designs loop engineering around **tokenmaxxing**: prefix-cache
+discipline, context optimization, intelligent routing through vLLM Semantic
+Router, high-throughput vLLM serving, vLLM Omni multimodal capability, and
+RTK/CodeGraph-backed context selection.
 
 Most agents treat inference as a black-box chat API. Inferoa starts from the
 opposite direction: the agent loop is designed around the optimization surfaces
@@ -32,8 +39,10 @@ flowchart LR
   Harness --> Evidence
 ```
 
-- **Long-horizon modes** keep goals, plans, autoresearch state, completion
-  reflection, and evidence attached to a durable session.
+- **Goal-driven loop engineering** keeps recursive long-horizon goals,
+  horizons, completion reflection, and evidence attached to a durable session.
+- **Plan and autoresearch modes** support approved scope and repeated
+  measurement inside the same long-running loop.
 - **Prefix-cache discipline** keeps the stable parts of the prompt stable, so
   reusable prefixes are not invalidated by avoidable churn.
 - **Context optimization** selects the evidence needed for the next turn using

@@ -3,7 +3,10 @@ title: Goal Mode
 sidebar_label: Goal mode
 ---
 
-Goal mode keeps a durable objective active until the work is genuinely handled.
+Goal mode is Inferoa's loop-engineering surface for recursive long-horizon
+work. Run `/goal` to define the outcome once; Inferoa keeps inspecting,
+changing, testing, reflecting, and continuing until the work is proven.
+
 Use it when a task may span multiple turns, context compaction, tool failures,
 verification passes, or a later resumed session.
 
@@ -22,6 +25,7 @@ needs approval before edits begin, start with [Plan mode](./plan-mode.md).
 ## Basic Commands
 
 ```text
+/goal Improve the docs site and verify the Docusaurus build.
 /goal set Improve the docs site and verify the Docusaurus build.
 /goal explicit Improve the docs site and verify the Docusaurus build.
 /goal show
@@ -32,6 +36,15 @@ needs approval before edits begin, start with [Plan mode](./plan-mode.md).
 /goal resume
 /goal drop
 ```
+
+## Auto And Explicit Strategy
+
+Bare `/goal` starts in auto mode. Inferoa first runs Horizon 0 orientation, then
+infers whether the goal should be surgical, opportunistic, or campaign-shaped.
+
+Use `/goal explicit` when you want to choose the strategy before the objective
+starts. Explicit mode is useful when you already know the goal should stay
+narrow, explore nearby high-value work, or run as a longer campaign.
 
 ## How It Works
 
@@ -86,7 +99,9 @@ reflection says `done` while high-value candidates remain open, Inferoa expands
 the next horizon instead of silently finishing.
 
 Goal completion is gated by reflection. A visible `/goal complete` cannot bypass
-unfinished internal steps or the latest reflection requirement.
+unfinished internal steps or the latest reflection requirement. A goal is not
+done because the checklist is empty; it is done after reflection records
+evidence-backed completion.
 
 ## Relationship To Other Modes
 
