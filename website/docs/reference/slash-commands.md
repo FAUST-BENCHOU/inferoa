@@ -39,7 +39,7 @@ subcommands.
 /goal mode focus             Start a focused goal
 /goal mode explore           Start an exploratory goal
 /goal mode timebox 2h        Start a timeboxed goal
-/goal mode research          Start a metric-driven research goal
+/goal mode research          Start an auto research goal
 /goal pause                  Pause the current goal
 /goal resume                 Resume a paused goal
 /goal complete               Mark the goal complete

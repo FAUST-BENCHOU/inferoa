@@ -58,7 +58,7 @@ export const SLASH_SUBCOMMANDS: SlashSubcommandSpec[] = [
   { command: "skills", name: "manage", value: "/skills manage", description: "Enable or disable skills" },
   { command: "goal", name: "show", value: "/goal show", description: "Show active goal state" },
   { command: "goal", name: "mode auto", value: "/goal mode auto", description: "Start a default auto goal" },
-  { command: "goal", name: "mode research", value: "/goal mode research", description: "Start a metric-driven research goal" },
+  { command: "goal", name: "mode research", value: "/goal mode research", description: "Start an auto research goal" },
   { command: "goal", name: "mode focus", value: "/goal mode focus", description: "Start a focused goal" },
   { command: "goal", name: "mode explore", value: "/goal mode explore", description: "Start an exploratory goal" },
   { command: "goal", name: "mode timebox", value: "/goal mode timebox", description: "Start a timeboxed goal" },

@@ -17,6 +17,7 @@ import {
   resolveComposerSubmission,
 } from "../src/tui/composer.js";
 import { stripAnsi, visibleWidth } from "../src/tui/ansi.js";
+import { slashSubcommands } from "../src/tui/slash.js";
 
 test("composer edits at the real cursor instead of appending", () => {
   let state = insertComposerText("ab", 1, "你");
@@ -227,6 +228,27 @@ test("composer suggestions page around the selected command", () => {
   assert.ok(plain.some((line) => line.includes("/doctor")));
   assert.ok(!plain.some((line) => line.includes("/item-01")));
   assert.ok(plain.some((line) => line.includes("2/2") && line.includes("←/→ page")));
+});
+
+test("composer shows full goal research subcommand label", () => {
+  const items = slashSubcommands("goal").map((item) => ({
+    label: item.value,
+    description: item.description,
+    kind: "command" as const,
+    value: item.value,
+  }));
+  const selected = items.findIndex((item) => item.value === "/goal mode research");
+  const rendered = renderComposerSurface({
+    buffer: "/goal",
+    cursor: 5,
+    items,
+    selected,
+    width: 90,
+  });
+  const plain = rendered.lines.map((line) => stripAnsi(line)).join("\n");
+
+  assert.match(plain, /\/goal mode research\s+Start an auto research goal/);
+  assert.doesNotMatch(plain, /\/goal mode resear…/);
 });
 
 test("composer keeps unknown slash commands in the input instead of submitting", () => {

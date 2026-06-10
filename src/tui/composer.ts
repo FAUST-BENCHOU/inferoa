@@ -344,7 +344,8 @@ export function renderComposerSurface(options: ComposerRenderOptions): ComposerR
   }
   if (options.items.length) {
     const page = composerSuggestionWindow(options.items, options.selected, COMPOSER_SUGGESTION_PAGE_SIZE);
-    lines.push(...page.items.map((item, offset) => renderComposerSuggestion(item, page.startIndex + offset === options.selected, width)));
+    const labelWidth = composerSuggestionLabelWidth(page.items, width);
+    lines.push(...page.items.map((item, offset) => renderComposerSuggestion(item, page.startIndex + offset === options.selected, width, labelWidth)));
     const hint = composerSuggestionHint(options.items[0]?.kind, page);
     lines.push(renderComposerHintLine(hint, width));
   }
@@ -431,7 +432,8 @@ export function renderWelcomeComposerSurface(options: WelcomeComposerRenderOptio
   let codeIntelligenceWidth: number | undefined;
   if (options.items.length) {
     const page = composerSuggestionWindow(options.items, options.selected, WELCOME_COMPOSER_SUGGESTION_PAGE_SIZE);
-    lines.push(...page.items.map((item, offset) => `${" ".repeat(left + 1)}${renderComposerSuggestion(item, page.startIndex + offset === options.selected, boxWidth - 1)}`));
+    const labelWidth = composerSuggestionLabelWidth(page.items, boxWidth - 1);
+    lines.push(...page.items.map((item, offset) => `${" ".repeat(left + 1)}${renderComposerSuggestion(item, page.startIndex + offset === options.selected, boxWidth - 1, labelWidth)}`));
     lines.push(`${" ".repeat(left + 1)}${renderComposerHintLine(welcomeComposerSuggestionHint(options.items[0]?.kind, page, boxWidth - 1), boxWidth - 1, "")}`);
   } else if (options.notice) {
     lines.push(`${" ".repeat(left + 1)}${renderComposerNoticeLine(options.notice, boxWidth - 1)}`);
@@ -597,9 +599,15 @@ function centerLine(text: string, width: number): string {
   return center(text, width);
 }
 
-function renderComposerSuggestion(item: ComposerSuggestion, active: boolean, width: number): string {
+function composerSuggestionLabelWidth(items: readonly ComposerSuggestion[], width: number): number {
+  const baseWidth = items.some((item) => item.kind === "skill") ? 28 : 18;
+  const longestLabel = items.reduce((longest, item) => Math.max(longest, visibleWidth(item.label)), 0);
+  const maxLabelWidth = Math.max(8, width - 14);
+  return Math.min(Math.max(baseWidth, longestLabel), maxLabelWidth);
+}
+
+function renderComposerSuggestion(item: ComposerSuggestion, active: boolean, width: number, labelWidth: number): string {
   const marker = active ? fg256(75, "›") : " ";
-  const labelWidth = item.kind === "command" ? 18 : 28;
   const label = padRight(truncateToWidth(item.label, labelWidth), labelWidth);
   const descriptionWidth = Math.max(8, width - labelWidth - 6);
   const text = `${marker} ${active ? fg256(87, label) : fg256(250, label)} ${fg256(244, truncateToWidth(item.description, descriptionWidth))}`;
