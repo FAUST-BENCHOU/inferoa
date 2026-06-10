@@ -104,7 +104,7 @@ const checks: Record<Milestone, () => Promise<Check[]>> = {
     await containsCheck("src/daemon/supervisor.ts", "attachDaemonJob", "daemon attach"),
     await containsCheck("src/daemon/supervisor.ts", "detachDaemonJob", "daemon detach"),
     await containsCheck("src/daemon/supervisor.ts", "cancelDaemonJob", "daemon cancel"),
-    await containsCheck("src/tui/app.ts", "renderJobsView", "TUI daemon jobs view"),
+    await containsCheck("src/tui/app.ts", "renderDaemonView", "TUI daemon view"),
     await containsCheck("src/validation/acceptance.ts", "validateDaemonAcceptance", "final task daemon validation"),
   ],
   T10: async () => [
@@ -113,7 +113,7 @@ const checks: Record<Milestone, () => Promise<Check[]>> = {
     await containsCheck("src/validation/acceptance.ts", "file_search", "acceptance checks file search"),
     await containsCheck("src/validation/acceptance.ts", "continuedAfterCompression", "acceptance checks post-compression work"),
     await containsCheck("src/validation/acceptance.ts", "direct_cached_token_evidence", "acceptance records cached-token evidence"),
-    await containsCheck("src/tui/app.ts", "runFinalAcceptance", "TUI acceptance run entrypoint"),
+    await containsCheck("src/tui/app.ts", "renderDoctorView", "TUI doctor health check"),
     { name: "Omni tools present", pass: requiredTools(["vision_understanding", "image_generation", "video_generation"]) },
     { name: "Core tool surface is broad enough", pass: CORE_TOOL_DEFINITIONS.length >= 30, detail: `${CORE_TOOL_DEFINITIONS.length} tools` },
     { name: "Code-intelligence registry covers day-0 languages", pass: LSP_REGISTRY.length >= 15, detail: `${LSP_REGISTRY.length} languages` },

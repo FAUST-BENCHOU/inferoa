@@ -55,7 +55,7 @@ Validation:
 - add branded Inferoa welcome screen with workspace, endpoint, model,
   session, git, context, and daemon status;
 - add slash command palette for setup, status, sessions, tools, endpoints,
-  daemon, and acceptance views;
+  daemon, and doctor views;
 - add responsive terminal layout that works in narrow and wide panes;
 - keep rendering deterministic and testable through snapshot or ANSI output
   checks.

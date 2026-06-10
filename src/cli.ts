@@ -142,8 +142,8 @@ Options:
   --no-animation                     Disable TUI intro animation
 
 TUI commands:
-  /setup /model /system /skills /tokenmaxxing /context /tools /sessions /jobs
-  /todo /acceptance /help /clear /exit
+  /setup /model /system /skills /tokenmaxxing /context /tools /sessions
+  /daemon /doctor /help /clear /exit
   $                                  Open skill catalog
 
 Debug commands:

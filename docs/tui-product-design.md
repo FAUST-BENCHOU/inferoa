@@ -246,9 +246,8 @@ Initial command set:
 - `/context`: show context and compression breakdown;
 - `/tools`: show active fixed tool schemas and tool renderer status;
 - `/sessions`: open session picker;
-- `/jobs`: open daemon/supervisor jobs;
-- `/todo`: open task ledger;
-- `/acceptance`: open final acceptance workflow;
+- `/daemon`: manage background daemon runs;
+- `/doctor`: check endpoint, tool, and optional Omni health;
 - `/help`: show keyboard shortcuts and command list;
 - `/exit`: exit the TUI.
 
@@ -257,7 +256,16 @@ the active registry rather than retained for compatibility.
 
 ## Acceptance UX
 
-Final acceptance should be visible as a TUI workflow:
+Release acceptance is a strict development workflow, separate from the user
+health check. The user-facing `/doctor` view should show:
+
+- coding endpoint configuration and probe result;
+- optional Omni capabilities without requiring every endpoint;
+- daemon availability;
+- tool and context readiness hints.
+
+Release acceptance may call automation underneath and should remain inspectable
+for project maintainers:
 
 - preflight endpoint checklist;
 - AMD deployment checklist;

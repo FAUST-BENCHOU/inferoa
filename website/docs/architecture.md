@@ -74,5 +74,4 @@ agent can surface and eventually act on.
 vLLM Omni extends the self-hosted serving path with image, video, and audio
 understanding or generation. Multimodal outputs are tracked as session
 artifacts instead of disconnected side calls. See [vLLM Omni](./configuration/omni.md)
-for the configured endpoints and [Acceptance](./operations/acceptance.md) for
-the real-endpoint validation workflow.
+for configured endpoints and `/doctor` for user-facing endpoint health.

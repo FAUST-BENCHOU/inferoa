@@ -75,4 +75,5 @@ npm run validate:omni-real
 npm run validate:omni-e2e-runtime
 ```
 
-See [Acceptance](../operations/acceptance.md) for the release-quality workflow.
+Use `/doctor run` for user-facing endpoint health. Strict release acceptance is
+available through the debug runner when validating a release environment.

@@ -67,7 +67,7 @@ behavior with inference behavior.
   [Plan mode](./workflows/plan-mode.md),
   [Autoresearch mode](./workflows/autoresearch-mode.md),
   [Coding workflow](./workflows/coding-workflow.md), and
-  [Daemon and jobs](./workflows/daemon-jobs.md) for long-horizon workflows.
+  [Daemon runs](./workflows/daemon-jobs.md) for long-horizon workflows.
 - [Acceptance](./operations/acceptance.md) and
   [Evidence and sessions](./operations/evidence-and-sessions.md) for release
   validation.

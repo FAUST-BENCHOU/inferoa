@@ -208,6 +208,26 @@ test("composer gives activity and queued prompts balanced space above input", ()
   assert.match(plain.join("\n"), /queued two/);
 });
 
+test("composer suggestions page around the selected command", () => {
+  const items = Array.from({ length: 10 }, (_, index) => ({
+    label: index === 8 ? "/doctor" : `/item-${String(index + 1).padStart(2, "0")}`,
+    description: index === 8 ? "Check endpoint health" : `Command ${index + 1}`,
+    kind: "command" as const,
+  }));
+  const rendered = renderComposerSurface({
+    buffer: "/",
+    cursor: 1,
+    items,
+    selected: 8,
+    width: 100,
+  });
+  const plain = rendered.lines.map((line) => stripAnsi(line));
+
+  assert.ok(plain.some((line) => line.includes("/doctor")));
+  assert.ok(!plain.some((line) => line.includes("/item-01")));
+  assert.ok(plain.some((line) => line.includes("2/2") && line.includes("←/→ page")));
+});
+
 function visiblePlainWidth(text: string): number {
   return [...text].reduce((width, char) => width + (char.codePointAt(0)! > 0xff ? 2 : 1), 0);
 }
@@ -356,4 +376,29 @@ test("welcome composer keeps multiline cursor math stable for resize redraws", (
   assert.ok(wide.cursorColumn > narrow.cursorColumn);
   assert.match(stripAnsi(narrow.lines.join("\n")), /second line/);
   assert.match(stripAnsi(wide.lines.join("\n")), /second line/);
+});
+
+test("welcome composer suggestions page around the selected command", () => {
+  const items = Array.from({ length: 7 }, (_, index) => ({
+    label: index === 5 ? "/doctor" : `/item-${String(index + 1).padStart(2, "0")}`,
+    description: index === 5 ? "Check endpoint health" : `Command ${index + 1}`,
+    kind: "command" as const,
+  }));
+  const rendered = renderWelcomeComposerSurface({
+    buffer: "/",
+    cursor: 1,
+    items,
+    selected: 5,
+    width: 120,
+    height: 40,
+    workspaceRoot: "/tmp/workspace",
+    mode: "direct",
+    model: "demo",
+    contextWindow: 128_000,
+  });
+  const plain = rendered.lines.map((line) => stripAnsi(line));
+
+  assert.ok(plain.some((line) => line.includes("/doctor")));
+  assert.ok(!plain.some((line) => line.includes("/item-01")));
+  assert.ok(plain.some((line) => line.includes("2/2") && line.includes("←/→ page")));
 });

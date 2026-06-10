@@ -35,8 +35,7 @@ inferoa "Inspect this package and add a missing docs build check."
   until a durable objective is done.
 - Use [`/autoresearch`](../workflows/autoresearch-mode.md) when the task is
   experiment-shaped and needs repeated measurement.
-- Use [`/acceptance`](../operations/acceptance.md) when validating a
-  release-quality endpoint setup.
+- Use `/doctor status` when checking the local endpoint setup before a session.
 
 ## Inspect Evidence
 

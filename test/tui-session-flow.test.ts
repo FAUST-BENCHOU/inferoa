@@ -113,6 +113,46 @@ test("access command saves a workspace-specific permission override", async () =
   }
 });
 
+test("doctor view treats Omni as optional and omits release-only AMD checks", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-doctor-view-"));
+  const store = await SessionStore.open(stateDir);
+  try {
+    const config = structuredClone(DEFAULT_CONFIG);
+    const workspace = { id: "w_doctor_view", root: stateDir, alias: "doctor-view" };
+    const tui = new TuiApp(
+      {
+        config,
+        configFiles: [],
+        workspace,
+        store,
+        runtime: {},
+      } as never,
+    );
+    const view = tui as unknown as {
+      renderDoctorView: (args: string) => Promise<void>;
+      renderPanel: (title: string, body: string[]) => void;
+    };
+    const panels: Array<{ title: string; body: string[] }> = [];
+    view.renderPanel = (title, body) => {
+      panels.push({ title, body });
+    };
+
+    await view.renderDoctorView("status");
+
+    const latest = panels.at(-1);
+    assert.equal(latest?.title, "Doctor");
+    const plain = stripAnsi(latest?.body.join("\n") ?? "");
+    assert.match(plain, /coding endpoint/);
+    assert.match(plain, /Omni Vision understanding .* optional/);
+    assert.doesNotMatch(plain, /AMD direct vLLM deployment check/);
+    assert.doesNotMatch(plain, /AMD vLLM-Omni deployment check/);
+    assert.doesNotMatch(plain, /Final Acceptance/);
+  } finally {
+    store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("goal continuation queues a hidden foreground prompt instead of a daemon job panel", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-foreground-"));
   const store = await SessionStore.open(stateDir);

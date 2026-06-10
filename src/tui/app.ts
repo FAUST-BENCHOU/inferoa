@@ -22,7 +22,6 @@ import { ToolRegistry } from "../tools/registry.js";
 import { SkillRegistry, type SkillDescriptor } from "../skills/registry.js";
 import { attachDaemonJob, cancelDaemonJob, daemonStatus, detachDaemonJob, queueDaemonRun, startDaemon } from "../daemon/supervisor.js";
 import type { RuntimeRunOptions, RuntimeRunResult, RuntimeStatusEvent } from "../runtime.js";
-import { runFinalAcceptance } from "../validation/acceptance.js";
 import {
   attachGoalPlanSnapshot,
   cloneGoalState,
@@ -66,7 +65,7 @@ import { ansi, bgLine, bg256, center, centerBlock, fg256, frame, padRight, termi
 import { parseSlashCommand, slashCommandWithSubcommands, slashSubcommands, SLASH_COMMANDS, type SlashCommandName } from "./slash.js";
 import { inferoaActivityLabel, renderActivityLine, renderActivityRecordLine } from "./activity.js";
 import { cacheTurnKind, formatDuration, renderCacheFooter, renderCacheReportTurn } from "./cache-footer.js";
-import { renderCompactEventLine, renderSessionActivityLines, renderTodoEventLines } from "./event-view.js";
+import { renderCompactEventLine, renderSessionActivityLines } from "./event-view.js";
 import { renderModeMetadataRight } from "./mode-footer.js";
 import { renderPlanDocumentSurface } from "./plan-view.js";
 import { renderRtkSessionLines } from "./rtk-view.js";
@@ -94,9 +93,12 @@ import {
   moveComposerCursorHome,
   moveComposerCursorLeft,
   moveComposerCursorRight,
+  moveComposerSuggestionPage,
   type ComposerPanel,
   type ComposerCompactRange,
   compactModelLabel,
+  COMPOSER_SUGGESTION_PAGE_SIZE,
+  WELCOME_COMPOSER_SUGGESTION_PAGE_SIZE,
   normalizeComposerPastedInput,
   renderComposerActivityLine,
   renderComposerSurface,
@@ -123,7 +125,8 @@ type ProviderChoice = "direct" | "auto" | "external";
 type WebSearchProviderChoice = VllmAgentConfig["web_search"]["provider"];
 type SkillAction = "list" | "manage";
 type SessionAction = "resume" | "new" | "rename" | "archive" | "all";
-type JobAction = "status" | "queue" | "attach" | "detach" | "cancel";
+type DaemonAction = "status" | "queue" | "attach" | "detach" | "cancel";
+type DoctorAction = "status" | "run";
 type ToolTraceMode = "compact" | "expanded";
 
 interface EndpointProbeResult {
@@ -135,6 +138,14 @@ interface SelectOption<T extends string> {
   value: T;
   label: string;
   description?: string;
+}
+
+interface SelectOptionWindow<T> {
+  items: readonly T[];
+  startIndex: number;
+  pageIndex: number;
+  totalPages: number;
+  totalItems: number;
 }
 
 export interface TuiLaunchOptions {
@@ -201,6 +212,7 @@ const BRACKETED_PASTE_START = "\x1b[200~";
 const BRACKETED_PASTE_END = "\x1b[201~";
 const PASTE_TOKEN_PREFIX = "\u{e000}paste:";
 const SETUP_TOTAL_STEPS = 7;
+const SELECT_OPTION_PAGE_SIZE = 12;
 
 export const TUI_OMNI_SETUP_CAPABILITIES: Array<{
   name: OmniEndpointName;
@@ -783,6 +795,17 @@ export class TuiApp {
         render();
         return true;
       };
+      const pageSuggestions = (delta: number): boolean => {
+        const items = composerItems();
+        const pageSize = this.shouldRenderWelcomeComposer() ? WELCOME_COMPOSER_SUGGESTION_PAGE_SIZE : COMPOSER_SUGGESTION_PAGE_SIZE;
+        if (items.length <= pageSize || (!buffer.startsWith("/") && !buffer.startsWith("$"))) {
+          return false;
+        }
+        selected = moveComposerSuggestionPage(selected, items.length, pageSize, delta);
+        selectionTouched = true;
+        render();
+        return true;
+      };
       const submit = () => {
         const items = composerItems();
         const item = items[selected];
@@ -854,11 +877,15 @@ export class TuiApp {
               navigateHistory("next");
             }
           } else if (key === "\u001b[C") {
-            cursor = moveComposerCursorRight(buffer, cursor);
-            render();
+            if (!pageSuggestions(1)) {
+              cursor = moveComposerCursorRight(buffer, cursor);
+              render();
+            }
           } else if (key === "\u001b[D") {
-            cursor = moveComposerCursorLeft(buffer, cursor);
-            render();
+            if (!pageSuggestions(-1)) {
+              cursor = moveComposerCursorLeft(buffer, cursor);
+              render();
+            }
           } else if (key === "\u001b[H" || key === "\u001b[1~") {
             cursor = moveComposerCursorHome(buffer, cursor);
             render();
@@ -936,7 +963,6 @@ export class TuiApp {
         return slashSubcommands(commandName)
           .filter((item) => !query || `${item.value} ${item.description}`.toLowerCase().includes(query))
           .sort((a, b) => commandScore(a.name, a.description, query) - commandScore(b.name, b.description, query))
-          .slice(0, 8)
           .map((item) => ({
             value: item.value,
             label: item.value,
@@ -947,7 +973,6 @@ export class TuiApp {
       const query = buffer.slice(1).trim().toLowerCase();
       return SLASH_COMMANDS.filter((command) => !query || `${command.name} ${command.description}`.toLowerCase().includes(query))
         .sort((a, b) => commandScore(a.name, a.description, query) - commandScore(b.name, b.description, query))
-        .slice(0, 8)
         .map((command) => ({
           value: `/${command.name}`,
           label: `/${command.name}`,
@@ -968,7 +993,6 @@ export class TuiApp {
           }
           return a.name.localeCompare(b.name);
         })
-        .slice(0, 8)
         .map((skill) => ({
           value: `$ ${skill.id}`,
           label: skill.name,
@@ -1182,14 +1206,11 @@ export class TuiApp {
         case "sessions":
           await this.renderSessionsView(args);
           return;
-        case "jobs":
-          await this.renderJobsView(args);
+        case "daemon":
+          await this.renderDaemonView(args);
           return;
-        case "todo":
-          this.renderFormattedEventView("Todo", (event) => event.type === "todo.updated", renderTodoEventLines);
-          return;
-        case "acceptance":
-          await this.renderAcceptanceView(args);
+        case "doctor":
+          await this.renderDoctorView(args);
           return;
         case "help":
           this.renderHelp();
@@ -2049,11 +2070,17 @@ export class TuiApp {
     let selected = Math.max(0, Math.min(defaultIndex, options.length - 1));
     this.#rl?.pause();
     const render = () => {
-      const lines = options.map((option, index) => {
+      const page = selectOptionWindow(options, selected, SELECT_OPTION_PAGE_SIZE);
+      const lines = page.items.map((option, offset) => {
+        const index = page.startIndex + offset;
         const active = index === selected;
         return renderSetupOptionLine(option.label, option.description, active);
       });
-      this.renderCenteredPanel(title, [...lines, "", setupHint("↑/↓ move · space/enter select · esc cancel"), ...footer], true);
+      const hint =
+        page.totalPages > 1
+          ? `${page.pageIndex + 1}/${page.totalPages} · ${page.totalItems} options · ←/→ page · ↑/↓ move · space/enter select · esc cancel`
+          : "↑/↓ move · space/enter select · esc cancel";
+      this.renderCenteredPanel(title, [...lines, "", setupHint(hint), ...footer], true);
     };
     render();
     return await new Promise((resolve, reject) => {
@@ -2092,6 +2119,16 @@ export class TuiApp {
         }
         if (key.includes("\u001b[B") || key === "j") {
           selected = (selected + 1) % options.length;
+          render();
+          return;
+        }
+        if (key.includes("\u001b[D") || key === "p") {
+          selected = moveSelectOptionPage(selected, options.length, SELECT_OPTION_PAGE_SIZE, -1);
+          render();
+          return;
+        }
+        if (key.includes("\u001b[C") || key === "n") {
+          selected = moveSelectOptionPage(selected, options.length, SELECT_OPTION_PAGE_SIZE, 1);
           render();
           return;
         }
@@ -3690,24 +3727,24 @@ export class TuiApp {
     );
   }
 
-  private async renderJobsView(args = ""): Promise<void> {
-    const requested = args.trim().toLowerCase() as JobAction | "";
+  private async renderDaemonView(args = ""): Promise<void> {
+    const requested = args.trim().toLowerCase() as DaemonAction | "";
     const action = requested
       ? requested
-      : await this.selectOption<JobAction>(
-      "Jobs",
+      : await this.selectOption<DaemonAction>(
+      "Daemon",
       [
-        { value: "status", label: "Status", description: "Show daemon and job state." },
+        { value: "status", label: "Status", description: "Show daemon and background run state." },
         { value: "queue", label: "Queue run", description: "Start a supervised background task." },
         { value: "attach", label: "Attach", description: "Inspect a job and recent session events." },
         { value: "detach", label: "Detach", description: "Leave a queued or running job supervised." },
         { value: "cancel", label: "Cancel", description: "Request cancellation for an active job." },
       ],
       0,
-      [fg256(244, "Jobs use the same durable session event log as chat.")],
+      [fg256(244, "Daemon runs use the same durable session event log as chat.")],
     );
     if (!["status", "queue", "attach", "detach", "cancel"].includes(action)) {
-      this.renderNotice(`Unknown jobs action ${args}.`);
+      this.renderNotice(`Unknown daemon action ${args}. Use /daemon status, queue, attach, detach, or cancel.`);
       return;
     }
     switch (action) {
@@ -3731,7 +3768,7 @@ export class TuiApp {
 
   private async renderDaemonStatusPanel(): Promise<void> {
     const status = await daemonStatus(this.options.stateDir);
-    this.renderPanel("Jobs", [
+    this.renderPanel("Daemon", [
       `${fg256(39, "Daemon")} ${status.alive ? `alive pid ${status.pid}` : "not running"}`,
       "",
       ...(status.jobs.length ? status.jobs.map((job) => `  ${this.jobLabel(job)}`) : ["  no jobs"]),
@@ -3824,87 +3861,63 @@ export class TuiApp {
     return `${job.status.padEnd(16)} ${kind.padEnd(4)} ${job.job_id.slice(0, 12)} · ${sessionLabel} · ${truncateToWidth(oneLine(job.prompt), Math.max(24, terminalWidth() - 60))}`;
   }
 
-  private renderFormattedEventView(title: string, filter: (event: SessionEvent) => boolean, render: (events: SessionEvent[]) => string[]): void {
-    const session = this.optionalSession();
-    if (!session) {
-      this.renderPanel(title, ["No active session yet."]);
+  private async renderDoctorView(args = ""): Promise<void> {
+    const action = (args.trim().toLowerCase() || "status") as DoctorAction;
+    if (action !== "status" && action !== "run") {
+      this.renderNotice(`Unknown doctor action ${args}. Use /doctor status or /doctor run.`);
       return;
     }
-    this.renderPanel(title, render(this.app.store.listEvents(session.session_id).filter(filter)));
-  }
-
-  private async renderAcceptanceView(args = ""): Promise<void> {
-    const action = args.trim().toLowerCase();
     if (action === "run") {
-      await this.runAcceptanceFromTui();
-      return;
+      this.renderPanel("Doctor", [
+        `${fg256(75, "•")} checking configured endpoint and optional Omni routes`,
+        fg256(243, "This does not run release acceptance and does not require Omni endpoints."),
+      ]);
     }
-    if (action && action !== "status") {
-      this.renderNotice(`Unknown acceptance action ${args}. Use /acceptance status or /acceptance run.`);
-      return;
-    }
-    const directConfigured = Boolean(this.app.config.model_setup.base_url && this.app.config.model_setup.model);
-    let matrix = staticOmniCapabilityMatrix(this.app.config);
-    try {
-      matrix = (await new EndpointSignals(this.app.config).snapshot()).omni_capabilities ?? matrix;
-    } catch {
-      // Static config state is still useful when the endpoint is unreachable.
-    }
-    const lines = [
-      `${checkbox(directConfigured)} coding endpoint configured`,
-      ...matrix.map((capability) => {
-        const suffix = capability.required_for_acceptance ? fg256(244, "required") : fg256(244, "optional");
-        return `${checkbox(capability.runtime_passed === true)} Omni ${capability.label} · ${omniCapabilitySummary(capability)} · ${suffix}`;
-      }),
-      `${checkbox(false)} AMD direct vLLM deployment check`,
-      `${checkbox(false)} AMD vLLM-Omni deployment check`,
-      `${checkbox(false)} TUI-driven coding task with tools`,
-      `${checkbox(false)} context compression and continuation`,
-      `${checkbox(false)} daemon attach/detach/status/cancel on final task`,
-      "",
-      `${fg256(39, "/acceptance run")} runs the real endpoint workflow from inside the TUI.`,
-      fg256(243, "It fails fast until direct vLLM and all Omni endpoints are configured."),
-    ];
-    this.renderPanel("Final Acceptance", lines);
-  }
 
-  private async runAcceptanceFromTui(): Promise<void> {
-    this.renderPanel("Final Acceptance", [
-      `${fg256(75, "•")} starting real endpoint workflow`,
-      fg256(243, "Using configured chat, Omni, session, context, tool, activity, and daemon paths."),
-    ]);
+    const setup = this.app.config.model_setup;
+    const endpointConfigured = Boolean(setup.base_url && setup.model);
+    let snapshot: EndpointSignalSnapshot | undefined;
+    let matrix = staticOmniCapabilityMatrix(this.app.config);
+    const errors: string[] = [];
     try {
-      const result = await runFinalAcceptance({
-        workspaceRoot: this.app.workspace.root,
-        stateDir: this.options.stateDir,
-        daemon: true,
-      });
-      if (result.session_id) {
-        this.#sessionId = result.session_id;
-      }
-      const evidence = result.evidence as JsonObject;
-      const toolCalls = Array.isArray(evidence.tool_calls) ? evidence.tool_calls : [];
-      const cachedEvidence = Array.isArray(evidence.direct_cached_token_evidence) ? evidence.direct_cached_token_evidence : [];
-      const report = stringField(evidence.report_path);
-      const lines = [
-        result.ok ? fg256(48, "✓ passed") : fg256(203, "× failed"),
-        ...(result.session_id ? [`${fg256(39, "session")} ${result.session_id}`] : []),
-        ...(report ? [`${fg256(39, "report")} ${report}`] : []),
-        `${fg256(39, "tools")} ${toolCalls.length}`,
-        `${fg256(39, "direct cache samples")} ${cachedEvidence.length}`,
-        "",
-        ...(result.failures.length
-          ? [
-              fg256(203, "Failures"),
-              ...result.failures.slice(0, 12).map((failure) => `  ${failure}`),
-              ...(result.failures.length > 12 ? [fg256(244, `  ... ${result.failures.length - 12} more`)] : []),
-            ]
-          : [fg256(48, "All acceptance checks passed.")]),
-      ];
-      this.renderPanel("Final Acceptance", lines);
+      snapshot = await new EndpointSignals(this.app.config).snapshot();
+      matrix = snapshot.omni_capabilities ?? matrix;
+      errors.push(...(snapshot.errors ?? []));
     } catch (error) {
-      this.renderPanel("Final Acceptance", [fg256(203, error instanceof Error ? error.message : String(error))]);
+      errors.push(error instanceof Error ? error.message : String(error));
     }
+    const daemon = await daemonStatus(this.options.stateDir);
+    const endpointOk = endpointConfigured && errors.length === 0;
+    const models = snapshot ? modelsFromSnapshot(snapshot) : [];
+    const modelText = setup.model ?? "no model";
+    const runtimeText = !endpointConfigured
+      ? "not configured"
+      : errors.length
+        ? "needs attention"
+        : models.length
+          ? `${models.length} model${models.length === 1 ? "" : "s"} visible`
+          : "reachable";
+    const lines = [
+      `${checkbox(endpointOk)} coding endpoint · ${endpointConfigured ? "configured" : "unconfigured"} · ${modelText}`,
+      `  ${fg256(244, "mode")} ${setup.mode} · ${fg256(244, "provider")} ${setup.provider_id ?? setup.provider ?? "vllm"} · ${fg256(244, "url")} ${setup.base_url ?? "none"}`,
+      `  ${fg256(244, "runtime")} ${runtimeText}`,
+      `${doctorMarker(daemon.alive)} daemon · ${daemon.alive ? `alive pid ${daemon.pid}` : "not running"} · jobs ${daemon.jobs.length}`,
+      "",
+      fg256(39, "Optional Omni"),
+      ...matrix.map((capability) => `${doctorMarker(capability.runtime_passed === true)} Omni ${capability.label} · ${omniCapabilitySummary(capability)} · optional`),
+      "",
+      `${fg256(39, "/doctor run")} probes configured endpoint metadata and optional Omni routes.`,
+      fg256(243, "Strict release acceptance is intentionally separate from the user health check."),
+      ...(errors.length
+        ? [
+            "",
+            fg256(203, "Attention"),
+            ...errors.slice(0, 8).map((error) => `  ${error}`),
+            ...(errors.length > 8 ? [fg256(244, `  ... ${errors.length - 8} more`)] : []),
+          ]
+        : []),
+    ];
+    this.renderPanel("Doctor", lines);
   }
 
   private renderHelp(): void {
@@ -3925,9 +3938,9 @@ export class TuiApp {
       `  /plan      show · set · pause · resume · approve · drop`,
       `  /autoresearch status · off · clear`,
       `  /tools     expand · compact · last`,
-      `  /jobs      status · queue · attach · detach · cancel`,
+      `  /daemon    status · queue · attach · detach · cancel`,
       `  /sessions  resume · new · all`,
-      `  /acceptance status · run`,
+      `  /doctor    status · run`,
     ]);
   }
 
@@ -4906,6 +4919,35 @@ function setupHint(text: string): string {
   return fg256(244, text);
 }
 
+export function selectOptionWindow<T>(options: readonly T[], selected: number, pageSize = SELECT_OPTION_PAGE_SIZE): SelectOptionWindow<T> {
+  const safePageSize = Math.max(1, Math.floor(pageSize));
+  const totalItems = options.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / safePageSize));
+  const clampedSelected = totalItems ? Math.max(0, Math.min(selected, totalItems - 1)) : 0;
+  const pageIndex = Math.max(0, Math.min(Math.floor(clampedSelected / safePageSize), totalPages - 1));
+  const startIndex = pageIndex * safePageSize;
+  return {
+    items: options.slice(startIndex, startIndex + safePageSize),
+    startIndex,
+    pageIndex,
+    totalPages,
+    totalItems,
+  };
+}
+
+export function moveSelectOptionPage(selected: number, totalItems: number, pageSize = SELECT_OPTION_PAGE_SIZE, delta: number): number {
+  if (totalItems <= 0) {
+    return 0;
+  }
+  const safePageSize = Math.max(1, Math.floor(pageSize));
+  const totalPages = Math.max(1, Math.ceil(totalItems / safePageSize));
+  const clampedSelected = Math.max(0, Math.min(selected, totalItems - 1));
+  const pageIndex = Math.floor(clampedSelected / safePageSize);
+  const itemOffset = clampedSelected % safePageSize;
+  const nextPageIndex = ((pageIndex + delta) % totalPages + totalPages) % totalPages;
+  return Math.min(totalItems - 1, nextPageIndex * safePageSize + itemOffset);
+}
+
 function renderSetupOptionLine(label: string, description: string | undefined, active: boolean): string {
   const marker = active ? fg256(75, "›") : fg256(238, " ");
   const name = active ? fg256(252, label) : fg256(248, label);
@@ -5289,6 +5331,10 @@ function formatAge(iso: string): string {
 
 function checkbox(ok: boolean): string {
   return ok ? `${fg256(48, "✓")} ` : `${fg256(203, "□")} `;
+}
+
+function doctorMarker(ok: boolean): string {
+  return ok ? `${fg256(48, "✓")} ` : `${fg256(244, "·")} `;
 }
 
 function permissionColor(permission: string): number {

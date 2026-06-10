@@ -7,28 +7,30 @@ Acceptance proves that Inferoa can complete a real task through the same
 runtime paths users rely on: model calls, tools, sessions, context compression,
 endpoint evidence, and multimodal resources.
 
-## TUI Workflow
+## Health Check
 
 ```text
-/acceptance status
-/acceptance run
+/doctor status
+/doctor run
 ```
 
-The acceptance view checks whether the required direct model endpoint and Omni
-endpoints are configured. It should fail fast when a required endpoint is
-missing.
+The doctor view checks the configured coding endpoint, daemon state, tools, and
+optional Omni routes. Missing Omni endpoints are reported as optional
+capabilities, not as failures.
 
-## Debug Runner
+## Release Runner
 
-The repository also includes a debug runner:
+Strict release acceptance is intentionally separate from the user health check.
+The repository includes a debug runner:
 
 ```bash
 npm run build
 node dist/src/cli.js debug acceptance --daemon
 ```
 
-The debug runner is useful for automation, but final product acceptance should
-be visible from the TUI.
+The debug runner is useful for automation and release-gate validation. It can
+require direct vLLM and Omni endpoints that are not expected in every user
+environment.
 
 ## Required Evidence
 

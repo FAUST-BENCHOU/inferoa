@@ -23,9 +23,8 @@ subcommands.
 | `/context` | Show context usage, compression state, and code intelligence |
 | `/tools` | Show fixed tool schemas and renderer status |
 | `/sessions` | Manage chat sessions |
-| `/jobs` | Open daemon and supervisor jobs |
-| `/todo` | Open the task ledger |
-| `/acceptance` | Open the final acceptance workflow |
+| `/daemon` | Manage background daemon runs |
+| `/doctor` | Check endpoint, tool, and optional Omni health |
 | `/help` | Show keyboard shortcuts and slash commands |
 | `/clear` | Start a fresh session |
 | `/resume` | Resume a previous session |
@@ -83,16 +82,16 @@ subcommands.
 /sessions resume             Attach to a previous session
 /sessions new                Start a fresh session
 
-# Jobs
-/jobs status                 Show daemon and job state
-/jobs queue                  Queue a supervised run
-/jobs attach                 Attach to a supervised run
-/jobs detach                 Detach a supervised run
-/jobs cancel                 Cancel a supervised run
+# Daemon
+/daemon status               Show daemon and background run state
+/daemon queue                Queue a supervised run
+/daemon attach               Attach to a supervised run
+/daemon detach               Detach a supervised run
+/daemon cancel               Cancel a supervised run
 
-# Acceptance
-/acceptance status           Show final acceptance readiness
-/acceptance run              Run the real endpoint acceptance workflow
+# Doctor
+/doctor status               Show configuration health
+/doctor run                  Probe configured endpoint and optional Omni routes
 ```
 
 ## Aliases

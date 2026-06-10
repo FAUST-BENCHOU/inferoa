@@ -106,21 +106,27 @@ test("unknown slash command notice is short and neutral", () => {
 
 test("slash registry exposes chat subcommands for completion", () => {
   assert.equal(slashCommandWithSubcommands("/tools"), "tools");
-  assert.equal(slashCommandWithSubcommands("/jobs"), "jobs");
-  assert.equal(slashCommandWithSubcommands("/acceptance"), "acceptance");
+  assert.equal(slashCommandWithSubcommands("/daemon"), "daemon");
+  assert.equal(slashCommandWithSubcommands("/doctor"), "doctor");
   assert.equal(slashCommandWithSubcommands("/goal"), "goal");
   assert.equal(slashCommandWithSubcommands("/plan"), "plan");
   assert.equal(slashCommandWithSubcommands("/autoresearch"), "autoresearch");
   assert.equal(slashCommandWithSubcommands("/sessions"), "sessions");
   assert.equal(slashCommandWithSubcommands("/clear"), undefined);
+  assert.equal(parseSlashCommand("/jobs").error, "Unrecognized command '/jobs'. Type '/' for commands.");
+  assert.equal(parseSlashCommand("/todo").error, "Unrecognized command '/todo'. Type '/' for commands.");
+  assert.equal(parseSlashCommand("/acceptance").error, "Unrecognized command '/acceptance'. Type '/' for commands.");
   assert.deepEqual(
     slashSubcommands("tools").map((item) => item.value),
     ["/tools", "/tools expand", "/tools compact", "/tools last"],
   );
-  assert.ok(slashSubcommands("jobs").some((item) => item.value === "/jobs cancel"));
   assert.deepEqual(
-    slashSubcommands("acceptance").map((item) => item.value),
-    ["/acceptance status", "/acceptance run"],
+    slashSubcommands("daemon").map((item) => item.value),
+    ["/daemon status", "/daemon queue", "/daemon attach", "/daemon detach", "/daemon cancel"],
+  );
+  assert.deepEqual(
+    slashSubcommands("doctor").map((item) => item.value),
+    ["/doctor status", "/doctor run"],
   );
   assert.deepEqual(
     slashSubcommands("goal").map((item) => item.value),

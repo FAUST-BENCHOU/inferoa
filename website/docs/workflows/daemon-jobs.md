@@ -1,6 +1,6 @@
 ---
-title: Daemon And Jobs
-sidebar_label: Daemon and jobs
+title: Daemon Runs
+sidebar_label: Daemon runs
 ---
 
 The daemon path runs supervised work outside the foreground TUI. It is useful
@@ -10,14 +10,14 @@ acceptance runs.
 
 ## TUI Commands
 
-Open the jobs view and manage supervised runs from the TUI:
+Open the daemon view and manage supervised runs from the TUI:
 
 ```text
-/jobs status                  Show daemon and job state
-/jobs queue                   Queue a supervised run
-/jobs attach                  Attach to a supervised run
-/jobs detach                  Detach a supervised run
-/jobs cancel                  Cancel a supervised run
+/daemon status                Show daemon and background run state
+/daemon queue                 Queue a supervised run
+/daemon attach                Attach to a supervised run
+/daemon detach                Detach a supervised run
+/daemon cancel                Cancel a supervised run
 ```
 
 The TUI shows queued, running, detached, cancelled, failed, and complete

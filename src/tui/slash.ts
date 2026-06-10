@@ -14,9 +14,8 @@ export type SlashCommandName =
   | "context"
   | "tools"
   | "sessions"
-  | "jobs"
-  | "todo"
-  | "acceptance"
+  | "daemon"
+  | "doctor"
   | "help"
   | "clear"
   | "resume"
@@ -48,9 +47,8 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: "context", description: "Show context usage and compression state" },
   { name: "tools", description: "Show fixed tool schemas and renderer status" },
   { name: "sessions", description: "Manage chat sessions" },
-  { name: "jobs", description: "Open daemon/supervisor jobs" },
-  { name: "todo", description: "Open task ledger" },
-  { name: "acceptance", description: "Open final acceptance workflow" },
+  { name: "daemon", description: "Manage background daemon runs" },
+  { name: "doctor", description: "Check endpoint, tool, and optional Omni health" },
   { name: "help", description: "Show keyboard shortcuts and slash commands" },
   { name: "clear", description: "Start a fresh session" },
   { name: "resume", description: "Resume a previous session" },
@@ -91,13 +89,13 @@ export const SLASH_SUBCOMMANDS: SlashSubcommandSpec[] = [
   { command: "sessions", name: "resume", value: "/sessions resume", description: "Attach to a previous session" },
   { command: "sessions", name: "new", value: "/sessions new", description: "Start a fresh session" },
   { command: "sessions", name: "all", value: "/sessions all", description: "Show active and archived sessions" },
-  { command: "jobs", name: "status", value: "/jobs status", description: "Show daemon and job state" },
-  { command: "jobs", name: "queue", value: "/jobs queue", description: "Queue a supervised run" },
-  { command: "jobs", name: "attach", value: "/jobs attach", description: "Attach to a supervised run" },
-  { command: "jobs", name: "detach", value: "/jobs detach", description: "Detach a supervised run" },
-  { command: "jobs", name: "cancel", value: "/jobs cancel", description: "Cancel a supervised run" },
-  { command: "acceptance", name: "status", value: "/acceptance status", description: "Show final acceptance readiness" },
-  { command: "acceptance", name: "run", value: "/acceptance run", description: "Run the real endpoint acceptance workflow" },
+  { command: "daemon", name: "status", value: "/daemon status", description: "Show daemon and background run state" },
+  { command: "daemon", name: "queue", value: "/daemon queue", description: "Queue a supervised run" },
+  { command: "daemon", name: "attach", value: "/daemon attach", description: "Attach to a supervised run" },
+  { command: "daemon", name: "detach", value: "/daemon detach", description: "Detach a supervised run" },
+  { command: "daemon", name: "cancel", value: "/daemon cancel", description: "Cancel a supervised run" },
+  { command: "doctor", name: "status", value: "/doctor status", description: "Show configuration health" },
+  { command: "doctor", name: "run", value: "/doctor run", description: "Probe configured endpoint and optional Omni routes" },
 ];
 
 const COMMANDS = new Map(SLASH_COMMANDS.map((command) => [command.name, command]));

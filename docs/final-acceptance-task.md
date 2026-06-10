@@ -152,11 +152,11 @@ compression, asks the model to complete a real repository edit using built-in
 tools, runs Omni multimodal tools through the agent tool loop, records endpoint
 evidence, and validates daemon attach/detach/status/cancel behavior.
 
-The final product acceptance must be driven from the TUI. The current CLI
-runner can remain as an automation scaffold, but it does not by itself satisfy
-final acceptance.
+The user-facing TUI exposes `/doctor` for endpoint health. Strict final
+acceptance is a release workflow and may remain behind debug or maintainer
+automation when it requires dedicated direct vLLM and Omni deployments.
 
-The TUI acceptance run must show per-turn cache evidence after each chat turn.
+The release acceptance run must show per-turn cache evidence after each chat turn.
 For direct vLLM this means cached prompt tokens, total prompt tokens, cache hit
 rate, output tokens, endpoint mode, model, and request id when the endpoint
 exposes those fields.
