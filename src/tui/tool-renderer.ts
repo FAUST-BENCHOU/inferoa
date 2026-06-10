@@ -584,7 +584,7 @@ function renderGoalTool(data: JsonObject, args: JsonObject = {}): string[] {
   }
   if (op === "update_ledger") {
     const ledger = objectField(goal.ledger);
-    lines.push(`${fg256(39, "ledger")} ${goalLedgerJsonSummary(ledger)}`);
+    lines.push(`${fg256(39, "candidates")} ${goalLedgerJsonSummary(ledger)}`);
     return lines;
   }
   const summary = stringField(goal.summary);
@@ -629,7 +629,7 @@ function goalOperationLabel(op: string, decision?: string): string {
     case "set_strategy":
       return "set strategy";
     case "update_ledger":
-      return "update ledger";
+      return "update candidates";
     case "reflect":
       return decision ? `reflect ${decision}` : "reflect";
     case "resume":
@@ -647,7 +647,7 @@ function goalLedgerJsonSummary(ledger: JsonObject): string {
   const open = Array.isArray(ledger.open) ? ledger.open.length : 0;
   const done = Array.isArray(ledger.done) ? ledger.done.length : 0;
   const rejected = Array.isArray(ledger.rejected) ? ledger.rejected.length : 0;
-  return `${open} open · ${done} done · ${rejected} rejected`;
+  return `${open} open · ${done} done · ${rejected} dismissed`;
 }
 
 function goalToolAction(group: ToolEventGroup, failed: string): string {
@@ -675,7 +675,7 @@ function goalToolAction(group: ToolEventGroup, failed: string): string {
     case "set_strategy":
       return `Set goal strategy${failed}`;
     case "update_ledger":
-      return `Updated goal ledger${failed}`;
+      return `Updated goal candidates${failed}`;
     case "reflect":
       return `Recorded goal reflection${failed}`;
     case "resume":

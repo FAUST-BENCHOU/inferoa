@@ -202,10 +202,11 @@ export function readGoalHorizons(store: SessionStore, sessionId: string, goalId?
     if (!goal || goal.id !== targetGoalId || !goal.planning) {
       continue;
     }
+    const summary = goalHorizonDisplaySummary(goal.horizon_generation, goal.planning.summary);
     byGeneration.set(goal.horizon_generation, {
       generation: goal.horizon_generation,
-      title: goalHorizonTitle(goal.horizon_generation, goal.planning.summary),
-      summary: goal.planning.summary,
+      title: goalHorizonTitle(summary),
+      summary,
       active_step_id: goal.planning.active_step_id,
       steps: cloneGoalPlanning(goal.planning).steps,
       updated_at: goal.planning.updated_at || goal.updated_at,
@@ -308,7 +309,7 @@ function horizonZeroPlanningInput(): GoalPlanningInput {
       { id: "read_objective_and_constraints", title: "Read objective and constraints", status: "in_progress" },
       { id: "inspect_workspace_shape", title: "Inspect workspace shape", status: "pending" },
       { id: "identify_candidate_sources", title: "Identify candidate sources", status: "pending" },
-      { id: "infer_goal_strategy", title: "Infer goal strategy and seed candidate ledger", status: "pending" },
+      { id: "infer_goal_strategy", title: "Infer goal strategy and seed candidates", status: "pending" },
     ],
   };
 }
@@ -989,13 +990,36 @@ function renderGoalPlanning(planning: GoalPlanningState): string {
     .join("\n");
 }
 
-function goalHorizonTitle(generation: number, summary: string | undefined): string | undefined {
+function goalHorizonDisplaySummary(generation: number, summary: string | undefined): string | undefined {
   const trimmed = cleanOptionalString(summary);
   if (!trimmed) {
     return undefined;
   }
-  const prefix = new RegExp(`^horizon\\s+${generation}\\s*(?:[·:.-])\\s*`, "i");
-  return trimmed.replace(prefix, "").trim() || trimmed;
+  const horizonPrefix = /^horizon\s+(\d+)\s*(?:[·:.-])\s*(.*)$/i.exec(trimmed);
+  if (horizonPrefix) {
+    const sourceGeneration = Number.parseInt(horizonPrefix[1] ?? "", 10);
+    if (sourceGeneration !== generation) {
+      return undefined;
+    }
+    const text = cleanOptionalString(horizonPrefix[2]);
+    return text ? goalHorizonDisplayLabel(text) : undefined;
+  }
+  return goalHorizonDisplayLabel(trimmed);
+}
+
+function goalHorizonTitle(summary: string | undefined): string | undefined {
+  return cleanOptionalString(summary);
+}
+
+function goalHorizonDisplayLabel(text: string): string {
+  switch (text.toLowerCase()) {
+    case "orientation":
+      return "Setup";
+    case "candidate ledger":
+      return "Candidate work";
+    default:
+      return text;
+  }
 }
 
 function renderLatestReflection(goal: GoalRecord): string | undefined {

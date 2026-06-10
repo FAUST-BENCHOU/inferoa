@@ -16,7 +16,7 @@ import {
   renderWelcomeComposerSurface,
   resolveComposerSubmission,
 } from "../src/tui/composer.js";
-import { stripAnsi } from "../src/tui/ansi.js";
+import { stripAnsi, visibleWidth } from "../src/tui/ansi.js";
 
 test("composer edits at the real cursor instead of appending", () => {
   let state = insertComposerText("ab", 1, "你");
@@ -460,4 +460,29 @@ test("welcome composer suggestions page around the selected command", () => {
   assert.ok(plain.some((line) => line.includes("/doctor")));
   assert.ok(!plain.some((line) => line.includes("/item-01")));
   assert.ok(plain.some((line) => line.includes("2/2") && line.includes("←/→ page")));
+});
+
+test("welcome composer slash suggestions keep the hint inside portrait width", () => {
+  const width = 92;
+  const rendered = renderWelcomeComposerSurface({
+    buffer: "/",
+    cursor: 1,
+    items: Array.from({ length: 18 }, (_, index) => ({
+      label: index === 0 ? "/setup" : `/item-${index}`,
+      description: "Open endpoint, provider, and model configuration",
+      kind: "command" as const,
+    })),
+    selected: 0,
+    width,
+    height: 44,
+    workspaceRoot: "/tmp/workspace",
+    mode: "direct",
+    model: "gpt-5.5",
+    contextWindow: 1_000_000,
+  });
+  const plain = rendered.lines.map((line) => stripAnsi(line)).join("\n");
+
+  assert.match(plain, /1\/4 .*18 options/);
+  assert.doesNotMatch(plain, /\nc clear\b/);
+  assert.equal(rendered.lines.every((line) => visibleWidth(line) <= width), true);
 });

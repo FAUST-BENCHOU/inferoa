@@ -30,6 +30,9 @@ export interface GoalSupervisorTurnRequest {
 
 export interface GoalSupervisorTurnResult {
   run_id: string;
+  content?: string;
+  tool_calls?: number;
+  tool_rounds?: number;
 }
 
 export type GoalSupervisorStatus = "idle" | "complete" | "paused" | "blocked" | "waiting" | "max_iterations" | "stopped";
@@ -81,8 +84,8 @@ export async function runGoalSupervisor(options: GoalSupervisorOptions): Promise
       requestClass: options.workRequestClass ?? "background",
       activityLabel: goalHorizonActivityLabel("Continuing goal horizon", state.goal.horizon_generation),
     });
-    if (!workRun || !goalUpdatedDuringRun(options.store, options.sessionId, workRun.run_id)) {
-      const reason = "last supervisor turn did not update the horizon";
+    if (!workRun || !goalProgressUpdatedDuringRun(options.store, options.sessionId, workRun.run_id, state)) {
+      const reason = goalWorkNoProgressReason(workRun);
       options.onWaiting?.(reason);
       return { status: "waiting", iteration: iteration + 1, reason, run_id: workRun?.run_id, goal_id: state.goal.id };
     }
@@ -210,7 +213,7 @@ function expandGoalFromLedgerCandidates(state: GoalState): GoalState | undefined
   const next = cloneGoalState(state);
   next.goal.horizon_generation += 1;
   const planned = replaceGoalPlanning(next, {
-    summary: `Horizon ${next.goal.horizon_generation} · Candidate ledger`,
+    summary: `Horizon ${next.goal.horizon_generation} · Candidate work`,
     active_step_id: candidates[0]?.id,
     steps: candidates.map((candidate) => ({
       id: candidate.id,
@@ -244,9 +247,68 @@ function candidateValueRank(value: GoalCandidate["value"]): number {
   }
 }
 
-function goalUpdatedDuringRun(store: SessionStore, sessionId: string, runId: string): boolean {
-  return store.listEvents(sessionId).some((event) => event.run_id === runId && event.type === "goal.updated");
+function goalProgressUpdatedDuringRun(store: SessionStore, sessionId: string, runId: string, before: GoalState): boolean {
+  return store.listEvents(sessionId).some((event) => {
+    if (event.run_id !== runId || event.type !== "goal.updated") {
+      return false;
+    }
+    const after = eventGoalState(event.data);
+    return Boolean(after && after.goal.id === before.goal.id && structuralGoalSnapshot(after) !== structuralGoalSnapshot(before));
+  });
 }
+
+function goalWorkNoProgressReason(workRun: GoalSupervisorTurnResult | undefined): string {
+  if (!workRun) {
+    return "goal turn did not complete";
+  }
+  const hasRuntimeResultShape = workRun.content !== undefined || workRun.tool_calls !== undefined || workRun.tool_rounds !== undefined;
+  if (hasRuntimeResultShape && (workRun.content ?? "").trim() === "" && (workRun.tool_calls ?? 0) === 0 && (workRun.tool_rounds ?? 0) === 0) {
+    return "model returned an empty goal turn; no horizon progress was recorded";
+  }
+  return "last supervisor turn did not update the horizon";
+}
+
+function eventGoalState(data: unknown): GoalState | undefined {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return undefined;
+  }
+  const state = data as Partial<GoalState>;
+  const goal = state.goal;
+  if (!goal || typeof goal !== "object" || Array.isArray(goal) || !("id" in goal)) {
+    return undefined;
+  }
+  return state as GoalState;
+}
+
+function structuralGoalSnapshot(state: GoalState): string {
+  return JSON.stringify(stripGoalAccounting(state));
+}
+
+function stripGoalAccounting(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stripGoalAccounting);
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (GOAL_ACCOUNTING_KEYS.has(key)) {
+      continue;
+    }
+    out[key] = stripGoalAccounting(item);
+  }
+  return out;
+}
+
+const GOAL_ACCOUNTING_KEYS = new Set([
+  "tokens_used",
+  "time_used_ms",
+  "time_used_seconds",
+  "tool_rounds_used",
+  "tool_calls_used",
+  "updated_at",
+]);
 
 function pauseGoal(options: GoalSupervisorOptions, state: GoalState, runId: string | undefined, reason: string): GoalState {
   const next = cloneGoalState(state);

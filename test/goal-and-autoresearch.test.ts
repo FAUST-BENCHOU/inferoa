@@ -90,7 +90,7 @@ test("goal creation starts with a visible Horizon 0 orientation and no frontier 
       ["read_objective_and_constraints", "Read objective and constraints", "in_progress"],
       ["inspect_workspace_shape", "Inspect workspace shape", "pending"],
       ["identify_candidate_sources", "Identify candidate sources", "pending"],
-      ["infer_goal_strategy", "Infer goal strategy and seed candidate ledger", "pending"],
+      ["infer_goal_strategy", "Infer goal strategy and seed candidates", "pending"],
     ],
   );
   assert.equal(goal.strategy?.mode, "opportunistic");
@@ -991,6 +991,35 @@ test("internal reflection plan updates become horizon expansion decisions", asyn
   }
 });
 
+test("goal horizon history hides stale source horizon summaries", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-horizon-title-stale-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_goal_horizon_title_stale", root: dir, alias: "goal-horizon-title-stale" };
+    const session = store.createSession(workspace, "goal-horizon-title-stale");
+    const state = createGoalState({ objective: "Improve display clarity" });
+    writeGoalState(store, session.session_id, state, "run_horizon_0");
+
+    const next = cloneGoalState(state);
+    next.goal.horizon_generation = 1;
+    next.goal.planning = {
+      ...next.goal.planning!,
+      active_step_id: "next",
+      steps: [{ id: "next", title: "Next horizon work", status: "in_progress", updated_at: next.goal.updated_at }],
+    };
+    writeGoalState(store, session.session_id, next, "run_horizon_1");
+
+    const horizons = readGoalHorizons(store, session.session_id, state.goal.id);
+    assert.equal(horizons[0]?.title, "Setup");
+    assert.equal(horizons[0]?.summary, "Setup");
+    assert.equal(horizons[1]?.title, undefined);
+    assert.equal(horizons[1]?.summary, undefined);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("goal supervisor activity labels include the current horizon generation", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-horizon-activity-"));
   const store = await SessionStore.open(path.join(dir, "state"));
@@ -1037,6 +1066,76 @@ test("goal supervisor activity labels include the current horizon generation", a
       },
     });
     assert.deepEqual(reflectionLabels, ["Reflecting goal horizon 0"]);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("goal supervisor treats accounting-only updates as no horizon progress", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-accounting-only-progress-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_goal_accounting_only_progress", root: dir, alias: "goal-accounting-only-progress" };
+    const session = store.createSession(workspace, "goal-accounting-only-progress");
+    writeGoalState(
+      store,
+      session.session_id,
+      replaceGoalPlanning(createGoalState({ objective: "Do not spin on empty turns" }), {
+        steps: [{ id: "active", title: "Active horizon work", status: "in_progress" }],
+      }),
+      "run_seed",
+    );
+    const runIds: string[] = [];
+
+    const result = await runGoalSupervisor({
+      store,
+      sessionId: session.session_id,
+      supervisor: "test",
+      maxIterations: 3,
+      runTurn: async () => {
+        const runId = `run_usage_${runIds.length}`;
+        runIds.push(runId);
+        applyGoalUsage(store, session.session_id, { duration_ms: 500 }, runId);
+        return { run_id: runId };
+      },
+    });
+
+    assert.equal(result.status, "waiting");
+    assert.equal(result.reason, "last supervisor turn did not update the horizon");
+    assert.deepEqual(runIds, ["run_usage_0"]);
+    assert.equal(readGoalState(store, session.session_id)?.goal.planning?.active_step_id, "active");
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("goal supervisor explains empty model turns as no goal progress", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-empty-turn-progress-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_goal_empty_turn_progress", root: dir, alias: "goal-empty-turn-progress" };
+    const session = store.createSession(workspace, "goal-empty-turn-progress");
+    writeGoalState(
+      store,
+      session.session_id,
+      replaceGoalPlanning(createGoalState({ objective: "Explain empty provider turns" }), {
+        steps: [{ id: "active", title: "Active horizon work", status: "in_progress" }],
+      }),
+      "run_seed",
+    );
+
+    const result = await runGoalSupervisor({
+      store,
+      sessionId: session.session_id,
+      supervisor: "test",
+      maxIterations: 3,
+      runTurn: async () => ({ run_id: "run_empty", content: "", tool_calls: 0, tool_rounds: 0 }),
+    });
+
+    assert.equal(result.status, "waiting");
+    assert.equal(result.reason, "model returned an empty goal turn; no horizon progress was recorded");
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });
@@ -1104,7 +1203,7 @@ test("completing a horizon step reconciles the matching open ledger candidate", 
     const session = store.createSession(workspace, "goal-ledger-step-reconcile");
     const registry = new ToolRegistry(config(), workspace, store);
     const state = replaceGoalPlanning(createGoalState({ objective: "Improve tests" }), {
-      summary: "Horizon 1 · Candidate ledger",
+      summary: "Horizon 1 · Candidate work",
       steps: [{ id: "tests", title: "Audit integration tests", status: "in_progress" }],
     });
     const goal = state.goal as any;

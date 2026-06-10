@@ -403,7 +403,7 @@ test("goal show renders wrapped tree horizons without repeated command hints", a
     assert.doesNotMatch(plain, /complete \(paused\)/);
     assert.match(plain, /reflections 2 recorded .*latest done/);
     assert.match(plain, /strategy auto .*opportunistic/);
-    assert.match(plain, /ledger 0 open .*0 done .*0 rejected/);
+    assert.match(plain, /candidates 0 open .*0 done .*0 dismissed/);
     assert.match(plain, /◇ Horizon 0 .*Initial audit and repair horizon/);
     assert.match(plain, /◆ Horizon 1 current .*Found a second horizon/);
     assert.match(plain, /├─ x explore_and_audit/);

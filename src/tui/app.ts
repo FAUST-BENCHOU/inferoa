@@ -83,6 +83,7 @@ import { filterProviderPickerOptions, providerPickerPage } from "./provider-pick
 import { renderSessionTranscript } from "./session-transcript.js";
 import { renderUnknownSlashCommandNotice } from "./slash-notice.js";
 import { effectiveWorkspacePermission, setWorkspacePermissionMode } from "../tools/permissions.js";
+import { terminalBlockPatchSequence } from "./redraw.js";
 import { renderToolCards } from "./tool-renderer.js";
 import { withConversationGap } from "./transcript-spacing.js";
 import { MarkdownStreamRenderer } from "./markdown.js";
@@ -101,6 +102,7 @@ import {
   moveComposerCursorLeft,
   moveComposerCursorRight,
   moveComposerSuggestionPage,
+  type ComposerRenderResult,
   type ComposerPanel,
   type ComposerCompactRange,
   compactModelLabel,
@@ -551,6 +553,7 @@ export class TuiApp {
     let renderedCursorLine = 0;
     let renderedCursorColumn = 0;
     let renderedWidth = 0;
+    let renderedBlockLines: string[] = [];
     let renderedActivityLine: number | undefined;
     let renderedCodeIntelligenceLine: number | undefined;
     let renderedCodeIntelligenceColumn: number | undefined;
@@ -568,6 +571,7 @@ export class TuiApp {
         renderedCursorLine = 0;
         renderedCursorColumn = 0;
         renderedWidth = 0;
+        renderedBlockLines = [];
         renderedActivityLine = undefined;
         renderedCodeIntelligenceLine = undefined;
         renderedCodeIntelligenceColumn = undefined;
@@ -681,18 +685,10 @@ export class TuiApp {
         if (selected >= items.length) {
           selected = 0;
         }
-        if (forceFullRedraw && this.shouldRenderWelcomeComposer()) {
-          stdout.write(ansi.clear);
-          resetRenderedState();
-          forceFullRedraw = false;
-        } else {
-          erase({ resized: eraseAfterResize });
-          forceFullRedraw = false;
-          eraseAfterResize = false;
-        }
         const width = safeTerminalWidth();
         const height = safeTerminalHeight();
-        const block = this.shouldRenderWelcomeComposer()
+        const welcome = this.shouldRenderWelcomeComposer();
+        const block = welcome
           ? renderWelcomeComposerSurface({
               buffer,
               cursor,
@@ -728,15 +724,51 @@ export class TuiApp {
               metadataRight: this.composerMetadataRight(),
               placeholder: options.placeholder,
             });
+        const canPatch =
+          renderedBlockLines.length > 0 &&
+          renderedWidth === width &&
+          !eraseAfterResize &&
+          !(forceFullRedraw && welcome);
+        if (forceFullRedraw && welcome) {
+          stdout.write(ansi.clear);
+          resetRenderedState();
+        } else if (canPatch) {
+          stdout.write(
+            terminalBlockPatchSequence(
+              {
+                lines: renderedBlockLines,
+                cursorLine: renderedCursorLine,
+                cursorColumn: renderedCursorColumn,
+                width: renderedWidth,
+              },
+              block,
+            ),
+          );
+          updateRenderedBlockState(block, width);
+          forceFullRedraw = false;
+          eraseAfterResize = false;
+          return;
+        } else {
+          erase({ resized: eraseAfterResize });
+        }
+        forceFullRedraw = false;
+        eraseAfterResize = false;
         stdout.write(block.lines.join("\n"));
+        updateRenderedBlockState(block, width);
+        positionCursorForRenderedBlock(block);
+      };
+      const updateRenderedBlockState = (block: ComposerRenderResult, width: number) => {
         renderedLines = block.lines.length;
         renderedCursorLine = block.cursorLine;
         renderedCursorColumn = block.cursorColumn;
         renderedWidth = width;
+        renderedBlockLines = block.lines.slice();
         renderedActivityLine = block.activityLine;
         renderedCodeIntelligenceLine = block.codeIntelligenceLine;
         renderedCodeIntelligenceColumn = block.codeIntelligenceColumn;
         renderedCodeIntelligenceWidth = block.codeIntelligenceWidth;
+      };
+      const positionCursorForRenderedBlock = (block: ComposerRenderResult) => {
         const up = Math.max(0, renderedLines - 1 - block.cursorLine);
         if (up > 0) {
           stdout.write(`\x1b[${up}A`);
@@ -3159,7 +3191,7 @@ export class TuiApp {
       lines.push(fg256(244, usage));
     }
     appendGoalPanelField(lines, "strategy", goalPanelStrategy(goal), width, 244);
-    appendGoalPanelField(lines, "ledger", goalPanelLedger(goal), width, 244);
+    appendGoalPanelField(lines, "candidates", goalPanelCandidates(goal), width, 244);
     if (goal.summary) {
       appendGoalPanelField(lines, "summary", goal.summary, width);
     }
@@ -4594,12 +4626,12 @@ function goalPanelStrategy(goal: GoalRecord): string {
   ].filter((part): part is string => Boolean(part)).join(" · ");
 }
 
-function goalPanelLedger(goal: GoalRecord): string {
+function goalPanelCandidates(goal: GoalRecord): string {
   const ledger = goal.ledger;
   if (!ledger) {
-    return "0 open · 0 done · 0 rejected";
+    return "0 open · 0 done · 0 dismissed";
   }
-  return `${ledger.open.length} open · ${ledger.done.length} done · ${ledger.rejected.length} rejected`;
+  return `${ledger.open.length} open · ${ledger.done.length} done · ${ledger.rejected.length} dismissed`;
 }
 
 function goalPanelStatusLabel(state: GoalState): string {

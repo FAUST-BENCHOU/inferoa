@@ -320,7 +320,7 @@ export function renderComposerSurface(options: ComposerRenderOptions): ComposerR
     const page = composerSuggestionWindow(options.items, options.selected, COMPOSER_SUGGESTION_PAGE_SIZE);
     lines.push(...page.items.map((item, offset) => renderComposerSuggestion(item, page.startIndex + offset === options.selected, width)));
     const hint = composerSuggestionHint(options.items[0]?.kind, page);
-    lines.push(fg256(244, `  ${hint}`));
+    lines.push(renderComposerHintLine(hint, width));
   }
 
   return {
@@ -406,7 +406,7 @@ export function renderWelcomeComposerSurface(options: WelcomeComposerRenderOptio
   if (options.items.length) {
     const page = composerSuggestionWindow(options.items, options.selected, WELCOME_COMPOSER_SUGGESTION_PAGE_SIZE);
     lines.push(...page.items.map((item, offset) => `${" ".repeat(left + 1)}${renderComposerSuggestion(item, page.startIndex + offset === options.selected, boxWidth - 1)}`));
-    lines.push(`${" ".repeat(left + 1)}${fg256(244, composerSuggestionHint(options.items[0]?.kind, page))}`);
+    lines.push(`${" ".repeat(left + 1)}${renderComposerHintLine(composerSuggestionHint(options.items[0]?.kind, page), boxWidth - 1, "")}`);
   } else if (options.notice) {
     lines.push(`${" ".repeat(left + 1)}${renderComposerNoticeLine(options.notice, boxWidth - 1)}`);
   } else {
@@ -452,6 +452,10 @@ function composerSuggestionHint(kind: ComposerSuggestion["kind"] | undefined, pa
   const action = kind === "skill" ? "tab insert skill" : "tab complete";
   const pagePart = page.totalPages > 1 ? `${page.pageIndex + 1}/${page.totalPages} · ${page.totalItems} options · ←/→ page · ` : "";
   return `${pagePart}${action} · enter open/submit · ↑/↓ choose · esc clear`;
+}
+
+function renderComposerHintLine(hint: string, width: number, prefix = "  "): string {
+  return fg256(244, truncateToWidth(`${prefix}${hint}`, Math.max(1, width)));
 }
 
 function renderWelcomeMark(): string[] {
