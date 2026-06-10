@@ -275,8 +275,8 @@ test("welcome composer centers Inferoa wordmark and keeps slash and skill afford
   const plain = rendered.lines.map((line) => stripAnsi(line)).join("\n");
 
   assert.match(plain, /██████╗  ██████╗  █████╗/);
-  assert.match(plain, /Inference-native Tokenmaxxing/);
-  assert.match(plain, /Loop Engineering Agent Harness/);
+  assert.match(plain, /Inference-native Tokenmaxxing Loop Agent Harness/);
+  assert.doesNotMatch(plain, /Loop Engineering Agent Harness/);
   assert.doesNotMatch(plain, /vLLM agent/);
   assert.doesNotMatch(plain, /▟▙/);
   assert.match(plain, /Start a long-horizon goal\.\.\./);

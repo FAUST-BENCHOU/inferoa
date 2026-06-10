@@ -17,6 +17,7 @@ export function buildGoalReflectionPrompt(objective: string): string {
     "Use the candidate ledger as the durable search space. Add, complete, or reject candidates with goal op=update_ledger when reflection changes what remains.",
     "Look for better decomposition, missing verification, rough edges, or unfinished work implied by the top-level objective, even if all listed steps are complete.",
     "Hard stop condition: only accept new work when it has substantive impact on the original objective; otherwise choose decision=done.",
+    "Do not call goal op=decompose, op=update_plan, or op=update_step from reflection. New work must be returned through goal op=reflect decision=expand with steps.",
     "Finish by calling goal op=reflect exactly once.",
     "Do not call goal op=complete from a reflection run; completion happens after the reflection decision is recorded.",
     "Use decision=expand only with concrete new horizon steps whose impact on the original objective is substantive.",

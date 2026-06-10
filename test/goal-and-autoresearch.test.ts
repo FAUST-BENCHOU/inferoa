@@ -71,6 +71,7 @@ test("goal reflection prompt treats completed plans as a hypothesis, not a bound
   assert.doesNotMatch(prompt, /material/i);
   assert.doesNotMatch(prompt, /Do not optimize endlessly/i);
   assert.match(prompt, /Do not call goal op=complete/i);
+  assert.match(prompt, /Do not call goal op=decompose/i);
   assert.match(prompt, /goal op=reflect exactly once/i);
   assert.doesNotMatch(prompt, /decision=continue/i);
 });
@@ -936,6 +937,54 @@ test("goal reflection gates completion and can expand a new horizon generation",
     );
     assert.equal(completed.ok, true, JSON.stringify(completed));
     assert.equal(readGoalState(store, session.session_id)?.goal.status, "complete");
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("internal reflection plan updates become horizon expansion decisions", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-reflection-plan-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_goal_reflection_plan", root: dir, alias: "goal-reflection-plan" };
+    const session = store.createSession(workspace, "goal-reflection-plan");
+    const registry = new ToolRegistry(config(), workspace, store);
+    const state = replaceGoalPlanning(createGoalState({ objective: "Improve code quality" }), {
+      steps: [{ id: "first", title: "First horizon", status: "completed" }],
+    });
+    writeGoalState(store, session.session_id, state, "run_seed");
+
+    const expanded = await registry.call(
+      {
+        id: "reflection_update_plan",
+        name: "goal",
+        arguments: {
+          op: "update_plan",
+          summary: "Next code quality horizon.",
+          active_step_id: "lint",
+          steps: [{ id: "lint", title: "Fix lint findings", status: "pending" }],
+        },
+      },
+      { session_id: session.session_id, run_id: "run_reflection_update_plan", request_class: "reflection", visibility: "internal" },
+    );
+    assert.equal(expanded.ok, true, JSON.stringify(expanded));
+    assert.match(expanded.summary, /Goal horizon expanded/);
+    const afterExpand = readGoalState(store, session.session_id)?.goal;
+    assert.equal(afterExpand?.horizon_generation, 1);
+    assert.equal(afterExpand?.last_reflection_decision, "expand");
+    assert.equal(afterExpand?.planning?.active_step_id, "lint");
+    assert.equal(afterExpand?.planning?.steps[0]?.status, "in_progress");
+    assert.ok(store.listEvents(session.session_id).some((event) => event.type === "goal.reflection.completed" && event.run_id === "run_reflection_update_plan"));
+    assert.ok(store.listEvents(session.session_id).some((event) => event.type === "goal.horizon.expanded" && event.run_id === "run_reflection_update_plan"));
+
+    const directStepUpdate = await registry.call(
+      { id: "reflection_update_step", name: "goal", arguments: { op: "update_step", step_id: "lint", status: "completed" } },
+      { session_id: session.session_id, run_id: "run_reflection_update_step", request_class: "reflection", visibility: "internal" },
+    );
+    assert.equal(directStepUpdate.ok, false);
+    assert.equal(directStepUpdate.error?.code, "goal_reflection_decision_required");
+    assert.match(directStepUpdate.error?.message ?? "", /cannot update the current horizon directly/i);
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });

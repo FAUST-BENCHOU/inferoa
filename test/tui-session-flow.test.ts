@@ -663,7 +663,8 @@ test("suppressed internal reflection renders tool trace without assistant text",
     await view.submitPrompt("reflection", { renderPrompt: false, suppressTranscript: true, requestClass: "reflection", visibility: "internal" });
 
     const plain = stripAnsi(transcript.join(""));
-    assert.match(plain, /Updated goal/);
+    assert.match(plain, /Recorded goal reflection/);
+    assert.match(plain, /done · horizon 1/);
     assert.match(plain, /improve docs wording/);
     assert.doesNotMatch(plain, /hidden reflection assistant text/);
   } finally {

@@ -465,8 +465,7 @@ function renderWelcomeMark(): string[] {
   ];
   return [
     ...logo.map((line, index) => colorWelcomeLogoRow(line, index)),
-    center(fg256(244, "Inference-native Tokenmaxxing"), visibleWidth(logo[0] ?? "")),
-    center(fg256(244, "Loop Engineering Agent Harness"), visibleWidth(logo[0] ?? "")),
+    center(fg256(244, "Inference-native Tokenmaxxing Loop Agent Harness"), visibleWidth(logo[0] ?? "")),
   ];
 }
 

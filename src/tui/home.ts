@@ -46,8 +46,7 @@ function renderInferoaWordmark(): string[] {
   const main = `${fg256(244, ">_")} ${ansi.bold}${fg256(252, "Infer")}${fg256(75, "oa")}${ansi.reset}`;
   return [
     main,
-    fg256(244, "Inference-native Tokenmaxxing"),
-    fg256(244, "Loop Engineering Agent Harness"),
+    fg256(244, "Inference-native Tokenmaxxing Loop Agent Harness"),
   ];
 }
 

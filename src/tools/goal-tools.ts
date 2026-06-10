@@ -31,6 +31,10 @@ import {
 
 export async function goalTool(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const op = stringArg(args.op) ?? "get";
+  const reflectionOperation = handleInternalReflectionGoalOperation(op, args, context);
+  if (reflectionOperation) {
+    return reflectionOperation;
+  }
   try {
     switch (op) {
       case "create":
@@ -60,6 +64,35 @@ export async function goalTool(args: JsonObject, context: ToolExecutionContext):
   } catch (error) {
     return fail("goal_error", error instanceof Error ? error.message : String(error));
   }
+}
+
+function handleInternalReflectionGoalOperation(op: string, args: JsonObject, context: ToolExecutionContext): ToolResult | undefined {
+  if (!isInternalReflectionContext(context)) {
+    return undefined;
+  }
+  if (op === "get" || op === "reflect" || op === "complete" || op === "update_ledger") {
+    return undefined;
+  }
+  if (op === "decompose" || op === "update_plan") {
+    const steps = stepsArg(args.steps);
+    if (steps?.length) {
+      return recordGoalReflection(
+        {
+          ...args,
+          op: "reflect",
+          decision: "expand",
+          summary: stringArg(args.summary) ?? "Reflection found another horizon.",
+        },
+        context,
+      );
+    }
+  }
+  const state = readGoalState(context.store, context.session_id);
+  const message =
+    op === "decompose" || op === "update_plan" || op === "update_step"
+      ? "Internal reflection cannot update the current horizon directly. Call goal op=reflect with decision=expand and concrete steps, decision=done with verification_evidence, or decision=blocked."
+      : `Internal reflection cannot call goal op=${op}. Call goal op=reflect with decision=expand, done, or blocked.`;
+  return state ? failGoalWithState(state, "goal_reflection_decision_required", message) : fail("goal_missing", "No goal to reflect on.");
 }
 
 function createGoal(args: JsonObject, context: ToolExecutionContext): ToolResult {

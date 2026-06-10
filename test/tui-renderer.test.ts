@@ -369,6 +369,66 @@ test("TUI tool renderer formats goal, plan, and autoresearch tools as native mod
       {
         session_id: session.session_id,
         run_id: "run",
+        type: "tool.call",
+        data: { tool_call_id: "goal_step", tool_name: "goal", arguments: { op: "update_step", step_id: "verify", status: "completed", notes: "Tests passed." } },
+      },
+      {
+        session_id: session.session_id,
+        run_id: "run",
+        type: "tool.result",
+        data: {
+          tool_call_id: "goal_step",
+          tool_name: "goal",
+          result: {
+            ok: true,
+            summary: "Goal step updated: Ship mode",
+            data: {
+              goal: {
+                objective: "Ship mode",
+                status: "active",
+                planning: {
+                  active_step_id: "verify",
+                  steps: [{ id: "verify", title: "Run verification", status: "completed" }],
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        session_id: session.session_id,
+        run_id: "run",
+        type: "tool.call",
+        data: { tool_call_id: "goal_reflect", tool_name: "goal", arguments: { op: "reflect", decision: "expand" } },
+      },
+      {
+        session_id: session.session_id,
+        run_id: "run",
+        type: "tool.result",
+        data: {
+          tool_call_id: "goal_reflect",
+          tool_name: "goal",
+          result: {
+            ok: true,
+            summary: "Goal horizon expanded: Ship mode",
+            data: {
+              goal: {
+                objective: "Ship mode",
+                status: "active",
+                horizon_generation: 2,
+                last_reflection_decision: "expand",
+                planning: {
+                  active_step_id: "polish",
+                  steps: [{ id: "polish", title: "Polish trace", status: "in_progress" }],
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        session_id: session.session_id,
+        run_id: "run",
         type: "tool.result",
         data: {
           tool_call_id: "ar_init_failed",
@@ -564,7 +624,10 @@ test("TUI tool renderer formats goal, plan, and autoresearch tools as native mod
     const rendered = renderToolCards(events, store, { collapseCompact: false });
     const plain = stripAnsi(rendered.join("\n"));
     const goalBlock = plain.slice(0, plain.indexOf("Initialized experiment failed"));
-    assert.match(goalBlock, /Updated goal · Ship mode · complete/);
+    assert.match(goalBlock, /Completed goal · Ship mode · complete/);
+    assert.match(goalBlock, /Updated goal step · verify · completed/);
+    assert.match(goalBlock, /step verify · completed/);
+    assert.match(goalBlock, /Expanded goal horizon · expand · horizon 2/);
     assert.match(goalBlock, /summary Done/);
     assert.doesNotMatch(goalBlock, /objective Ship mode/);
     assert.doesNotMatch(goalBlock, /loops 1 · tools 2/);
