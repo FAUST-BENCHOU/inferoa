@@ -16,6 +16,7 @@ import {
   type GoalState,
 } from "./state.js";
 import { buildGoalReflectionPrompt, buildGoalWorkPrompt } from "./supervisor-prompts.js";
+import { readAutoresearchState, researchCompletionBlockMessage, setAutoresearchMode } from "../autoresearch/state.js";
 
 export const DEFAULT_GOAL_SUPERVISOR_MAX_ITERATIONS = 1000;
 
@@ -80,7 +81,7 @@ export async function runGoalSupervisor(options: GoalSupervisorOptions): Promise
       return result;
     }
     const workRun = await options.runTurn({
-      prompt: buildGoalWorkPrompt(state.goal.objective),
+      prompt: buildGoalWorkPrompt(state.goal),
       requestClass: options.workRequestClass ?? "background",
       activityLabel: goalHorizonActivityLabel("Continuing goal horizon", state.goal.horizon_generation),
     });
@@ -116,7 +117,7 @@ async function runGoalReflection(options: GoalSupervisorOptions, state: GoalStat
     },
   });
   const reflectionRun = await options.runTurn({
-    prompt: buildGoalReflectionPrompt(state.goal.objective),
+    prompt: buildGoalReflectionPrompt(state.goal),
     requestClass: "reflection",
     visibility: "internal",
     runId: reflectionRunId,
@@ -139,8 +140,18 @@ async function runGoalReflection(options: GoalSupervisorOptions, state: GoalStat
   // concrete and substantively tied to the original objective, otherwise done.
   if (reflected.goal.last_reflection_decision === "done") {
     try {
+      if (reflected.goal.kind === "research") {
+        const researchBlock = researchCompletionBlockMessage(readAutoresearchState(options.store, options.sessionId));
+        if (researchBlock) {
+          const paused = pauseGoal(options, reflected, reflectionRunId, researchBlock);
+          return { status: "paused", iteration, reason: researchBlock, run_id: reflectionRunId, goal_id: paused.goal.id };
+        }
+      }
       const completed = completeGoalAfterReflection(reflected, reflected.goal.last_reflection_summary);
       const saved = writeGoalState(options.store, options.sessionId, completed, reflectionRunId);
+      if (saved.goal.kind === "research") {
+        setAutoresearchMode(options.store, options.sessionId, { mode: "off", goal: saved.goal.objective }, reflectionRunId);
+      }
       recordGoalCompletionReport(options.store, options.sessionId, reflectionRunId);
       options.onCompleted?.(saved, reflectionRunId);
       return { status: "complete", iteration, run_id: reflectionRunId, goal_id: saved.goal.id };

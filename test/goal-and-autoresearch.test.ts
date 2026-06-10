@@ -54,6 +54,14 @@ async function completeGoalOrientation(registry: ToolRegistry, sessionId: string
   }
 }
 
+function startResearchGoal(store: SessionStore, sessionId: string, objective: string): void {
+  writeGoalState(store, sessionId, createGoalState({ objective, kind: "research" }), "run_research_goal");
+  setAutoresearchMode(store, sessionId, {
+    mode: "on",
+    goal: objective,
+  });
+}
+
 test("goal reflection prompt treats completed plans as a hypothesis, not a boundary", () => {
   const prompt = buildGoalReflectionPrompt("Ship reliable goal mode");
 
@@ -90,7 +98,7 @@ test("goal creation starts with a visible Horizon 0 orientation and no frontier 
       ["read_objective_and_constraints", "Read objective and constraints", "in_progress"],
       ["inspect_workspace_shape", "Inspect workspace shape", "pending"],
       ["identify_candidate_sources", "Identify candidate sources", "pending"],
-      ["infer_goal_strategy", "Infer goal strategy and seed candidates", "pending"],
+      ["infer_goal_strategy", "Infer goal approach and seed candidates", "pending"],
     ],
   );
   assert.equal(goal.strategy?.mode, "opportunistic");
@@ -1588,10 +1596,7 @@ test("autoresearch tools run and log a benchmark from chat state", async () => {
   try {
     const workspace: WorkspaceIdentity = { id: "w_autoresearch", root: dir, alias: "autoresearch" };
     const session = store.createSession(workspace, "autoresearch");
-    setAutoresearchMode(store, session.session_id, {
-      mode: "on",
-      goal: "reduce latency without changing output",
-    });
+    startResearchGoal(store, session.session_id, "reduce latency without changing output");
     await writeFile(path.join(dir, "autoresearch.sh"), "#!/usr/bin/env bash\nprintf 'METRIC latency_ms=12.5\\nASI hypothesis=test\\n'\n", "utf8");
     await chmod(path.join(dir, "autoresearch.sh"), 0o755);
 
@@ -1667,7 +1672,122 @@ test("autoresearch tools run and log a benchmark from chat state", async () => {
     assert.match(autoresearchContext, /latency_ms/);
     assert.match(autoresearchContext, /baseline latency/);
     assert.match(autoresearchContext, /Progress: 1 logged run; 1 keep; no pending run/);
-    assert.match(autoresearchContext, /Keep-run cap: 1\/3; 2 keep runs remaining/);
+    assert.match(autoresearchContext, /Keep-run cap: 1\/3; 2 keep runs remaining before this experiment should checkpoint/);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("research goals support multiple experiments with one pending run globally", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-research-experiments-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_research_experiments", root: dir, alias: "research-experiments" };
+    const session = store.createSession(workspace, "research-experiments");
+    startResearchGoal(store, session.session_id, "explore latency hypotheses");
+    await writeFile(path.join(dir, "autoresearch.sh"), "#!/usr/bin/env bash\nprintf 'METRIC latency_ms=9.5\\n'\n", "utf8");
+    await chmod(path.join(dir, "autoresearch.sh"), 0o755);
+    const registry = new ToolRegistry(config(), workspace, store);
+
+    const baseline = await registry.call(
+      { id: "exp_baseline", name: "init_experiment", arguments: { name: "baseline", primary_metric: "latency_ms", direction: "lower" } },
+      { session_id: session.session_id, run_id: "run_exp" },
+    );
+    assert.equal(baseline.ok, true, JSON.stringify(baseline));
+    const scheduler = await registry.call(
+      { id: "exp_scheduler", name: "init_experiment", arguments: { name: "scheduler-threshold", primary_metric: "latency_ms", direction: "lower" } },
+      { session_id: session.session_id, run_id: "run_exp" },
+    );
+    assert.equal(scheduler.ok, true, JSON.stringify(scheduler));
+    let state = readAutoresearchState(store, session.session_id);
+    assert.deepEqual(state.experiments.map((experiment) => experiment.name), ["baseline", "scheduler-threshold"]);
+    assert.equal(state.active_experiment_name, "scheduler-threshold");
+
+    const run = await registry.call(
+      { id: "exp_run", name: "run_experiment", arguments: { timeout_ms: 5000 } },
+      { session_id: session.session_id, run_id: "run_exp" },
+    );
+    assert.equal(run.ok, true, JSON.stringify(run));
+    const blocked = await registry.call(
+      { id: "exp_blocked", name: "run_experiment", arguments: { experiment_name: "baseline", timeout_ms: 5000 } },
+      { session_id: session.session_id, run_id: "run_exp" },
+    );
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.error?.code, "autoresearch_pending_run");
+    assert.equal(blocked.data?.experiment_name, "scheduler-threshold");
+
+    const logged = await registry.call(
+      { id: "exp_log", name: "log_experiment", arguments: { status: "keep", description: "scheduler threshold candidate", experiment_status: "completed" } },
+      { session_id: session.session_id, run_id: "run_exp" },
+    );
+    assert.equal(logged.ok, true, JSON.stringify(logged));
+    const updated = await registry.call(
+      { id: "exp_update", name: "update_experiment", arguments: { experiment_name: "baseline", status: "completed", set_active: false } },
+      { session_id: session.session_id, run_id: "run_exp" },
+    );
+    assert.equal(updated.ok, true, JSON.stringify(updated));
+    state = readAutoresearchState(store, session.session_id);
+    assert.deepEqual(state.experiments.map((experiment) => [experiment.name, experiment.status]), [
+      ["baseline", "completed"],
+      ["scheduler-threshold", "completed"],
+    ]);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("research goal completion requires logged metric evidence", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-research-completion-gate-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_research_completion_gate", root: dir, alias: "research-completion-gate" };
+    const session = store.createSession(workspace, "research-completion-gate");
+    let goal = replaceGoalPlanning(createGoalState({ objective: "prove latency improvement", kind: "research" }), {
+      summary: "Research cycle 0 · Done",
+      steps: [{ id: "done", title: "Research cycle complete", status: "completed" }],
+    });
+    goal = completeGoalReflection(goal, { decision: "done", summary: "Evidence should be checked.", verification_evidence: { reflection: true } }, "run_research_reflection");
+    writeGoalState(store, session.session_id, goal, "run_research_seed");
+    setAutoresearchMode(store, session.session_id, { mode: "on", goal: goal.goal.objective });
+    const registry = new ToolRegistry(config(), workspace, store);
+
+    const blocked = await registry.call(
+      { id: "research_complete_blocked", name: "goal", arguments: { op: "complete", summary: "Done without metrics." } },
+      { session_id: session.session_id, run_id: "run_research_complete" },
+    );
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.error?.code, "goal_research_evidence_required");
+
+    await writeFile(path.join(dir, "autoresearch.sh"), "#!/usr/bin/env bash\nprintf 'METRIC latency_ms=8.75\\n'\n", "utf8");
+    await chmod(path.join(dir, "autoresearch.sh"), 0o755);
+    assert.equal((await registry.call(
+      { id: "research_init", name: "init_experiment", arguments: { name: "baseline", primary_metric: "latency_ms", direction: "lower" } },
+      { session_id: session.session_id, run_id: "run_research_metric" },
+    )).ok, true);
+    assert.equal((await registry.call(
+      { id: "research_run", name: "run_experiment", arguments: { timeout_ms: 5000 } },
+      { session_id: session.session_id, run_id: "run_research_metric" },
+    )).ok, true);
+    assert.equal((await registry.call(
+      { id: "research_log", name: "log_experiment", arguments: { status: "keep", description: "baseline metric", experiment_status: "completed" } },
+      { session_id: session.session_id, run_id: "run_research_metric" },
+    )).ok, true);
+
+    const completed = await registry.call(
+      { id: "research_complete", name: "goal", arguments: { op: "complete", summary: "Done with metric evidence." } },
+      { session_id: session.session_id, run_id: "run_research_complete" },
+    );
+    assert.equal(completed.ok, true, JSON.stringify(completed));
+    assert.equal(readGoalState(store, session.session_id)?.goal.status, "complete");
+    assert.equal(readAutoresearchState(store, session.session_id).enabled, false);
+    const after = new PromptBuilder(config(), store, workspace).build(
+      store.getSession(session.session_id)!,
+      "continue",
+      CORE_TOOL_DEFINITIONS,
+    );
+    assert.equal(findContextMessage(after.messages, "<autoresearch.mode>"), "");
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });
@@ -1680,10 +1800,7 @@ test("autoresearch init validation failure returns mode state and harness status
   try {
     const workspace: WorkspaceIdentity = { id: "w_autoresearch_init_failure", root: dir, alias: "autoresearch-init-failure" };
     const session = store.createSession(workspace, "autoresearch-init-failure");
-    setAutoresearchMode(store, session.session_id, {
-      mode: "on",
-      goal: "recover from harness validation failures",
-    });
+    startResearchGoal(store, session.session_id, "recover from harness validation failures");
     await writeFile(path.join(dir, "autoresearch.sh"), "#!/usr/bin/env bash\nprintf 'compiler crashed\\n'\nexit 2\n", "utf8");
     await chmod(path.join(dir, "autoresearch.sh"), 0o755);
 
@@ -1719,10 +1836,7 @@ test("autoresearch metric override keeps primary metric data consistent", async 
   try {
     const workspace: WorkspaceIdentity = { id: "w_autoresearch_metric_override", root: dir, alias: "autoresearch-metric-override" };
     const session = store.createSession(workspace, "autoresearch-metric-override");
-    setAutoresearchMode(store, session.session_id, {
-      mode: "on",
-      goal: "verify corrected metric logging",
-    });
+    startResearchGoal(store, session.session_id, "verify corrected metric logging");
     await writeFile(path.join(dir, "autoresearch.sh"), "#!/usr/bin/env bash\nprintf 'METRIC latency_ms=12.5\\nMETRIC throughput=91\\n'\n", "utf8");
     await chmod(path.join(dir, "autoresearch.sh"), 0o755);
 
@@ -1781,10 +1895,7 @@ test("autoresearch prompt context bounds notes and result descriptions without l
   try {
     const workspace: WorkspaceIdentity = { id: "w_autoresearch_context_limit", root: dir, alias: "autoresearch-context-limit" };
     const session = store.createSession(workspace, "autoresearch-context-limit");
-    setAutoresearchMode(store, session.session_id, {
-      mode: "on",
-      goal: "keep prompt context bounded",
-    });
+    startResearchGoal(store, session.session_id, "keep prompt context bounded");
     await writeFile(path.join(dir, "autoresearch.sh"), "#!/usr/bin/env bash\nprintf 'METRIC latency_ms=12.5\\n'\n", "utf8");
     await chmod(path.join(dir, "autoresearch.sh"), 0o755);
 
@@ -1862,10 +1973,7 @@ test("autoresearch harness timeout uses hard kill and records pending run metada
   try {
     const workspace: WorkspaceIdentity = { id: "w_autoresearch_timeout", root: dir, alias: "autoresearch-timeout" };
     const session = store.createSession(workspace, "autoresearch-timeout");
-    setAutoresearchMode(store, session.session_id, {
-      mode: "on",
-      goal: "prove timeout handling",
-    });
+    startResearchGoal(store, session.session_id, "prove timeout handling");
     await writeFile(
       path.join(dir, "autoresearch.sh"),
       "#!/usr/bin/env bash\ntrap '' TERM\nprintf 'starting\\n'\nwhile true; do sleep 1; done\n",
@@ -1929,10 +2037,7 @@ test("autoresearch parses metrics even after output truncation", async () => {
   try {
     const workspace: WorkspaceIdentity = { id: "w_autoresearch_truncated_metric", root: dir, alias: "autoresearch-truncated-metric" };
     const session = store.createSession(workspace, "autoresearch-truncated-metric");
-    setAutoresearchMode(store, session.session_id, {
-      mode: "on",
-      goal: "keep parsing final metrics after noisy logs",
-    });
+    startResearchGoal(store, session.session_id, "keep parsing final metrics after noisy logs");
     await writeFile(
       path.join(dir, "autoresearch.sh"),
       [
@@ -1986,10 +2091,7 @@ test("autoresearch rejects invalid run timeout without creating a pending run", 
   try {
     const workspace: WorkspaceIdentity = { id: "w_autoresearch_invalid_timeout", root: dir, alias: "autoresearch-invalid-timeout" };
     const session = store.createSession(workspace, "autoresearch-invalid-timeout");
-    setAutoresearchMode(store, session.session_id, {
-      mode: "on",
-      goal: "avoid accidental long harness waits",
-    });
+    startResearchGoal(store, session.session_id, "avoid accidental long harness waits");
     await writeFile(path.join(dir, "autoresearch.sh"), "#!/usr/bin/env bash\nprintf 'METRIC latency_ms=12.5\\n'\n", "utf8");
     await chmod(path.join(dir, "autoresearch.sh"), 0o755);
 
@@ -2032,10 +2134,7 @@ test("autoresearch can log failed runs without a parsed primary metric", async (
   try {
     const workspace: WorkspaceIdentity = { id: "w_autoresearch_missing_metric", root: dir, alias: "autoresearch-missing-metric" };
     const session = store.createSession(workspace, "autoresearch-missing-metric");
-    setAutoresearchMode(store, session.session_id, {
-      mode: "on",
-      goal: "recover from failed experiments",
-    });
+    startResearchGoal(store, session.session_id, "recover from failed experiments");
     await writeFile(path.join(dir, "autoresearch.sh"), "#!/usr/bin/env bash\nprintf 'compiler crashed\\n'\nexit 2\n", "utf8");
     await chmod(path.join(dir, "autoresearch.sh"), 0o755);
 
@@ -2102,7 +2201,7 @@ test("mode context renderers escape tag-like dynamic text", async () => {
     const registry = new ToolRegistry(config(), workspace, store);
 
     await registry.call(
-      { id: "esc_goal_1", name: "goal", arguments: { op: "create", objective: "Stabilize <prefix> cache" } },
+      { id: "esc_goal_1", name: "goal", arguments: { op: "create", objective: "Stabilize <prefix> cache", kind: "research" } },
       { session_id: session.session_id, run_id: "run_escape" },
     );
     await registry.call(

@@ -242,6 +242,21 @@ test("composer keeps unknown slash commands in the input instead of submitting",
   assert.match(stripAnsi(decision.notice ?? ""), /Unrecognized command '\/docker'/);
 });
 
+test("composer enter selects the highlighted slash suggestion", () => {
+  const decision = resolveComposerSubmission({
+    buffer: "/goal m",
+    compactRanges: [],
+    items: [
+      { value: "/goal mode auto" },
+      { value: "/goal mode research" },
+    ],
+    selected: 1,
+    selectionTouched: true,
+  });
+
+  assert.deepEqual(decision, { action: "submit", text: "/goal mode research" });
+});
+
 test("composer submits slash-looking text when slash validation is disabled", () => {
   const decision = resolveComposerSubmission({
     buffer: "/docker",
@@ -333,7 +348,7 @@ test("welcome slash launcher keeps a compact portrait hint", () => {
   const lines = rendered.lines.map((line) => stripAnsi(line));
   const hint = lines.find((line) => line.includes("18 options")) ?? "";
 
-  assert.match(hint, /tab · enter · esc clear/);
+  assert.match(hint, /enter select · tab · esc clear/);
   assert.doesNotMatch(hint, /enter open\/submit/);
   assert.equal(lines.every((line) => visibleWidth(line) <= 116), true);
 });
@@ -507,7 +522,7 @@ test("welcome composer slash suggestions keep the hint inside portrait width", (
   });
   const plain = rendered.lines.map((line) => stripAnsi(line)).join("\n");
 
-  assert.match(plain, /1\/4 .*18 options/);
+  assert.match(plain, /enter select · tab · esc clear/);
   assert.doesNotMatch(plain, /\nc clear\b/);
   assert.equal(rendered.lines.every((line) => visibleWidth(line) <= width), true);
 });

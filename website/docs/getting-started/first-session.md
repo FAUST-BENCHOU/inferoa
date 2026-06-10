@@ -33,8 +33,8 @@ inferoa "Inspect this package and add a missing docs build check."
   long-horizon goal.
 - Use [`/plan set`](../workflows/plan-mode.md) when scope is ambiguous and you
   want a plan before execution.
-- Use [`/autoresearch`](../workflows/autoresearch-mode.md) when the task is
-  experiment-shaped and needs repeated measurement.
+- Use `/goal mode research` when the task is experiment-shaped and needs repeated
+  measurement.
 - Use `/doctor status` when checking the local endpoint setup before a session.
 
 ## Inspect Evidence
@@ -63,7 +63,7 @@ Open the session picker from the TUI:
 
 Or run the top-level `/resume` slash command to attach to a previous session.
 The resumed session keeps its workspace identity and event log; you can keep
-using `/goal`, `/plan`, `/autoresearch`, and the rest of the TUI surfaces
+using `/goal`, `/plan`, `/goal mode research`, and the rest of the TUI surfaces
 without losing continuity.
 
 ## Next Steps
@@ -72,8 +72,8 @@ without losing continuity.
   recursive long-horizon goals.
 - [Plan mode](../workflows/plan-mode.md) turns ambiguous scope into an
   inspectable plan before execution begins.
-- [Autoresearch mode](../workflows/autoresearch-mode.md) runs benchmark-style
-  iteration when the task depends on repeated measurement.
+- Research goals under [Goal mode](../workflows/goal-mode.md) run
+  benchmark-style iteration when the task depends on repeated measurement.
 - [Coding workflow](../workflows/coding-workflow.md) describes the recommended
   inspect-edit-verify loop for repository work.
 - [Evidence and sessions](../operations/evidence-and-sessions.md) explains the

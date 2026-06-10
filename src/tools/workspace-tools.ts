@@ -330,7 +330,7 @@ export async function gitStatus(args: JsonObject, context: ToolExecutionContext)
 
 export async function gitDiff(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const cwd = resolveInside(context.workspace.root, String(args.cwd ?? "."));
-  const pathArg = typeof args.path === "string" ? args.path : ".";
+  const pathArg = optionalPathFilter(args.path) ?? ".";
   const command = ["git", "diff", args.staged ? "--staged" : "", "--", shellQuote(pathArg)].filter(Boolean).join(" ");
   const result = await runRtkAwareShellCommand({
     config: context.config,
@@ -349,7 +349,8 @@ export async function gitDiff(args: JsonObject, context: ToolExecutionContext): 
 export async function gitShow(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const cwd = resolveInside(context.workspace.root, String(args.cwd ?? "."));
   const rev = shellQuote(String(args.rev));
-  const command = typeof args.path === "string" ? `git show --stat --patch ${rev} -- ${shellQuote(args.path)}` : `git show --stat --patch ${rev}`;
+  const pathArg = optionalPathFilter(args.path);
+  const command = pathArg ? `git show --stat --patch ${rev} -- ${shellQuote(pathArg)}` : `git show --stat --patch ${rev}`;
   const result = await runRtkAwareShellCommand({
     config: context.config,
     store: context.store,
@@ -362,6 +363,14 @@ export async function gitShow(args: JsonObject, context: ToolExecutionContext): 
     timeout_ms: 10_000,
   });
   return commandResult("git_show", result, context, "git.show");
+}
+
+function optionalPathFilter(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 export async function todoWrite(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {

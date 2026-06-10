@@ -263,11 +263,13 @@ export class PromptBuilder {
     if (planMode) {
       messages.push({ role: "user", content: `<plan.mode>\n${planMode}\n</plan.mode>` });
     }
-    const goalMode = renderGoalModeSection(readGoalState(this.store, session.session_id));
+    const goalState = readGoalState(this.store, session.session_id);
+    const goalMode = renderGoalModeSection(goalState);
     if (goalMode) {
       messages.push({ role: "user", content: `<goal.mode>\n${goalMode}\n</goal.mode>` });
     }
-    const autoresearchMode = renderAutoresearchModeSection(readAutoresearchState(this.store, session.session_id));
+    const autoresearchMode =
+      goalState?.enabled && goalState.goal.kind === "research" ? renderAutoresearchModeSection(readAutoresearchState(this.store, session.session_id)) : undefined;
     if (autoresearchMode) {
       messages.push({ role: "user", content: `<autoresearch.mode>\n${autoresearchMode}\n</autoresearch.mode>` });
     }

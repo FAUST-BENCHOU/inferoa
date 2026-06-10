@@ -576,7 +576,7 @@ function renderGoalTool(data: JsonObject, args: JsonObject = {}): string[] {
   }
   if (op === "set_strategy") {
     const strategy = objectField(goal.strategy);
-    lines.push(`${fg256(39, "strategy")} ${stringField(strategy.mode) ?? stringField(args.mode) ?? "unknown"}`);
+    lines.push(`${fg256(39, "approach")} ${goalApproachLabel(stringField(strategy.mode) ?? stringField(args.approach) ?? stringField(args.mode)) ?? "unknown"}`);
     if (stringField(strategy.rationale) ?? stringField(args.rationale)) {
       lines.push(`${fg256(39, "reason")} ${stringField(strategy.rationale) ?? stringField(args.rationale)}`);
     }
@@ -703,7 +703,7 @@ function goalToolDetail(group: ToolEventGroup, data: JsonObject, summary: string
   }
   if (op === "set_strategy") {
     const strategy = objectField(goal.strategy);
-    return stringField(strategy.mode) ?? stringField(group.args.mode) ?? compactSummary(summary);
+    return goalApproachLabel(stringField(strategy.mode) ?? stringField(group.args.approach) ?? stringField(group.args.mode)) ?? compactSummary(summary);
   }
   if (op === "update_ledger") {
     return goalLedgerJsonSummary(objectField(goal.ledger));
@@ -872,7 +872,7 @@ function renderAutoresearchTool(name: string, data: JsonObject): string[] {
         ...(stringField(harness.message) ? [`${fg256(39, "harness")} ${stringField(harness.message)}`] : []),
         ...renderAutoresearchProgressLines(progress),
       ];
-      return lines.length ? lines : [fg256(243, "Autoresearch initialization did not produce an experiment.")];
+      return lines.length ? lines : [fg256(243, "Research initialization did not produce an experiment.")];
     }
     return [
       `${fg256(39, "experiment")} ${stringField(experiment.name) ?? "unknown"}`,
@@ -882,7 +882,7 @@ function renderAutoresearchTool(name: string, data: JsonObject): string[] {
     ];
   }
   const notes = stringField(data.notes);
-  return notes ? renderIndentedPreview(notes, 6, "notes") : [fg256(243, "Autoresearch notes updated.")];
+  return notes ? renderIndentedPreview(notes, 6, "notes") : [fg256(243, "Research notes updated.")];
 }
 
 function renderAutoresearchProgressLines(progress: JsonObject): string[] {
@@ -1251,6 +1251,14 @@ function compactSummary(summary: string): string {
     .replace(/^Command exited\s+(\d+)$/i, "exited $1")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function goalApproachLabel(value: string | undefined): string | undefined {
+  if (value === "surgical" || value === "focus") return "focus";
+  if (value === "opportunistic" || value === "explore") return "explore";
+  if (value === "campaign" || value === "timebox") return "timebox";
+  if (value === "auto") return "auto";
+  return value;
 }
 
 function objectField(value: unknown): JsonObject {

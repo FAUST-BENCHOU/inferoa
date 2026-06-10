@@ -31,22 +31,23 @@ import {
   goalCompletionCandidateBlockMessage,
   goalCompletionReflectionBlockMessage,
   goalPlanningProgressSummary,
+  goalApproachName,
+  goalStrategyModeFromPublicName,
   readGoalHorizons,
   readGoalReflections,
   readGoalState,
   recordGoalCompletionReport,
-  validateTokenBudget,
   writeGoalState,
   type GoalHorizonSnapshot,
   type GoalReflectionSnapshot,
   type GoalRecord,
+  type GoalKind,
   type GoalStrategyInput,
-  type GoalStrategyMode,
   type GoalState,
 } from "../goals/state.js";
 import { runGoalSupervisor } from "../goals/supervisor.js";
 import { buildGoalWorkPrompt } from "../goals/supervisor-prompts.js";
-import { readAutoresearchState, setAutoresearchMode, summarizeAutoresearchProgress, type AutoresearchState } from "../autoresearch/state.js";
+import { readAutoresearchState, researchCompletionBlockMessage, setAutoresearchMode } from "../autoresearch/state.js";
 import { clonePlanState, createPlanState, planApprovalBlockMessage, readPlanState, writePlanState, type PlanState } from "../plans/state.js";
 import type {
   ClarifyRequest,
@@ -138,11 +139,17 @@ type SessionAction = "resume" | "new" | "rename" | "archive" | "all";
 type DaemonAction = "status" | "queue" | "attach" | "detach" | "cancel";
 type DoctorAction = "status" | "run";
 type ToolTraceMode = "compact" | "expanded";
-type GoalSetupChoice = "auto" | "explicit";
+type GoalKindChoice = "task" | "research";
+type GoalApproachChoice = "auto" | "focus" | "explore" | "timebox";
 type GoalCampaignHoursChoice = "auto" | "30m" | "2h" | "4h" | "custom";
 
 interface GoalStartOptions {
+  kind?: GoalKind;
   strategy?: GoalStrategyInput;
+}
+
+interface ParsedGoalModeOptions extends GoalStartOptions {
+  objective: string;
 }
 
 interface ComposerMetadataRightCache {
@@ -1312,9 +1319,6 @@ export class TuiApp {
           return;
         case "plan":
           await this.renderPlanView(args);
-          return;
-        case "autoresearch":
-          await this.renderAutoresearchView(args);
           return;
         case "tokenmaxxing":
           this.renderTokenmaxxingView();
@@ -2978,7 +2982,7 @@ export class TuiApp {
   }
 
   private async renderGoalView(args: string): Promise<void> {
-    const parsed = parseModeAction(args, new Set(["show", "set", "explicit", "plan", "pause", "resume", "budget", "complete", "drop"]));
+    const parsed = parseModeAction(args, new Set(["show", "mode", "pause", "resume", "budget", "complete", "drop"]));
     const existingSession = this.optionalSession();
     if (!existingSession && parsed.action === "show") {
       this.renderPanel("Goal", ["No active session yet. Use /goal <objective> to start one."]);
@@ -2992,33 +2996,49 @@ export class TuiApp {
         this.renderGoalPanel(current);
         return;
       }
-      const setup = await this.chooseGoalSetup();
       const objective = (await this.askModeObjective("Goal objective")).trim();
       if (!objective) {
         this.renderNotice("No goal objective entered.");
         return;
       }
+      const setup = await this.chooseGoalSetup();
       await this.startGoal(session, objective, setup);
       return;
     }
 
-    if (parsed.action === "explicit") {
-      const objective = parsed.rest.trim() || (await this.askModeObjective("Goal objective", current?.goal.objective)).trim();
-      if (!objective) {
-        this.renderNotice("No goal objective entered.");
-        return;
-      }
-      await this.startGoal(session, objective, await this.chooseGoalSetup(true));
+    if (parsed.action === "budget") {
+      this.renderNotice("Goal token budgets are no longer a slash command. Start a bounded goal through the model/tool flow when needed.");
       return;
     }
 
-    if (!parsed.action || parsed.action === "set") {
-      const objective = parsed.rest.trim() || (await this.askModeObjective("Goal objective", current?.goal.objective)).trim();
+    if (parsed.action === "mode") {
+      const start = parseGoalModeArgs(parsed.rest);
+      const setup = start ?? (await this.chooseGoalSetup());
+      const objective = start?.objective || (await this.askModeObjective("Goal objective", current?.goal.objective)).trim();
       if (!objective) {
         this.renderNotice("No goal objective entered.");
         return;
       }
-      await this.startGoal(session, objective);
+      const targetHours = setup.strategy?.mode === "campaign" && setup.strategy.target_hours === undefined ? await this.chooseCampaignHours() : setup.strategy?.target_hours;
+      await this.startGoal(session, objective, {
+        kind: setup.kind,
+        strategy: setup.strategy?.mode === "campaign" ? { ...setup.strategy, target_hours: targetHours } : setup.strategy,
+      });
+      return;
+    }
+
+    if (!parsed.action) {
+      const legacy = legacyGoalModeShortcut(parsed.rest);
+      if (legacy) {
+        this.renderNotice(`Use /goal mode ${legacy} <objective>. Goal modes now live under /goal mode.`);
+        return;
+      }
+      const objective = parsed.rest || (await this.askModeObjective("Goal objective", current?.goal.objective)).trim();
+      if (!objective) {
+        this.renderNotice("No goal objective entered.");
+        return;
+      }
+      await this.startGoal(session, objective, { kind: "task" });
       return;
     }
 
@@ -3028,7 +3048,7 @@ export class TuiApp {
     }
 
     if (!current) {
-      this.renderPanel("Goal", ["No goal set. Use /goal <objective> to start one."]);
+      this.renderPanel("Goal", ["No goal set. Use /goal <objective> or /goal mode auto <objective> to start one."]);
       return;
     }
 
@@ -3054,32 +3074,7 @@ export class TuiApp {
       next.goal.updated_at = new Date().toISOString();
       const saved = writeGoalState(this.app.store, session.session_id, next);
       this.renderGoalPanel(saved);
-      await this.enqueueGoalContinuation(saved.goal.objective);
-      return;
-    }
-
-    if (parsed.action === "plan") {
-      this.renderGoalPanel(current);
-      this.enqueueGoalPlanningContinuation(current.goal.objective);
-      return;
-    }
-
-    if (parsed.action === "budget") {
-      const raw = parsed.rest.trim() || (await this.ask("Goal budget (positive integer or off)", current.goal.token_budget === undefined ? "off" : String(current.goal.token_budget))).trim();
-      const next = cloneGoalState(current);
-      if (raw.toLowerCase() === "off") {
-        delete next.goal.token_budget;
-      } else {
-        const value = Number.parseInt(raw, 10);
-        validateTokenBudget(value);
-        next.goal.token_budget = value;
-        if (next.goal.status === "budget-limited" && next.goal.tokens_used < value) {
-          next.goal.status = "active";
-          next.enabled = true;
-        }
-      }
-      next.goal.updated_at = new Date().toISOString();
-      this.renderGoalPanel(writeGoalState(this.app.store, session.session_id, next));
+      await this.enqueueGoalContinuation(saved);
       return;
     }
 
@@ -3111,6 +3106,14 @@ export class TuiApp {
           this.renderGoalPanel(current);
           return;
         }
+        if (current.goal.kind === "research") {
+          const researchMessage = researchCompletionBlockMessage(readAutoresearchState(this.app.store, session.session_id));
+          if (researchMessage) {
+            this.renderNotice(researchMessage);
+            this.renderGoalPanel(current);
+            return;
+          }
+        }
       }
       if (summary) {
         next.goal.summary = summary;
@@ -3120,6 +3123,9 @@ export class TuiApp {
       next.goal.updated_at = new Date().toISOString();
       const runId = parsed.action === "complete" ? randomId("goal") : undefined;
       const saved = writeGoalState(this.app.store, session.session_id, next, runId);
+      if (saved.goal.kind === "research") {
+        setAutoresearchMode(this.app.store, session.session_id, { mode: "off", goal: saved.goal.objective }, runId);
+      }
       if (parsed.action === "complete" && runId) {
         recordGoalCompletionReport(this.app.store, session.session_id, runId);
       }
@@ -3128,48 +3134,43 @@ export class TuiApp {
   }
 
   private async startGoal(session: SessionRecord, objective: string, options: GoalStartOptions = {}): Promise<void> {
-    const state = writeGoalState(this.app.store, session.session_id, createGoalState({ objective, strategy: options.strategy }));
+    const state = writeGoalState(this.app.store, session.session_id, createGoalState({ objective, kind: options.kind, strategy: options.strategy }));
+    if (state.goal.kind === "research") {
+      setAutoresearchMode(this.app.store, session.session_id, { mode: "on", goal: state.goal.objective });
+    }
     this.renderGoalPanel(state);
-    await this.enqueueGoalContinuation(objective);
+    await this.enqueueGoalContinuation(state);
   }
 
-  private async chooseGoalSetup(forceExplicit = false): Promise<GoalStartOptions> {
-    const choice = forceExplicit
-      ? "explicit"
-      : await this.selectOption<GoalSetupChoice>(
-          "Goal Mode",
-          [
-            { value: "auto", label: "Auto", description: "Inferoa decides after the first scan." },
-            { value: "explicit", label: "Explicit", description: "Choose the strategy yourself now." },
-          ],
-          0,
-        );
-    if (choice === "auto") {
-      return {};
-    }
-    const mode = await this.selectOption<GoalStrategyMode>(
-      "Goal Strategy",
+  private async chooseGoalSetup(): Promise<GoalStartOptions> {
+    const kind = await this.selectOption<GoalKindChoice>(
+      "Goal Type",
       [
-        { value: "surgical", label: "Surgical", description: "Finish the specific request, then verify." },
-        { value: "opportunistic", label: "Opportunistic", description: "Also improve nearby high-value issues." },
-        { value: "campaign", label: "Campaign", description: "Keep working until a time checkpoint." },
+        { value: "task", label: "Task", description: "Ordinary implementation or investigation goal." },
+        { value: "research", label: "Research", description: "Metric-driven experimental goal." },
       ],
       0,
     );
-    const targetHours = mode === "campaign" ? await this.chooseCampaignHours() : undefined;
+    const approach = await this.selectOption<GoalApproachChoice>(
+      "Goal Approach",
+      [
+        { value: "auto", label: "Auto", description: "Inferoa decides after orientation." },
+        { value: "focus", label: "Focus", description: "Finish only the current goal." },
+        { value: "explore", label: "Explore", description: "Explore related high-value directions." },
+        { value: "timebox", label: "Timebox", description: "Keep going until a time checkpoint." },
+      ],
+      0,
+    );
+    const targetHours = approach === "timebox" ? await this.chooseCampaignHours() : undefined;
     return {
-      strategy: {
-        mode,
-        inferred: false,
-        target_hours: targetHours,
-        rationale: "Explicit user selection.",
-      },
+      kind,
+      strategy: goalStrategyInputForApproach(approach, targetHours),
     };
   }
 
   private async chooseCampaignHours(): Promise<number | undefined> {
     const choice = await this.selectOption<GoalCampaignHoursChoice>(
-      "Campaign Hours",
+      "Timebox",
       [
         { value: "auto", label: "Auto", description: "Inferoa picks the checkpoint time." },
         { value: "30m", label: "30m", description: "0.5h quick run." },
@@ -3191,7 +3192,7 @@ export class TuiApp {
     if (choice === "4h") {
       return 4;
     }
-    const raw = (await this.ask("Campaign Time", "4h")).trim();
+    const raw = (await this.ask("Timebox", "4h")).trim();
     const value = parseGoalCampaignHours(raw);
     if (value === undefined) {
       this.renderNotice("Use a positive time like 2h or 90m.");
@@ -3200,7 +3201,7 @@ export class TuiApp {
     return value;
   }
 
-  private async enqueueGoalContinuation(objective: string): Promise<void> {
+  private async enqueueGoalContinuation(stateOrObjective: GoalState | string): Promise<void> {
     if (!this.app.config.model_setup.base_url || !this.app.config.model_setup.model) {
       this.renderNotice("Goal is saved. Configure a model with /setup before triggering model work.");
       return;
@@ -3209,7 +3210,8 @@ export class TuiApp {
     if (!session) {
       return;
     }
-    this.enqueuePrompt(buildGoalWorkPrompt(objective), { renderPrompt: false });
+    const goal = typeof stateOrObjective === "string" ? stateOrObjective : stateOrObjective.goal;
+    this.enqueuePrompt(buildGoalWorkPrompt(goal), { renderPrompt: false });
   }
 
   private enqueueGoalPlanningContinuation(objective: string): void {
@@ -3238,10 +3240,11 @@ export class TuiApp {
     const reflections = session ? readGoalReflections(this.app.store, session.session_id, goal.id) : [];
     const lines = renderGoalPanelStatus(status, goal.objective, width);
     const usage = goalPanelUsage(goal);
+    appendGoalPanelField(lines, "type", goal.kind, width, 244);
     if (usage) {
       lines.push(fg256(244, usage));
     }
-    appendGoalPanelField(lines, "strategy", goalPanelStrategy(goal), width, 244);
+    appendGoalPanelField(lines, "approach", goalPanelStrategy(goal), width, 244);
     appendGoalPanelField(lines, "candidates", goalPanelCandidates(goal), width, 244);
     if (goal.summary) {
       appendGoalPanelField(lines, "summary", goal.summary, width);
@@ -3449,92 +3452,6 @@ export class TuiApp {
           fg256(244, "Drafting. The agent will inspect, ask clarifying questions when needed, then present a plan for approval."),
         ];
     this.writeTranscript(`${lines.join("\n")}\n\n`);
-  }
-
-  private async renderAutoresearchView(args: string): Promise<void> {
-    const parsed = parseModeAction(args, new Set(["status", "off", "clear"]));
-    const existingSession = this.optionalSession();
-    if (!existingSession && parsed.action === "status") {
-      this.renderPanel("Autoresearch", ["No active session yet. Use /autoresearch <goal> to start one."]);
-      return;
-    }
-    const session = existingSession ?? this.createModeSession(titleFromPromptForMode(parsed.rest || "Autoresearch"));
-    const state = readAutoresearchState(this.app.store, session.session_id);
-
-    if (parsed.action === "status") {
-      this.renderAutoresearchPanel(state);
-      return;
-    }
-    if (parsed.action === "off") {
-      this.renderAutoresearchPanel(setAutoresearchMode(this.app.store, session.session_id, { mode: "off", goal: state.goal }));
-      return;
-    }
-    if (parsed.action === "clear") {
-      this.renderAutoresearchPanel(setAutoresearchMode(this.app.store, session.session_id, { mode: "clear" }));
-      return;
-    }
-
-    if (!parsed.rest && state.enabled) {
-      this.renderAutoresearchPanel(setAutoresearchMode(this.app.store, session.session_id, { mode: "off", goal: state.goal }));
-      return;
-    }
-
-    const goal = parsed.rest.trim() || (await this.askModeObjective("Autoresearch goal", state.goal)).trim();
-    const next = setAutoresearchMode(this.app.store, session.session_id, { mode: "on", goal: goal || state.goal });
-    await this.renderAutoresearchStartSummary(goal || state.goal, next);
-    this.renderAutoresearchPanel(next);
-    if (!this.app.config.model_setup.base_url || !this.app.config.model_setup.model) {
-      this.renderNotice("Autoresearch is enabled. Configure a model with /setup before triggering model work.");
-      return;
-    }
-    this.enqueuePrompt(
-      [
-        goal ? `Autoresearch goal: ${goal}` : "Autoresearch is enabled.",
-        "Set up or continue the benchmark-driven experiment loop. If no experiment exists, create ./autoresearch.sh, validate it, then call init_experiment.",
-      ].join("\n"),
-    );
-  }
-
-  private async renderAutoresearchStartSummary(goal: string | undefined, state: AutoresearchState): Promise<void> {
-    let harness = "missing";
-    try {
-      await fs.access(path.join(this.app.workspace.root, "autoresearch.sh"));
-      harness = "present";
-    } catch {
-      harness = "missing";
-    }
-    const experiment = state.experiment;
-    this.renderPanel("Autoresearch Preflight", [
-      `${fg256(39, "Goal")} ${goal ?? experiment?.goal ?? "none"}`,
-      `${fg256(39, "Harness")} ${harness} at ./autoresearch.sh`,
-      `${fg256(39, "Pending run")} ${experiment?.pending_run ? `run ${experiment.pending_run.id} must be logged first` : "none"}`,
-      `${fg256(39, "Prompt cache")} stable system prefix; autoresearch context is injected at the current turn tail`,
-      `${fg256(39, "Loop")} validate harness -> run baseline -> log result -> iterate`,
-    ]);
-  }
-
-  private renderAutoresearchPanel(state: AutoresearchState): void {
-    const experiment = state.experiment;
-    if (!state.enabled && !experiment) {
-      this.renderPanel("Autoresearch", ["disabled"]);
-      return;
-    }
-    const progress = experiment ? summarizeAutoresearchProgress(experiment) : undefined;
-    this.renderPanel("Autoresearch", [
-      `${fg256(39, "Mode")} ${state.enabled ? "on" : "off"}`,
-      `${fg256(39, "Goal")} ${state.goal ?? experiment?.goal ?? "none"}`,
-      ...(experiment
-        ? [
-            `${fg256(39, "Experiment")} ${experiment.name}`,
-            `${fg256(39, "Metric")} ${experiment.primary_metric} (${experiment.metric_unit || "unitless"}, ${experiment.direction} is better)`,
-            `${fg256(39, "Best")} ${experiment.best_metric ?? "none"}`,
-            `${fg256(39, "Runs")} ${progress?.logged_runs ?? 0} logged · ${progress?.kept_runs ?? 0}${progress?.keep_cap ? `/${progress.keep_cap}` : ""} keep${experiment.pending_run ? ` · pending ${experiment.pending_run.id}` : ""}`,
-            ...(experiment.harness_status ? [`${fg256(39, "Harness")} ${experiment.harness_status.message}`] : []),
-          ]
-        : [fg256(244, "Phase 1: create ./autoresearch.sh and call init_experiment.")]),
-      "",
-      `${fg256(39, "/autoresearch status")} show · ${fg256(39, "/autoresearch off")} disable · ${fg256(39, "/autoresearch clear")} clear`,
-    ]);
   }
 
   private async manageSkillSelection(config: VllmAgentConfig, initialQuery = ""): Promise<string[]> {
@@ -4155,9 +4072,8 @@ export class TuiApp {
       "",
       fg256(39, "Subcommands"),
       `  /skills    list · manage`,
-      `  /goal      show · set · pause · resume · budget · complete · drop`,
+      `  /goal      mode auto|research|focus|explore|timebox · show · pause · resume · complete · drop`,
       `  /plan      show · set · pause · resume · approve · drop`,
-      `  /autoresearch status · off · clear`,
       `  /tools     expand · compact · last`,
       `  /daemon    status · queue · attach · detach · cancel`,
       `  /sessions  resume · new · all`,
@@ -4660,6 +4576,77 @@ function parseModeAction(args: string, actions: Set<string>): { action?: string;
   return { rest: trimmed };
 }
 
+function parseGoalModeArgs(args: string): ParsedGoalModeOptions | undefined {
+  const parts = args.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) {
+    return undefined;
+  }
+  let kind: GoalKind = "task";
+  let approach: GoalApproachChoice = "auto";
+  let targetHours: number | undefined;
+  const first = parts[0]?.toLowerCase();
+  if (first === "auto") {
+    parts.shift();
+    if (parts[0]?.toLowerCase() === "research") {
+      kind = "research";
+      parts.shift();
+    }
+  } else if (first === "research") {
+    kind = "research";
+    parts.shift();
+    if (parts[0]?.toLowerCase() === "auto") {
+      parts.shift();
+    }
+  } else if (first === "focus" || first === "explore" || first === "timebox") {
+    approach = first;
+    parts.shift();
+  } else {
+    return {
+      kind,
+      strategy: undefined,
+      objective: parts.join(" ").trim(),
+    };
+  }
+  const maybeApproach = parts[0]?.toLowerCase();
+  if (kind === "research" && (maybeApproach === "focus" || maybeApproach === "explore" || maybeApproach === "timebox")) {
+    approach = maybeApproach;
+    parts.shift();
+  }
+  if (approach === "timebox" && parts[0]) {
+    const parsed = parseGoalCampaignHours(parts[0]);
+    if (parsed !== undefined) {
+      targetHours = parsed;
+      parts.shift();
+    }
+  }
+  return {
+    kind,
+    strategy: goalStrategyInputForApproach(approach, targetHours),
+    objective: parts.join(" ").trim(),
+  };
+}
+
+function legacyGoalModeShortcut(args: string): string | undefined {
+  const head = args.trim().split(/\s+/)[0]?.toLowerCase();
+  return head === "auto" || head === "research" || head === "focus" || head === "explore" || head === "timebox" ? head : undefined;
+}
+
+function goalStrategyInputForApproach(approach: GoalApproachChoice, targetHours?: number): GoalStrategyInput | undefined {
+  if (approach === "auto") {
+    return undefined;
+  }
+  const mode = goalStrategyModeFromPublicName(approach);
+  if (!mode) {
+    return undefined;
+  }
+  return {
+    mode,
+    inferred: false,
+    target_hours: mode === "campaign" ? targetHours : undefined,
+    rationale: `User selected ${approach} approach.`,
+  };
+}
+
 function goalPanelUsage(goal: GoalRecord): string | undefined {
   const parts: string[] = [];
   if (goal.token_budget !== undefined || goal.tokens_used > 0) {
@@ -4677,11 +4664,10 @@ function goalPanelUsage(goal: GoalRecord): string | undefined {
 function goalPanelStrategy(goal: GoalRecord): string {
   const strategy = goal.strategy;
   if (!strategy) {
-    return "auto · opportunistic";
+    return "auto";
   }
   return [
-    strategy.inferred ? "auto" : "explicit",
-    strategy.mode,
+    goalApproachName(strategy),
     strategy.target_hours !== undefined ? formatGoalCampaignHours(strategy.target_hours) : undefined,
   ].filter((part): part is string => Boolean(part)).join(" · ");
 }

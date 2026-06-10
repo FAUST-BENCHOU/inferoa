@@ -33,7 +33,7 @@ test("mode footer keeps draft plan and blocked goal details compact", () => {
 test("mode footer hides inactive or closed modes", () => {
   const rendered = renderModeMetadataRight({
     plan: planState({ status: "approved", enabled: false, body: "ready" }),
-    autoresearch: { enabled: false },
+    autoresearch: { enabled: false, experiments: [] },
     goal: goalState({ status: "complete", enabled: false }),
   });
 
@@ -60,6 +60,7 @@ function goalState(input: { status?: GoalState["goal"]["status"]; enabled?: bool
     goal: {
       id: "goal_1",
       objective: input.objective ?? "Improve long horizon flow",
+      kind: "task",
       status: input.status ?? "active",
       tokens_used: 0,
       time_used_ms: input.timeUsedMs ?? 0,
@@ -86,8 +87,10 @@ function autoresearchState(input: { pendingRunId?: number } = {}): AutoresearchS
   return {
     enabled: true,
     goal: "reduce benchmark latency",
-    experiment: {
+    active_experiment_name: "latency",
+    experiments: [{
       name: "latency",
+      status: "active",
       primary_metric: "latency_ms",
       metric_unit: "ms",
       direction: "lower",
@@ -111,6 +114,6 @@ function autoresearchState(input: { pendingRunId?: number } = {}): AutoresearchS
           }
         : undefined,
       results: [],
-    },
+    }],
   };
 }

@@ -1,4 +1,4 @@
-import type { AutoresearchState } from "../autoresearch/state.js";
+import { activeAutoresearchExperiment, type AutoresearchState } from "../autoresearch/state.js";
 import { goalDurationMs, type GoalState, type GoalStepStatus } from "../goals/state.js";
 import type { PlanState } from "../plans/state.js";
 import { fg256 } from "./ansi.js";
@@ -40,7 +40,7 @@ function renderAutoresearchMode(state: AutoresearchState | undefined): string | 
   if (!state?.enabled) {
     return undefined;
   }
-  const experiment = state.experiment;
+  const experiment = activeAutoresearchExperiment(state);
   if (experiment?.pending_run) {
     return modeToken("Research", `pending ${experiment.pending_run.id}`);
   }

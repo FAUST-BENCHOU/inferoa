@@ -11,11 +11,16 @@ test("slash parser uses clear as the fresh-session command", () => {
   assert.equal(parsed.error, undefined);
 });
 
-test("slash parser supports goal and autoresearch chat commands", () => {
+test("slash parser supports goal chat commands and keeps research under goal", () => {
   const goal = parseSlashCommand("/goal ship the feature");
   assert.equal(goal.command?.name, "goal");
   assert.equal(goal.args, "ship the feature");
   assert.equal(goal.error, undefined);
+
+  const researchGoal = parseSlashCommand("/goal mode research reduce benchmark latency");
+  assert.equal(researchGoal.command?.name, "goal");
+  assert.equal(researchGoal.args, "mode research reduce benchmark latency");
+  assert.equal(researchGoal.error, undefined);
 
   const plan = parseSlashCommand("/plan add offline retry support");
   assert.equal(plan.command?.name, "plan");
@@ -23,9 +28,8 @@ test("slash parser supports goal and autoresearch chat commands", () => {
   assert.equal(plan.error, undefined);
 
   const autoresearch = parseSlashCommand("/autoresearch reduce benchmark latency");
-  assert.equal(autoresearch.command?.name, "autoresearch");
-  assert.equal(autoresearch.args, "reduce benchmark latency");
-  assert.equal(autoresearch.error, undefined);
+  assert.equal(autoresearch.command, undefined);
+  assert.equal(autoresearch.error, "Unrecognized command '/autoresearch'. Type '/' for commands.");
 });
 
 test("slash parser exposes system command and keeps endpoint aliases", () => {
@@ -110,7 +114,7 @@ test("slash registry exposes chat subcommands for completion", () => {
   assert.equal(slashCommandWithSubcommands("/doctor"), "doctor");
   assert.equal(slashCommandWithSubcommands("/goal"), "goal");
   assert.equal(slashCommandWithSubcommands("/plan"), "plan");
-  assert.equal(slashCommandWithSubcommands("/autoresearch"), "autoresearch");
+  assert.equal(slashCommandWithSubcommands("/autoresearch"), undefined);
   assert.equal(slashCommandWithSubcommands("/sessions"), "sessions");
   assert.equal(slashCommandWithSubcommands("/clear"), undefined);
   assert.equal(parseSlashCommand("/jobs").error, "Unrecognized command '/jobs'. Type '/' for commands.");
@@ -130,15 +134,22 @@ test("slash registry exposes chat subcommands for completion", () => {
   );
   assert.deepEqual(
     slashSubcommands("goal").map((item) => item.value),
-    ["/goal show", "/goal set", "/goal plan", "/goal pause", "/goal resume", "/goal budget", "/goal complete", "/goal drop"],
+    [
+      "/goal show",
+      "/goal mode auto",
+      "/goal mode research",
+      "/goal mode focus",
+      "/goal mode explore",
+      "/goal mode timebox",
+      "/goal pause",
+      "/goal resume",
+      "/goal complete",
+      "/goal drop",
+    ],
   );
   assert.deepEqual(
     slashSubcommands("plan").map((item) => item.value),
     ["/plan show", "/plan set", "/plan pause", "/plan resume", "/plan approve", "/plan drop"],
-  );
-  assert.deepEqual(
-    slashSubcommands("autoresearch").map((item) => item.value),
-    ["/autoresearch status", "/autoresearch off", "/autoresearch clear"],
   );
   assert.deepEqual(
     slashSubcommands("access").map((item) => item.value),

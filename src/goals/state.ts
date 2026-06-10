@@ -7,6 +7,7 @@ export type GoalStatus = "active" | "paused" | "budget-limited" | "complete" | "
 export type GoalStepStatus = "pending" | "in_progress" | "completed" | "blocked" | "skipped";
 export type GoalReflectionDecision = "expand" | "done" | "blocked";
 export type GoalReflectionStatus = "running" | "completed";
+export type GoalKind = "task" | "research";
 export type GoalStrategyMode = "surgical" | "opportunistic" | "campaign";
 export type GoalCandidateValue = "high" | "medium" | "low";
 export type GoalCandidateStatus = "open" | "done" | "rejected";
@@ -16,6 +17,7 @@ const PLAN_PROMPT_BODY_LIMIT = 6000;
 export interface GoalRecord {
   id: string;
   objective: string;
+  kind: GoalKind;
   status: GoalStatus;
   token_budget?: number;
   tokens_used: number;
@@ -153,6 +155,7 @@ export interface GoalCompletionReport {
 
 export interface GoalCreateInput {
   objective: string;
+  kind?: GoalKind;
   token_budget?: number;
   strategy?: GoalStrategyInput;
 }
@@ -278,12 +281,14 @@ export function createGoalState(input: GoalCreateInput, now = new Date()): GoalS
   }
   validateTokenBudget(input.token_budget);
   const timestamp = now.toISOString();
+  const kind = input.kind ?? "task";
   const strategy = createGoalStrategy(input.strategy);
   return {
     enabled: true,
     goal: {
       id: randomId("goal"),
       objective,
+      kind,
       status: "active",
       token_budget: input.token_budget,
       tokens_used: 0,
@@ -294,14 +299,27 @@ export function createGoalState(input: GoalCreateInput, now = new Date()): GoalS
       horizon_generation: 0,
       strategy,
       ledger: emptyGoalLedger(timestamp),
-      planning: createGoalPlanning(horizonZeroPlanningInput(), now),
+      planning: createGoalPlanning(horizonZeroPlanningInput(kind), now),
       created_at: timestamp,
       updated_at: timestamp,
     },
   };
 }
 
-function horizonZeroPlanningInput(): GoalPlanningInput {
+function horizonZeroPlanningInput(kind: GoalKind): GoalPlanningInput {
+  if (kind === "research") {
+    return {
+      summary: "Research cycle 0 · Orientation and baseline",
+      active_step_id: "read_objective_and_constraints",
+      steps: [
+        { id: "read_objective_and_constraints", title: "Read objective and constraints", status: "in_progress" },
+        { id: "inspect_workspace_shape", title: "Inspect workspace shape", status: "pending" },
+        { id: "identify_metrics_and_harness", title: "Identify metrics, guardrails, and benchmark harness", status: "pending" },
+        { id: "establish_baseline", title: "Establish baseline experiment evidence", status: "pending" },
+        { id: "seed_research_experiments", title: "Seed research experiments and approach", status: "pending" },
+      ],
+    };
+  }
   return {
     summary: "Horizon 0 · Orientation",
     active_step_id: "read_objective_and_constraints",
@@ -309,7 +327,7 @@ function horizonZeroPlanningInput(): GoalPlanningInput {
       { id: "read_objective_and_constraints", title: "Read objective and constraints", status: "in_progress" },
       { id: "inspect_workspace_shape", title: "Inspect workspace shape", status: "pending" },
       { id: "identify_candidate_sources", title: "Identify candidate sources", status: "pending" },
-      { id: "infer_goal_strategy", title: "Infer goal strategy and seed candidates", status: "pending" },
+      { id: "infer_goal_strategy", title: "Infer goal approach and seed candidates", status: "pending" },
     ],
   };
 }
@@ -722,6 +740,7 @@ export function renderGoalModeSection(state: GoalState | undefined): string | un
   return [
     "A goal-mode objective is active for this session.",
     renderTrustedObjective(goal.objective),
+    `goal type: ${goal.kind}`,
     statusLine,
     budgetLine,
     loopLine,
@@ -743,6 +762,27 @@ export function renderGoalModeSection(state: GoalState | undefined): string | un
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
+}
+
+export function goalApproachName(strategy: GoalStrategy | undefined): "auto" | "focus" | "explore" | "timebox" {
+  const current = strategy ?? createGoalStrategy();
+  if (current.inferred) {
+    return "auto";
+  }
+  return goalStrategyModePublicName(current.mode);
+}
+
+export function goalStrategyModePublicName(mode: GoalStrategyMode): "focus" | "explore" | "timebox" {
+  if (mode === "surgical") return "focus";
+  if (mode === "campaign") return "timebox";
+  return "explore";
+}
+
+export function goalStrategyModeFromPublicName(value: unknown): GoalStrategyMode | undefined {
+  if (value === "focus") return "surgical";
+  if (value === "explore") return "opportunistic";
+  if (value === "timebox") return "campaign";
+  return undefined;
 }
 
 export function completionBudgetReport(goal: GoalRecord): string | undefined {
@@ -774,6 +814,7 @@ export function cloneGoalState(state: GoalState): GoalState {
     enabled: state.enabled,
     goal: {
       ...state.goal,
+      kind: state.goal.kind ?? "task",
       verification_evidence: state.goal.verification_evidence ? cloneJsonObject(state.goal.verification_evidence) : undefined,
       strategy: state.goal.strategy ? cloneGoalStrategy(state.goal.strategy) : undefined,
       ledger: state.goal.ledger ? cloneGoalLedger(state.goal.ledger) : undefined,
@@ -940,6 +981,7 @@ function parseGoalState(data: JsonObject): GoalState | undefined {
     goal: {
       id,
       objective,
+      kind: parseGoalKind(candidate.kind) ?? "task",
       status,
       token_budget: tokenBudget,
       tokens_used: numeric(candidate.tokens_used),
@@ -963,6 +1005,10 @@ function parseGoalState(data: JsonObject): GoalState | undefined {
       updated_at: typeof candidate.updated_at === "string" ? candidate.updated_at : "",
     },
   };
+}
+
+function parseGoalKind(value: unknown): GoalKind | undefined {
+  return value === "task" || value === "research" ? value : undefined;
 }
 
 function renderApprovedPlan(plan: GoalPlanSnapshot, hasInternalPlanning: boolean): string {
@@ -1041,9 +1087,9 @@ function renderLatestReflection(goal: GoalRecord): string | undefined {
 function renderGoalStrategy(strategy: GoalStrategy | undefined): string {
   const current = strategy ?? createGoalStrategy();
   return [
-    "Goal strategy:",
-    `mode: ${current.mode}`,
-    `source: ${current.inferred ? "auto" : "explicit"}`,
+    "Goal approach:",
+    `mode: ${goalApproachName(current)}`,
+    `source: ${current.inferred ? "auto" : "selected"}`,
     current.target_hours !== undefined ? `target hours: ${formatGoalTargetHours(current.target_hours)}` : undefined,
     current.rationale ? `rationale: ${escapeXmlText(truncateEvidenceText(current.rationale, 500))}` : undefined,
   ]

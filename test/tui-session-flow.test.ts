@@ -242,7 +242,7 @@ test("composer metadata reuses mode state while session events are unchanged", a
   }
 });
 
-test("bare goal command chooses auto or explicit before asking for the objective", async () => {
+test("bare goal command asks objective before goal type and approach setup", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-setup-order-"));
   const store = await SessionStore.open(stateDir);
   try {
@@ -282,7 +282,47 @@ test("bare goal command chooses auto or explicit before asking for the objective
 
     await view.renderGoalView("");
 
-    assert.deepEqual(calls, ["setup", "objective", "start:Improve codebase"]);
+    assert.deepEqual(calls, ["objective", "setup", "start:Improve codebase"]);
+  } finally {
+    store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("goal mode command starts a typed research approach", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-mode-command-"));
+  const store = await SessionStore.open(stateDir);
+  try {
+    const workspace = { id: "w_goal_mode_command", root: stateDir, alias: "goal-mode-command" };
+    const session = store.createSession(workspace, "goal mode command");
+    const tui = new TuiApp(
+      {
+        config: structuredClone(DEFAULT_CONFIG),
+        configFiles: [],
+        workspace,
+        store,
+        runtime: {},
+      } as never,
+    );
+    const calls: Array<{ objective: string; options?: { kind?: string; strategy?: { mode?: string } } }> = [];
+    const view = tui as unknown as {
+      renderGoalView: (args: string) => Promise<void>;
+      optionalSession: () => { session_id: string } | undefined;
+      createModeSession: (title: string) => { session_id: string };
+      startGoal: (session: { session_id: string }, objective: string, options?: { kind?: string; strategy?: { mode?: string } }) => Promise<void>;
+    };
+    view.optionalSession = () => undefined;
+    view.createModeSession = () => session;
+    view.startGoal = async (_session, objective, options) => {
+      calls.push({ objective, options });
+    };
+
+    await view.renderGoalView("mode research explore Improve scheduler latency");
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.objective, "Improve scheduler latency");
+    assert.equal(calls[0]?.options?.kind, "research");
+    assert.equal(calls[0]?.options?.strategy?.mode, "opportunistic");
   } finally {
     store.close();
     await rm(stateDir, { recursive: true, force: true });
@@ -445,7 +485,8 @@ test("goal show renders wrapped tree horizons without repeated command hints", a
     assert.match(plain, /^complete improve codebase/m);
     assert.doesNotMatch(plain, /complete \(paused\)/);
     assert.match(plain, /reflections 2 recorded .*latest done/);
-    assert.match(plain, /strategy auto .*opportunistic/);
+    assert.match(plain, /type task/);
+    assert.match(plain, /approach auto/);
     assert.match(plain, /candidates 0 open .*0 done .*0 dismissed/);
     assert.match(plain, /◇ Horizon 0 .*Initial audit and repair horizon/);
     assert.match(plain, /◆ Horizon 1 current .*Found a second horizon/);

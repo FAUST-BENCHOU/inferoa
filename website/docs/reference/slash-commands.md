@@ -16,9 +16,8 @@ subcommands.
 | `/system` | Show model, web search, Omni, and runtime status (also `/endpoint`, `/endpoints`) |
 | `/access` | Change this workspace's file and tool access |
 | `/skills` | List discovered skills or manage enabled skills |
-| [`/goal`](../workflows/goal-mode.md) | Run `/goal` to start a long-horizon recursive goal |
+| [`/goal`](../workflows/goal-mode.md) | Start task and research goals |
 | [`/plan`](../workflows/plan-mode.md) | Start or manage plan mode |
-| [`/autoresearch`](../workflows/autoresearch-mode.md) | Start or manage autoresearch experiments |
 | `/tokenmaxxing` | Show token, cache, RTK, and routing savings (also `/cache`, `/rtk`, `/activity`, `/evidence`, `/history`) |
 | `/context` | Show context usage, compression state, and code intelligence |
 | `/tools` | Show fixed tool schemas and renderer status |
@@ -36,11 +35,13 @@ subcommands.
 # Goal mode
 /goal show                   Show active goal state
 /goal                        Start a recursive long-horizon goal
-/goal set                    Set or replace the goal objective
-/goal plan                   Update the goal's internal plan
+/goal mode auto              Start a default auto goal
+/goal mode focus             Start a focused goal
+/goal mode explore           Start an exploratory goal
+/goal mode timebox 2h        Start a timeboxed goal
+/goal mode research          Start a metric-driven research goal
 /goal pause                  Pause the current goal
 /goal resume                 Resume a paused goal
-/goal budget                 Set or clear the goal token budget
 /goal complete               Mark the goal complete
 /goal drop                   Drop the current goal
 
@@ -51,11 +52,6 @@ subcommands.
 /plan resume                 Resume a paused plan
 /plan approve                Approve the current plan for execution
 /plan drop                   Drop the current plan
-
-# Autoresearch
-/autoresearch status         Show autoresearch state
-/autoresearch off            Disable autoresearch mode
-/autoresearch clear          Clear autoresearch state
 
 # Skills
 /skills list                 Show discovered skills

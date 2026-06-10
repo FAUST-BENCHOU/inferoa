@@ -181,7 +181,7 @@ const DEFINITIONS = [
     parameters: objectSchema({
       cwd: string("Optional workspace-relative cwd."),
       staged: boolean("Show staged diff."),
-      path: string("Optional path filter."),
+      path: string("Optional path filter. Omit or pass empty to show the whole workspace diff."),
     }),
   },
   {
@@ -191,7 +191,7 @@ const DEFINITIONS = [
     parameters: objectSchema({
       rev: string("Revision or object."),
       cwd: string("Optional workspace-relative cwd."),
-      path: string("Optional path filter."),
+      path: string("Optional path filter. Omit or pass empty for the whole revision."),
     }, ["rev"]),
   },
   {
@@ -223,9 +223,10 @@ const DEFINITIONS = [
         op: stringEnum("Goal operation.", ["create", "get", "decompose", "update_plan", "update_step", "set_strategy", "update_ledger", "reflect", "resume", "complete", "drop"]),
         objective: string("Goal objective. Required for op=create."),
         token_budget: number("Optional positive token budget for op=create."),
-        mode: stringEnum("Goal strategy mode for op=create or op=set_strategy.", ["surgical", "opportunistic", "campaign"]),
-        inferred: boolean("Whether the strategy was inferred automatically. Use true for auto mode and false for explicit user choice."),
-        target_hours: number("Optional campaign time budget in hours. Do not expose target horizon counts to users."),
+        kind: stringEnum("Goal type for op=create.", ["task", "research"]),
+        approach: stringEnum("Goal approach for op=create or op=set_strategy. Omit for auto.", ["focus", "explore", "timebox"]),
+        inferred: boolean("Whether the approach was inferred automatically. Use true for auto and false for selected approach."),
+        target_hours: number("Optional timebox budget in hours. Do not expose target horizon counts to users."),
         rationale: string("Short rationale for the selected strategy."),
         open: { type: "array", description: "Open candidate ledger entries for op=update_ledger.", items: goalCandidate },
         done: { type: "array", description: "Completed candidate ledger entries for op=update_ledger.", items: goalCandidate },
@@ -293,7 +294,7 @@ const DEFINITIONS = [
   },
   {
     name: "init_experiment",
-    description: "Initialize an active autoresearch experiment after ./autoresearch.sh exists. Defines the primary metric, direction, scope, constraints, and soft iteration cap.",
+    description: "Initialize or activate a research experiment after ./autoresearch.sh exists. Defines the primary metric, direction, scope, constraints, and soft iteration cap.",
     permission: "read",
     parameters: objectSchema(
       {
@@ -340,11 +341,12 @@ const DEFINITIONS = [
   },
   {
     name: "log_experiment",
-    description: "Log the latest pending autoresearch run. Use keep for accepted improvements, discard/crash/checks_failed for failed runs. Records the primary metric, description, secondary metrics, and ASI metadata.",
+    description: "Log the latest pending research run. Use keep for accepted improvements, discard/crash/checks_failed for failed runs. Records the primary metric, description, secondary metrics, and ASI metadata.",
     permission: "read",
     parameters: objectSchema(
       {
         status: stringEnum("Run outcome.", ["keep", "discard", "crash", "checks_failed"]),
+        experiment_status: stringEnum("Optional lifecycle status for the experiment after this run.", ["active", "completed", "rejected"]),
         metric: number("Primary metric value to record. Optional when the pending run parsed the primary metric."),
         description: string("Short description of what changed or what the run measured."),
         metrics: jsonObject("Optional secondary metric values."),
@@ -454,9 +456,10 @@ const DEFINITIONS = [
   },
   {
     name: "run_experiment",
-    description: "Run the active autoresearch benchmark harness with `bash autoresearch.sh`, capture output as a resource, and parse METRIC and ASI lines.",
+    description: "Run the active research benchmark harness with `bash autoresearch.sh`, capture output as a resource, and parse METRIC and ASI lines.",
     permission: "shell",
     parameters: objectSchema({
+      experiment_name: string("Optional experiment name. Defaults to the active experiment."),
       timeout_ms: number("Timeout in milliseconds. Defaults to 600000."),
     }),
   },
@@ -575,11 +578,24 @@ const DEFINITIONS = [
   },
   {
     name: "update_notes",
-    description: "Persist the active autoresearch notes or append a single idea under an Ideas section.",
+    description: "Persist the active research experiment notes or append a single idea under an Ideas section.",
     permission: "read",
     parameters: objectSchema({
+      experiment_name: string("Optional experiment name. Defaults to the active experiment."),
       body: string("Replacement notes body. Defaults to existing notes when append_idea is set."),
       append_idea: string("Optional idea to append as a bullet."),
+    }),
+  },
+  {
+    name: "update_experiment",
+    description: "Update the active research experiment lifecycle, notes, or active selection. Use this to mark experiment lines active, completed, or rejected.",
+    permission: "read",
+    parameters: objectSchema({
+      experiment_name: string("Optional experiment name. Defaults to the active experiment."),
+      status: stringEnum("Optional experiment lifecycle status.", ["active", "completed", "rejected"]),
+      notes: string("Optional replacement notes for the experiment."),
+      append_idea: string("Optional idea to append under an Ideas section."),
+      set_active: boolean("Whether to make this the active experiment. Defaults to true."),
     }),
   },
   {

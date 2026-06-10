@@ -243,15 +243,22 @@ test("git tools route through RTK while preserving result contract", async () =>
 
     const status = await registry.call({ id: "gs", name: "git_status", arguments: {} }, { session_id: session.session_id, run_id: "run_git" });
     const diff = await registry.call({ id: "gd", name: "git_diff", arguments: { path: "." } }, { session_id: session.session_id, run_id: "run_git" });
+    const diffEmptyPath = await registry.call({ id: "gd_empty", name: "git_diff", arguments: { path: "" } }, { session_id: session.session_id, run_id: "run_git" });
     const show = await registry.call({ id: "gsh", name: "git_show", arguments: { rev: "HEAD" } }, { session_id: session.session_id, run_id: "run_git" });
+    const showEmptyPath = await registry.call({ id: "gsh_empty", name: "git_show", arguments: { rev: "HEAD", path: "" } }, { session_id: session.session_id, run_id: "run_git" });
 
     assert.equal(status.ok, true);
     assert.equal(diff.ok, true);
+    assert.equal(diffEmptyPath.ok, true);
     assert.equal(show.ok, true);
+    assert.equal(showEmptyPath.ok, true);
     assert.match(String(status.data?.output ?? ""), /compact git status --short --branch/);
     assert.match(String(diff.data?.output ?? ""), /compact git diff -- \./);
+    assert.match(String(diffEmptyPath.data?.output ?? ""), /compact git diff -- \./);
     assert.match(String(show.data?.output ?? ""), /compact git show --stat --patch HEAD/);
-    assert.equal(store.listEvents(session.session_id).filter((item) => item.type === "rtk.tool_savings").length, 3);
+    assert.match(String(showEmptyPath.data?.output ?? ""), /compact git show --stat --patch HEAD/);
+    assert.doesNotMatch(String(showEmptyPath.data?.output ?? ""), /-- ''|-- ""/);
+    assert.equal(store.listEvents(session.session_id).filter((item) => item.type === "rtk.tool_savings").length, 5);
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });

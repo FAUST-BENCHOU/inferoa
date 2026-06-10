@@ -26,31 +26,47 @@ needs approval before edits begin, start with [Plan mode](./plan-mode.md).
 
 ```text
 /goal Improve the docs site and verify the Docusaurus build.
-/goal set Improve the docs site and verify the Docusaurus build.
-/goal explicit Improve the docs site and verify the Docusaurus build.
+/goal mode auto Improve the docs site and verify the Docusaurus build.
+/goal mode focus Fix the failing parser test and verify it.
+/goal mode explore Improve this package and handle related high-value issues.
+/goal mode timebox 2h Audit this repository and improve the highest-value rough edges.
+/goal mode research Reduce benchmark latency without hurting accuracy.
+/goal mode research explore Find and validate latency improvement hypotheses.
 /goal show
-/goal budget 200000
-/goal plan
 /goal complete
 /goal pause
 /goal resume
 /goal drop
 ```
 
-## Auto And Explicit Strategy
+## Type And Approach
 
-Bare `/goal` starts in auto mode. Inferoa first runs Horizon 0 orientation, then
-infers whether the goal should be surgical, opportunistic, or campaign-shaped.
+Bare `/goal <objective>` starts a task goal with automatic approach selection.
+Inferoa first runs Horizon 0 orientation, then decides how broadly to pursue
+the objective.
 
-Use `/goal explicit` when you want to choose the strategy before the objective
-starts. Explicit mode is useful when you already know the goal should stay
-narrow, explore nearby high-value work, or run as a longer campaign.
+Goal type:
+
+- `task` is the default for ordinary implementation, investigation, and
+  verification work.
+- `research` is for metric-driven experimental goals that need benchmark
+  harnesses, hypotheses, runs, and metric evidence.
+
+Approach:
+
+- `auto` lets Inferoa choose after orientation.
+- `focus` keeps the work scoped to the current objective.
+- `explore` allows related high-value directions.
+- `timebox` keeps working until a time checkpoint, then reflects.
+
+Use `/goal` with no arguments to open the creation flow. If no goal is active,
+Inferoa asks for the objective, then the goal type, then the approach.
 
 ## How It Works
 
 ```mermaid
 flowchart TD
-  Start["/goal set objective"]
+  Start["/goal objective"]
   Orient["Horizon 0 orientation"]
   Work["Work on the active horizon"]
   Update["Update internal steps and evidence"]
@@ -72,9 +88,10 @@ flowchart TD
 The active goal stores:
 
 - the original objective;
+- the goal type (`task` or `research`);
 - an internal goal plan and step status;
 - the current horizon, starting with visible Horizon 0 orientation;
-- an inferred or explicit strategy (`surgical`, `opportunistic`, or `campaign`);
+- an inferred or selected approach (`auto`, `focus`, `explore`, or `timebox`);
 - a candidate ledger of open, completed, and rejected work;
 - notes and structured evidence;
 - token, tool, and time usage;
@@ -103,8 +120,18 @@ unfinished internal steps or the latest reflection requirement. A goal is not
 done because the checklist is empty; it is done after reflection records
 evidence-backed completion.
 
+## Research Goals
+
+Research goals reuse the same goal supervisor loop, but each horizon is shown as
+a research cycle. A research cycle can create, continue, complete, or reject
+multiple experiments. Each experiment represents one hypothesis or solution
+line, and each run records benchmark output and parsed `METRIC name=value`
+evidence.
+
+Research completion requires logged metric evidence. The goal cannot complete
+while a benchmark run is pending, and a `done` reflection should cite run
+history, the best observed metric, and guardrail or regression evidence.
+
 ## Relationship To Other Modes
 
 Use [Plan mode](./plan-mode.md) before goal mode when the scope needs approval.
-Use [Autoresearch mode](./autoresearch-mode.md) inside or alongside a goal when
-the work depends on repeated measurement.

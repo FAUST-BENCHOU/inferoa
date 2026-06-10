@@ -102,6 +102,9 @@ export function resolveComposerSubmission(input: ComposerSubmissionInput): Compo
   if (trimmed === "/" && item) {
     return { action: "submit", text: item.value };
   }
+  if (item && shouldSubmitSelectedSlashSuggestion(input, item, trimmed)) {
+    return { action: "submit", text: item.value };
+  }
   if (trimmed === "$" && item && input.selectionTouched) {
     return { action: "submit", text: item.value };
   }
@@ -113,6 +116,29 @@ export function resolveComposerSubmission(input: ComposerSubmissionInput): Compo
     }
   }
   return { action: "submit", text: prompt };
+}
+
+function shouldSubmitSelectedSlashSuggestion(
+  input: ComposerSubmissionInput,
+  item: { value: string },
+  trimmed: string,
+): boolean {
+  if (!input.selectionTouched || !trimmed.startsWith("/") || !item.value.startsWith("/")) {
+    return false;
+  }
+  const query = trimmed.toLowerCase();
+  const value = item.value.toLowerCase();
+  if (value.startsWith(query)) {
+    return true;
+  }
+  const subcommand = query.match(/^\/([a-z]+)\s+(.+)$/);
+  if (!subcommand) {
+    return false;
+  }
+  const command = subcommand[1] ?? "";
+  const needle = subcommand[2]?.trim() ?? "";
+  const root = `/${command} `;
+  return Boolean(needle) && value.startsWith(root) && value.includes(needle);
 }
 
 export function insertComposerText(buffer: string, cursor: number, text: string): { buffer: string; cursor: number } {
@@ -449,21 +475,34 @@ export function moveComposerSuggestionPage(selected: number, totalItems: number,
 }
 
 function composerSuggestionHint(kind: ComposerSuggestion["kind"] | undefined, page: ComposerSuggestionWindow<unknown>): string {
-  const action = kind === "skill" ? "tab insert skill" : "tab complete";
+  const action = kind === "skill" ? "tab insert skill" : "enter select · tab complete";
   const pagePart = page.totalPages > 1 ? `${page.pageIndex + 1}/${page.totalPages} · ${page.totalItems} options · ←/→ page · ` : "";
-  return `${pagePart}${action} · enter open/submit · ↑/↓ choose · esc clear`;
+  return kind === "skill"
+    ? `${pagePart}${action} · enter open/submit · ↑/↓ choose · esc clear`
+    : `${pagePart}${action} · ↑/↓ choose · esc clear`;
 }
 
 function welcomeComposerSuggestionHint(kind: ComposerSuggestion["kind"] | undefined, page: ComposerSuggestionWindow<unknown>, width: number): string {
-  const action = kind === "skill" ? "tab skill" : "tab";
+  if (kind === "skill") {
+    const pagePart = page.totalPages > 1 ? `${page.pageIndex + 1}/${page.totalPages} · ${page.totalItems} options · ` : "";
+    const variants = page.totalPages > 1
+      ? [
+          `${pagePart}←/→ page · tab skill · enter · esc clear`,
+          `${pagePart}tab skill · enter · esc clear`,
+          `tab skill · enter · esc clear`,
+        ]
+      : [`tab skill · enter · esc clear`];
+    return variants.find((hint) => visibleWidth(hint) <= width) ?? variants.at(-1)!;
+  }
+  const action = "enter select";
   const pagePart = page.totalPages > 1 ? `${page.pageIndex + 1}/${page.totalPages} · ${page.totalItems} options · ` : "";
   const variants = page.totalPages > 1
     ? [
-        `${pagePart}←/→ page · ${action} · enter · esc clear`,
-        `${pagePart}${action} · enter · esc clear`,
-        `${action} · enter · esc clear`,
+        `${pagePart}←/→ page · ${action} · tab · esc clear`,
+        `${pagePart}${action} · tab · esc clear`,
+        `${action} · tab · esc clear`,
       ]
-    : [`${action} · enter · esc clear`];
+    : [`${action} · tab · esc clear`];
   return variants.find((hint) => visibleWidth(hint) <= width) ?? variants.at(-1)!;
 }
 

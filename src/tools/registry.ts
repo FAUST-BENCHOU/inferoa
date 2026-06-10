@@ -29,7 +29,7 @@ import { skillDisable, skillEnable, skillList, skillRead } from "./skill-tools.j
 import { goalTool } from "./goal-tools.js";
 import { planTool } from "./plan-tools.js";
 import { clarifyTool } from "./clarify-tool.js";
-import { initExperiment, logExperiment, runExperiment, updateNotes } from "./autoresearch-tools.js";
+import { initExperiment, logExperiment, runExperiment, updateExperiment, updateNotes } from "./autoresearch-tools.js";
 import {
   audioGeneration,
   audioUnderstanding,
@@ -81,6 +81,7 @@ const HANDLERS: Record<string, ToolHandler> = {
   speech_voices: speechVoices,
   todo_write: todoWrite,
   update_notes: updateNotes,
+  update_experiment: updateExperiment,
   video_generation: videoGeneration,
   video_understanding: videoUnderstanding,
   vision_understanding: visionUnderstanding,

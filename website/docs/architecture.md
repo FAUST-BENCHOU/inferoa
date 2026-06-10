@@ -10,7 +10,7 @@ flowchart TB
   subgraph Harness["Loop engineering harness"]
     Sessions["Durable sessions"]
     Goals["Recursive goals"]
-    Plans["Plans and autoresearch"]
+    Plans["Plans and research goals"]
     Tools["Tool schemas"]
     Evidence["Evidence ledger"]
   end
@@ -37,7 +37,7 @@ flowchart TB
 
 ## Agent Harness
 
-The harness owns durable sessions, recursive goals, plans, autoresearch state,
+The harness owns durable sessions, recursive goals, plans, research state,
 tool traces, managed resources, recovery, and verification. These are not just
 UI features; they define the state that long-horizon inference has to preserve.
 

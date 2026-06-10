@@ -5,20 +5,27 @@ import type { JsonObject, ToolResult } from "../types.js";
 import { fail, ok, truncateText } from "../util/limit.js";
 import type { ToolExecutionContext } from "./context.js";
 import {
+  activeAutoresearchExperiment,
   createExperiment,
   type HarnessValidation,
   logPendingRun,
   parseAsiLines,
   parseMetricLines,
+  pendingAutoresearchExperiment,
   readAutoresearchState,
   recordRun,
+  type ResearchExperimentStatus,
   setAutoresearchMode,
   summarizeAutoresearchProgress,
+  updateAutoresearchExperimentState,
+  upsertAutoresearchExperiment,
   writeAutoresearchState,
   type AutoresearchState,
+  type AutoresearchExperiment,
   type ExperimentStatus,
   type MetricDirection,
 } from "../autoresearch/state.js";
+import { readGoalState } from "../goals/state.js";
 
 const HARNESS = "autoresearch.sh";
 const HARNESS_COMMAND = `bash ${HARNESS}`;
@@ -38,7 +45,7 @@ interface HarnessRunResult {
 export async function initExperiment(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   try {
     await access(path.join(context.workspace.root, HARNESS));
-    const state = ensureAutoresearchEnabled(context);
+    const state = ensureResearchGoalEnabled(context);
     const primaryMetric = requiredString(args.primary_metric, "primary_metric");
     const shouldValidate = booleanArg(args.validate_harness) !== false;
     let harnessStatus: HarnessValidation | undefined;
@@ -67,17 +74,22 @@ export async function initExperiment(args: JsonObject, context: ToolExecutionCon
       max_iterations: positiveIntArg(args.max_iterations),
       harness_status: harnessStatus,
     });
+    const nextState = upsertAutoresearchExperiment(
+      {
+        ...state,
+        enabled: true,
+        goal: experiment.goal ?? state.goal,
+      },
+      experiment,
+      { setActive: true },
+    );
     const next = writeAutoresearchState(
       context.store,
       context.session_id,
-      {
-        enabled: true,
-        goal: experiment.goal ?? state.goal,
-        experiment,
-      },
+      nextState,
       context.run_id,
     );
-    return ok(`Autoresearch initialized: ${experiment.name}\nMetric: ${experiment.primary_metric}\nBenchmark: ${HARNESS_COMMAND}`, {
+    return ok(`Research experiment initialized: ${experiment.name}\nMetric: ${experiment.primary_metric}\nBenchmark: ${HARNESS_COMMAND}`, {
       autoresearch: next as unknown as JsonObject,
       progress: summarizeAutoresearchProgress(experiment) as unknown as JsonObject,
       harness_status: harnessStatus as unknown as JsonObject | undefined,
@@ -89,15 +101,20 @@ export async function initExperiment(args: JsonObject, context: ToolExecutionCon
 
 export async function runExperiment(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const state = readAutoresearchState(context.store, context.session_id);
-  if (!state.enabled || !state.experiment) {
-    return fail("autoresearch_not_initialized", "no active autoresearch experiment; call /autoresearch and init_experiment first", autoresearchFailureData(state));
+  if (!state.enabled) {
+    return fail("research_goal_required", "no active research goal; start with /goal mode research <objective>", autoresearchFailureData(state));
   }
-  if (state.experiment.pending_run) {
+  const pendingExperiment = pendingAutoresearchExperiment(state);
+  if (pendingExperiment?.pending_run) {
     return fail(
       "autoresearch_pending_run",
-      `run ${state.experiment.pending_run.id} is still pending; call log_experiment before starting another run`,
-      autoresearchFailureData(state, { pending_run: state.experiment.pending_run as unknown as JsonObject }),
+      `experiment "${pendingExperiment.name}" run ${pendingExperiment.pending_run.id} is still pending; call log_experiment before starting another run`,
+      autoresearchFailureData(state, { pending_run: pendingExperiment.pending_run as unknown as JsonObject, experiment_name: pendingExperiment.name }),
     );
+  }
+  const experiment = selectExperiment(state, args);
+  if (!experiment) {
+    return fail("autoresearch_not_initialized", "no active research experiment; call init_experiment first", autoresearchFailureData(state));
   }
   let timeoutMs: number;
   try {
@@ -116,8 +133,8 @@ export async function runExperiment(args: JsonObject, context: ToolExecutionCont
     output_truncated: result.outputTruncated,
   });
   const parsedMetrics = result.parsedMetrics;
-  const parsedPrimary = parsedMetrics[state.experiment.primary_metric] ?? null;
-  const nextExperiment = recordRun(state.experiment, {
+  const parsedPrimary = parsedMetrics[experiment.primary_metric] ?? null;
+  const nextExperiment = recordRun(experiment, {
     command: HARNESS_COMMAND,
     exit_code: result.exitCode,
     duration_ms: durationMs,
@@ -132,7 +149,7 @@ export async function runExperiment(args: JsonObject, context: ToolExecutionCont
   const next = writeAutoresearchState(
     context.store,
     context.session_id,
-    { ...state, experiment: nextExperiment },
+    upsertAutoresearchExperiment(state, nextExperiment, { setActive: true }),
     context.run_id,
   );
   const preview = truncateText(result.output, 4000).text;
@@ -187,16 +204,17 @@ export async function logExperiment(args: JsonObject, context: ToolExecutionCont
   let state: AutoresearchState | undefined;
   try {
     state = readAutoresearchState(context.store, context.session_id);
-    if (!state.enabled || !state.experiment) {
+    if (!state.enabled) {
       return fail("autoresearch_not_initialized", "no active autoresearch experiment; call init_experiment first", autoresearchFailureData(state));
     }
-    if (!state.experiment.pending_run) {
+    const pendingExperiment = pendingAutoresearchExperiment(state);
+    if (!pendingExperiment?.pending_run) {
       return fail("log_experiment_failed", "no pending autoresearch run; call run_experiment first", autoresearchFailureData(state));
     }
     const status = statusArg(args.status);
-    const nextExperiment = logPendingRun(state.experiment, {
+    let nextExperiment = logPendingRun(pendingExperiment, {
       status,
-      metric: metricArg(args.metric, state.experiment.pending_run.parsed_primary, status),
+      metric: metricArg(args.metric, pendingExperiment.pending_run.parsed_primary, status),
       description: requiredString(args.description, "description"),
       metrics: numericRecordArg(args.metrics),
       asi: objectArg(args.asi),
@@ -204,15 +222,18 @@ export async function logExperiment(args: JsonObject, context: ToolExecutionCont
     const reachedLimit =
       nextExperiment.max_iterations !== undefined &&
       nextExperiment.results.filter((result) => result.status === "keep").length >= nextExperiment.max_iterations;
+    const explicitExperimentStatus = experimentLifecycleStatusArg(args.experiment_status);
+    if (explicitExperimentStatus) {
+      nextExperiment = { ...nextExperiment, status: explicitExperimentStatus };
+    } else if (reachedLimit) {
+      nextExperiment = { ...nextExperiment, status: "completed" };
+    }
     const next = writeAutoresearchState(
       context.store,
       context.session_id,
-      { ...state, enabled: reachedLimit ? false : state.enabled, experiment: nextExperiment },
+      upsertAutoresearchExperiment(state, nextExperiment, { setActive: true }),
       context.run_id,
     );
-    if (reachedLimit) {
-      setAutoresearchMode(context.store, context.session_id, { mode: "off", goal: state.goal }, context.run_id);
-    }
     const latest = nextExperiment.results.at(-1)!;
     return ok(`Logged run ${latest.run_id}: ${latest.status} ${nextExperiment.primary_metric}=${latest.metric === null ? "missing" : latest.metric}`, {
       result: latest as unknown as JsonObject,
@@ -226,34 +247,80 @@ export async function logExperiment(args: JsonObject, context: ToolExecutionCont
 
 export async function updateNotes(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const state = readAutoresearchState(context.store, context.session_id);
-  if (!state.enabled || !state.experiment) {
+  if (!state.enabled) {
     return fail("autoresearch_not_initialized", "no active autoresearch experiment; call init_experiment first", autoresearchFailureData(state));
   }
-  const body = stringArg(args.body) ?? state.experiment.notes;
+  const experiment = selectExperiment(state, args);
+  if (!experiment) {
+    return fail("autoresearch_not_initialized", "no active research experiment; call init_experiment first", autoresearchFailureData(state));
+  }
+  const body = stringArg(args.body) ?? experiment.notes;
   const appendIdea = stringArg(args.append_idea);
   const notes = appendIdea ? appendIdeaToNotes(body, appendIdea) : body;
-  const experiment = { ...state.experiment, notes };
-  const next = writeAutoresearchState(context.store, context.session_id, { ...state, experiment }, context.run_id);
-  return ok(appendIdea ? "Autoresearch idea appended." : "Autoresearch notes updated.", {
+  const nextExperiment = { ...experiment, notes };
+  const next = writeAutoresearchState(context.store, context.session_id, upsertAutoresearchExperiment(state, nextExperiment, { setActive: true }), context.run_id);
+  return ok(appendIdea ? "Research idea appended." : "Research notes updated.", {
     notes,
     autoresearch: next as unknown as JsonObject,
   });
 }
 
+export async function updateExperiment(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
+  let state: AutoresearchState | undefined;
+  try {
+    state = readAutoresearchState(context.store, context.session_id);
+    if (!state.enabled) {
+      return fail("autoresearch_not_initialized", "no active research goal; start with /goal mode research <objective>", autoresearchFailureData(state));
+    }
+    const experiment = selectExperiment(state, args);
+    if (!experiment) {
+      return fail("autoresearch_not_initialized", "no active research experiment; call init_experiment first", autoresearchFailureData(state));
+    }
+    const status = experimentLifecycleStatusArg(args.status);
+    const nextState = updateAutoresearchExperimentState(state, experiment.name, {
+      status,
+      notes: stringArg(args.notes),
+      appendIdea: stringArg(args.append_idea),
+      setActive: booleanArg(args.set_active) || args.set_active === undefined,
+    });
+    const next = writeAutoresearchState(context.store, context.session_id, nextState, context.run_id);
+    const active = next.experiment;
+    return ok(`Research experiment updated: ${experiment.name}`, {
+      experiment: active as unknown as JsonObject,
+      autoresearch: next as unknown as JsonObject,
+    });
+  } catch (error) {
+    return fail("update_experiment_failed", error instanceof Error ? error.message : String(error), state ? autoresearchFailureData(state) : undefined);
+  }
+}
+
 function autoresearchFailureData(state: AutoresearchState, extra: JsonObject = {}): JsonObject {
+  const experiment = activeAutoresearchExperiment(state);
   return {
     autoresearch: state as unknown as JsonObject,
-    ...(state.experiment ? { progress: summarizeAutoresearchProgress(state.experiment) as unknown as JsonObject } : {}),
+    ...(experiment ? { progress: summarizeAutoresearchProgress(experiment) as unknown as JsonObject } : {}),
     ...extra,
   };
 }
 
-function ensureAutoresearchEnabled(context: ToolExecutionContext): AutoresearchState {
+function ensureResearchGoalEnabled(context: ToolExecutionContext): AutoresearchState {
+  const goal = readGoalState(context.store, context.session_id);
+  if (!goal || goal.goal.kind !== "research" || goal.goal.status === "complete" || goal.goal.status === "dropped") {
+    throw new Error("an active research goal is required; start with /goal mode research <objective>");
+  }
   const state = readAutoresearchState(context.store, context.session_id);
   if (state.enabled) {
     return state;
   }
-  return setAutoresearchMode(context.store, context.session_id, { mode: "on", goal: state.goal }, context.run_id);
+  return setAutoresearchMode(context.store, context.session_id, { mode: "on", goal: state.goal ?? goal.goal.objective }, context.run_id);
+}
+
+function selectExperiment(state: AutoresearchState, args: JsonObject): AutoresearchExperiment | undefined {
+  const name = stringArg(args.experiment_name) ?? stringArg(args.name);
+  if (name) {
+    return state.experiments?.find((experiment) => experiment.name === name);
+  }
+  return activeAutoresearchExperiment(state);
 }
 
 function runHarness(cwd: string, timeoutMs: number): Promise<HarnessRunResult> {
@@ -390,6 +457,16 @@ function statusArg(value: unknown): ExperimentStatus {
     return value;
   }
   throw new Error("status must be keep, discard, crash, or checks_failed");
+}
+
+function experimentLifecycleStatusArg(value: unknown): ResearchExperimentStatus | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "active" || value === "completed" || value === "rejected") {
+    return value;
+  }
+  throw new Error("experiment status must be active, completed, or rejected");
 }
 
 function positiveIntArg(value: unknown): number | undefined {

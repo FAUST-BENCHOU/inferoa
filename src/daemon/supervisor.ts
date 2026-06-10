@@ -122,7 +122,7 @@ export async function queueDaemonGoal(options: {
     if (!goal || goal.goal.status === "complete" || goal.goal.status === "dropped") {
       throw new Error("No active goal is available for daemon supervision.");
     }
-    return store.createSupervisorJob(session.session_id, workspace.root, options.prompt ?? buildGoalWorkPrompt(goal.goal.objective), {
+    return store.createSupervisorJob(session.session_id, workspace.root, options.prompt ?? buildGoalWorkPrompt(goal.goal), {
       kind: "goal",
       goal_id: goal.goal.id,
       metadata: metadataWithConfigPath({ max_iterations: options.maxIterations ?? 1000 }, configPath),

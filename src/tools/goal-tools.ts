@@ -9,6 +9,7 @@ import {
   formatGoalDuration,
   goalCompletionCandidateBlockMessage,
   goalCompletionReflectionBlockMessage,
+  goalStrategyModeFromPublicName,
   incompleteGoalPlanningMessage,
   goalPlanningProgressSummary,
   parseGoalReflectionDecision,
@@ -27,7 +28,9 @@ import {
   type GoalRecord,
   type GoalStrategyMode,
   type GoalState,
+  type GoalKind,
 } from "../goals/state.js";
+import { readAutoresearchState, researchCompletionBlockMessage, setAutoresearchMode } from "../autoresearch/state.js";
 
 export async function goalTool(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const op = stringArg(args.op) ?? "get";
@@ -106,12 +109,17 @@ function createGoal(args: JsonObject, context: ToolExecutionContext): ToolResult
   }
   const tokenBudget = numberArg(args.token_budget);
   validateTokenBudget(tokenBudget);
-  const mode = parseGoalStrategyModeArg(args.mode);
-  if (args.mode !== undefined && !mode) {
-    return fail("goal_strategy_mode_invalid", "mode must be surgical, opportunistic, or campaign");
+  const mode = parseGoalStrategyModeArg(args.approach ?? args.mode);
+  if ((args.approach !== undefined || args.mode !== undefined) && !mode) {
+    return fail("goal_strategy_mode_invalid", "approach must be focus, explore, or timebox");
+  }
+  const kind = parseGoalKindArg(args.kind);
+  if (args.kind !== undefined && !kind) {
+    return fail("goal_kind_invalid", "kind must be task or research");
   }
   let state = createGoalState({
     objective,
+    kind,
     token_budget: tokenBudget,
     strategy: mode
       ? {
@@ -134,6 +142,9 @@ function createGoal(args: JsonObject, context: ToolExecutionContext): ToolResult
     );
   }
   state = writeGoalState(context.store, context.session_id, state, context.run_id);
+  if (state.goal.kind === "research") {
+    setAutoresearchMode(context.store, context.session_id, { mode: "on", goal: state.goal.objective }, context.run_id);
+  }
   return describeGoal(state, "Goal created", context);
 }
 
@@ -221,9 +232,9 @@ function updateGoalStrategy(args: JsonObject, context: ToolExecutionContext): To
   if (state.goal.status === "complete" || state.goal.status === "dropped") {
     return fail("goal_closed", `Cannot update a ${state.goal.status} goal.`);
   }
-  const mode = parseGoalStrategyModeArg(args.mode);
+  const mode = parseGoalStrategyModeArg(args.approach ?? args.mode);
   if (!mode) {
-    return failGoalWithState(state, "goal_strategy_mode_required", "mode is required and must be surgical, opportunistic, or campaign");
+    return failGoalWithState(state, "goal_strategy_mode_required", "approach is required and must be focus, explore, or timebox");
   }
   const next = setGoalStrategy(state, {
     mode,
@@ -375,6 +386,12 @@ function finishGoal(args: JsonObject, context: ToolExecutionContext, status: "co
     if (candidateMessage) {
       return failGoalWithState(state, "goal_completion_candidates_remaining", candidateMessage);
     }
+    if (state.goal.kind === "research") {
+      const researchMessage = researchCompletionBlockMessage(readAutoresearchState(context.store, context.session_id));
+      if (researchMessage) {
+        return failGoalWithState(state, "goal_research_evidence_required", researchMessage);
+      }
+    }
   }
   const next = cloneGoalState(state);
   if (summary) {
@@ -383,7 +400,11 @@ function finishGoal(args: JsonObject, context: ToolExecutionContext, status: "co
   next.enabled = false;
   next.goal.status = status;
   next.goal.updated_at = new Date().toISOString();
-  return describeGoal(writeGoalState(context.store, context.session_id, next, context.run_id), status === "complete" ? "Goal complete" : "Goal dropped", context);
+  const saved = writeGoalState(context.store, context.session_id, next, context.run_id);
+  if (saved.goal.kind === "research") {
+    setAutoresearchMode(context.store, context.session_id, { mode: "off", goal: saved.goal.objective }, context.run_id);
+  }
+  return describeGoal(saved, status === "complete" ? "Goal complete" : "Goal dropped", context);
 }
 
 function isInternalReflectionContext(context: ToolExecutionContext): boolean {
@@ -422,7 +443,7 @@ function describeGoal(state: GoalState | undefined, summary: string, context?: T
 }
 
 function goalSummary(prefix: string, goal: GoalRecord): string {
-  const lines = [`${prefix}: ${goal.objective}`, `Status: ${goal.status}`];
+  const lines = [`${prefix}: ${goal.objective}`, `Type: ${goal.kind}`, `Status: ${goal.status}`];
   if (goal.token_budget !== undefined || goal.tokens_used > 0) {
     lines.push(
       goal.token_budget === undefined
@@ -476,7 +497,15 @@ function objectArg(value: unknown): JsonObject | undefined {
 }
 
 function parseGoalStrategyModeArg(value: unknown): GoalStrategyMode | undefined {
+  const publicMode = goalStrategyModeFromPublicName(value);
+  if (publicMode) {
+    return publicMode;
+  }
   return value === "surgical" || value === "opportunistic" || value === "campaign" ? value : undefined;
+}
+
+function parseGoalKindArg(value: unknown): GoalKind | undefined {
+  return value === "task" || value === "research" ? value : undefined;
 }
 
 function parseGoalCandidateValueArg(value: unknown): GoalCandidateValue | undefined {

@@ -9,6 +9,7 @@ const AUTORESEARCH_RESULT_DESCRIPTION_LIMIT = 500;
 export type AutoresearchMode = "on" | "off" | "clear";
 export type MetricDirection = "lower" | "higher";
 export type ExperimentStatus = "keep" | "discard" | "crash" | "checks_failed";
+export type ResearchExperimentStatus = "active" | "completed" | "rejected";
 
 export interface AutoresearchRun {
   id: number;
@@ -50,6 +51,7 @@ export interface AutoresearchResult {
 
 export interface AutoresearchExperiment {
   name: string;
+  status: ResearchExperimentStatus;
   goal?: string;
   primary_metric: string;
   metric_unit: string;
@@ -70,6 +72,9 @@ export interface AutoresearchExperiment {
 export interface AutoresearchState {
   enabled: boolean;
   goal?: string;
+  active_experiment_name?: string;
+  experiments: AutoresearchExperiment[];
+  /** Active experiment snapshot kept for compact renderers and older session data. */
   experiment?: AutoresearchExperiment;
 }
 
@@ -91,7 +96,7 @@ export interface SetAutoresearchModeInput {
 }
 
 export function readAutoresearchState(store: SessionStore, sessionId: string): AutoresearchState {
-  let state: AutoresearchState = { enabled: false };
+  let state: AutoresearchState = normalizeAutoresearchState({ enabled: false, experiments: [] });
   for (const event of store.listEvents(sessionId)) {
     if (event.type === "autoresearch.control") {
       state = applyControlEvent(state, event);
@@ -99,7 +104,7 @@ export function readAutoresearchState(store: SessionStore, sessionId: string): A
       state = parseAutoresearchState(event.data) ?? state;
     }
   }
-  return state;
+  return normalizeAutoresearchState(state);
 }
 
 export function setAutoresearchMode(
@@ -117,12 +122,12 @@ export function setAutoresearchMode(
       goal: input.goal ?? undefined,
     },
   });
-  const previous = input.mode === "clear" ? { enabled: false } : readAutoresearchState(store, sessionId);
+  const previous = input.mode === "clear" ? normalizeAutoresearchState({ enabled: false, experiments: [] }) : readAutoresearchState(store, sessionId);
   const next: AutoresearchState =
     input.mode === "on"
       ? { ...previous, enabled: true, goal: input.goal?.trim() || previous.goal }
-      : input.mode === "clear"
-        ? { enabled: false }
+    : input.mode === "clear"
+        ? normalizeAutoresearchState({ enabled: false, experiments: [] })
         : { ...previous, enabled: false, goal: input.goal?.trim() || previous.goal };
   writeAutoresearchState(store, sessionId, next, runId);
   return next;
@@ -170,6 +175,7 @@ export function createExperiment(input: {
   }
   return {
     name,
+    status: "active",
     goal: input.goal?.trim() || undefined,
     primary_metric: primaryMetric,
     metric_unit: input.metric_unit?.trim() ?? "",
@@ -244,23 +250,100 @@ export function logPendingRun(
   return next;
 }
 
+export function activeAutoresearchExperiment(state: AutoresearchState): AutoresearchExperiment | undefined {
+  const normalized = normalizeAutoresearchState(state);
+  if (!normalized.experiments.length) {
+    return undefined;
+  }
+  const named = normalized.active_experiment_name
+    ? normalized.experiments.find((experiment) => experiment.name === normalized.active_experiment_name)
+    : undefined;
+  return named ?? normalized.experiments.find((experiment) => experiment.pending_run) ?? normalized.experiments.find((experiment) => experiment.status === "active") ?? normalized.experiments[0];
+}
+
+export function pendingAutoresearchExperiment(state: AutoresearchState): AutoresearchExperiment | undefined {
+  return normalizeAutoresearchState(state).experiments.find((experiment) => experiment.pending_run);
+}
+
+export function upsertAutoresearchExperiment(
+  state: AutoresearchState,
+  experiment: AutoresearchExperiment,
+  options: { setActive?: boolean } = {},
+): AutoresearchState {
+  const next = cloneAutoresearchState(state);
+  const index = next.experiments.findIndex((candidate) => candidate.name === experiment.name);
+  if (index >= 0) {
+    next.experiments[index] = cloneExperiment(experiment);
+  } else {
+    next.experiments.push(cloneExperiment(experiment));
+  }
+  if (options.setActive !== false) {
+    next.active_experiment_name = experiment.name;
+  }
+  return normalizeAutoresearchState(next);
+}
+
+export function updateAutoresearchExperimentState(
+  state: AutoresearchState,
+  name: string,
+  input: { status?: ResearchExperimentStatus; notes?: string; appendIdea?: string; setActive?: boolean },
+): AutoresearchState {
+  const next = cloneAutoresearchState(state);
+  const experiment = next.experiments.find((candidate) => candidate.name === name);
+  if (!experiment) {
+    throw new Error(`unknown research experiment: ${name}`);
+  }
+  if (input.status) {
+    experiment.status = input.status;
+  }
+  if (input.notes !== undefined) {
+    experiment.notes = input.notes;
+  }
+  if (input.appendIdea) {
+    experiment.notes = appendIdeaToNotes(experiment.notes, input.appendIdea);
+  }
+  if (input.setActive) {
+    next.active_experiment_name = experiment.name;
+  }
+  return normalizeAutoresearchState(next);
+}
+
+export function researchCompletionBlockMessage(state: AutoresearchState): string | undefined {
+  const normalized = normalizeAutoresearchState(state);
+  const pending = pendingAutoresearchExperiment(normalized);
+  if (pending?.pending_run) {
+    return `Cannot complete research goal while experiment "${pending.name}" has pending run ${pending.pending_run.id}; log it first.`;
+  }
+  const loggedRuns = normalized.experiments.reduce((count, experiment) => count + experiment.results.length, 0);
+  if (loggedRuns === 0) {
+    return "Cannot complete research goal without logged benchmark or metric evidence.";
+  }
+  const metricEvidence = normalized.experiments.some((experiment) => experiment.results.some((result) => typeof result.metric === "number"));
+  if (!metricEvidence) {
+    return "Cannot complete research goal without a logged primary metric or explicit metric evidence.";
+  }
+  return undefined;
+}
+
 export function renderAutoresearchModeSection(state: AutoresearchState): string | undefined {
   if (!state.enabled) {
     return undefined;
   }
-  const goal = state.goal ?? state.experiment?.goal ?? "";
-  if (!state.experiment) {
+  const normalized = normalizeAutoresearchState(state);
+  const experiment = activeAutoresearchExperiment(normalized);
+  const goal = normalized.goal ?? experiment?.goal ?? "";
+  if (!experiment) {
     return [
-      "Autoresearch mode is active for this session.",
+      "Research goal mode is active for this session.",
       goal ? `Goal: ${escapeXmlText(goal)}` : "Goal: not specified yet",
       "Phase 1: build a benchmark harness at ./autoresearch.sh.",
       "The harness must exit 0 for a valid run and print lines like METRIC name=value.",
       "After validating the harness, call init_experiment with the primary metric, direction, scope paths, and constraints.",
     ].join("\n");
   }
-  const experiment = state.experiment;
   const pending = experiment.pending_run;
   const progress = summarizeAutoresearchProgress(experiment);
+  const lifecycle = summarizeExperimentLifecycle(normalized);
   const recent = experiment.results.slice(-5).map((result) => {
     const metric = escapeXmlText(formatMetric(result.metric, experiment.metric_unit));
     const description = truncateInlinePromptText(result.description, AUTORESEARCH_RESULT_DESCRIPTION_LIMIT);
@@ -268,15 +351,16 @@ export function renderAutoresearchModeSection(state: AutoresearchState): string 
   });
   const notes = truncateText(experiment.notes.trim(), AUTORESEARCH_PROMPT_NOTES_LIMIT).text;
   return [
-    "Autoresearch mode is active for this session.",
+    "Research goal mode is active for this session.",
     goal ? `Goal: ${escapeXmlText(goal)}` : undefined,
-    `Experiment: ${escapeXmlText(experiment.name)}`,
+    `Experiments: ${lifecycle.active} active; ${lifecycle.completed} completed; ${lifecycle.rejected} rejected`,
+    `Active experiment: ${escapeXmlText(experiment.name)} (${experiment.status})`,
     `Primary metric: ${escapeXmlText(experiment.primary_metric)} (${escapeXmlText(experiment.metric_unit || "unitless")}; ${experiment.direction} is better)`,
     `Best kept metric: ${experiment.best_metric === null ? "none" : escapeXmlText(formatMetric(experiment.best_metric, experiment.metric_unit))}`,
     `Progress: ${formatProgress(progress)}`,
     progress.keep_cap === undefined
       ? undefined
-      : `Keep-run cap: ${progress.kept_runs}/${progress.keep_cap}; ${progress.keep_remaining ?? 0} ${plural(progress.keep_remaining ?? 0, "keep run")} remaining before autoresearch disables itself.`,
+      : `Keep-run cap: ${progress.kept_runs}/${progress.keep_cap}; ${progress.keep_remaining ?? 0} ${plural(progress.keep_remaining ?? 0, "keep run")} remaining before this experiment should checkpoint.`,
     pending
       ? `Pending run: ${formatPendingRun(pending)}; parsed ${escapeXmlText(experiment.primary_metric)}=${pending.parsed_primary ?? "missing"}. Log it with log_experiment before starting another run; metric can be omitted when parsed.`
       : "No pending run. Continue with the next useful experiment or run the baseline if no results exist.",
@@ -348,16 +432,18 @@ export function parseAsiLines(output: string): JsonObject {
 }
 
 export function cloneAutoresearchState(state: AutoresearchState): AutoresearchState {
-  return {
+  return normalizeAutoresearchState({
     enabled: state.enabled,
     goal: state.goal,
-    experiment: state.experiment ? cloneExperiment(state.experiment) : undefined,
-  };
+    active_experiment_name: state.active_experiment_name,
+    experiments: experimentsFromState(state).map(cloneExperiment),
+  });
 }
 
 function cloneExperiment(experiment: AutoresearchExperiment): AutoresearchExperiment {
   return {
     ...experiment,
+    status: experiment.status ?? "active",
     scope_paths: [...experiment.scope_paths],
     off_limits: [...experiment.off_limits],
     constraints: [...experiment.constraints],
@@ -372,10 +458,13 @@ function cloneExperiment(experiment: AutoresearchExperiment): AutoresearchExperi
 }
 
 function autoresearchStateToJson(state: AutoresearchState): JsonObject {
+  const normalized = normalizeAutoresearchState(state);
   return {
-    enabled: state.enabled,
-    goal: state.goal,
-    experiment: state.experiment as unknown as JsonObject,
+    enabled: normalized.enabled,
+    goal: normalized.goal,
+    active_experiment_name: normalized.active_experiment_name,
+    experiments: normalized.experiments as unknown as JsonObject[],
+    experiment: normalized.experiment as unknown as JsonObject,
   };
 }
 
@@ -383,22 +472,53 @@ function applyControlEvent(state: AutoresearchState, event: SessionEvent): Autor
   const mode = event.data.mode;
   const goal = typeof event.data.goal === "string" && event.data.goal.trim() ? event.data.goal.trim() : state.goal;
   if (mode === "clear") {
-    return { enabled: false };
+    return normalizeAutoresearchState({ enabled: false, experiments: [] });
   }
   if (mode === "on") {
-    return { ...state, enabled: true, goal };
+    return normalizeAutoresearchState({ ...state, enabled: true, goal });
   }
   if (mode === "off") {
-    return { ...state, enabled: false, goal };
+    return normalizeAutoresearchState({ ...state, enabled: false, goal });
   }
   return state;
+}
+
+function normalizeAutoresearchState(state: AutoresearchState): AutoresearchState {
+  const experiments = experimentsFromState(state).map((experiment) => ({
+    ...experiment,
+    status: experiment.status ?? "active",
+  }));
+  const active =
+    (state.active_experiment_name ? experiments.find((experiment) => experiment.name === state.active_experiment_name) : undefined) ??
+    experiments.find((experiment) => experiment.pending_run) ??
+    experiments.find((experiment) => experiment.status === "active") ??
+    experiments[0];
+  return {
+    enabled: state.enabled,
+    goal: state.goal,
+    active_experiment_name: active?.name,
+    experiments,
+    experiment: active ? cloneExperiment(active) : undefined,
+  };
+}
+
+function experimentsFromState(state: AutoresearchState): AutoresearchExperiment[] {
+  if (Array.isArray(state.experiments) && state.experiments.length) {
+    return state.experiments;
+  }
+  return state.experiment ? [state.experiment] : [];
 }
 
 function parseAutoresearchState(data: JsonObject): AutoresearchState | undefined {
   const enabled = data.enabled === true;
   const goal = typeof data.goal === "string" ? data.goal : undefined;
-  const experiment = parseExperiment(data.experiment);
-  return { enabled, goal, experiment };
+  const parsedExperiments = Array.isArray(data.experiments)
+    ? data.experiments.map(parseExperiment).filter((item): item is AutoresearchExperiment => Boolean(item))
+    : [];
+  const legacyExperiment = parseExperiment(data.experiment);
+  const experiments = parsedExperiments.length ? parsedExperiments : legacyExperiment ? [legacyExperiment] : [];
+  const activeExperimentName = typeof data.active_experiment_name === "string" ? data.active_experiment_name : legacyExperiment?.name;
+  return normalizeAutoresearchState({ enabled, goal, experiments, active_experiment_name: activeExperimentName });
 }
 
 function parseExperiment(value: unknown): AutoresearchExperiment | undefined {
@@ -414,6 +534,7 @@ function parseExperiment(value: unknown): AutoresearchExperiment | undefined {
   }
   return {
     name,
+    status: parseExperimentLifecycleStatus(data.status) ?? "active",
     goal: typeof data.goal === "string" ? data.goal : undefined,
     primary_metric: primaryMetric,
     metric_unit: typeof data.metric_unit === "string" ? data.metric_unit : "",
@@ -516,6 +637,10 @@ function parseStatus(value: unknown): ExperimentStatus | undefined {
   return value === "keep" || value === "discard" || value === "crash" || value === "checks_failed" ? value : undefined;
 }
 
+function parseExperimentLifecycleStatus(value: unknown): ResearchExperimentStatus | undefined {
+  return value === "active" || value === "completed" || value === "rejected" ? value : undefined;
+}
+
 function computeBestMetric(results: AutoresearchResult[], direction: MetricDirection): number | null {
   let best: number | null = null;
   for (const result of results) {
@@ -565,6 +690,15 @@ function formatProgress(progress: AutoresearchProgress): string {
   return pieces.filter((piece): piece is string => Boolean(piece)).join("; ");
 }
 
+function summarizeExperimentLifecycle(state: AutoresearchState): { active: number; completed: number; rejected: number } {
+  const experiments = experimentsFromState(state);
+  return {
+    active: experiments.filter((experiment) => experiment.status === "active").length,
+    completed: experiments.filter((experiment) => experiment.status === "completed").length,
+    rejected: experiments.filter((experiment) => experiment.status === "rejected").length,
+  };
+}
+
 function plural(count: number, singular: string): string {
   return count === 1 ? singular : `${singular}s`;
 }
@@ -580,6 +714,21 @@ function coerceAsiValue(value: string): string | number | boolean | null {
 
 function cleanStringList(values: string[] | undefined): string[] {
   return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))];
+}
+
+function appendIdeaToNotes(notes: string, idea: string): string {
+  const trimmedIdea = idea.trim();
+  if (!trimmedIdea) {
+    return notes;
+  }
+  const trimmedNotes = notes.trimEnd();
+  if (!trimmedNotes) {
+    return `Ideas\n- ${trimmedIdea}`;
+  }
+  if (/^Ideas\s*$/im.test(trimmedNotes)) {
+    return `${trimmedNotes}\n- ${trimmedIdea}`;
+  }
+  return `${trimmedNotes}\n\nIdeas\n- ${trimmedIdea}`;
 }
 
 function stringArray(value: unknown): string[] {

@@ -82,7 +82,7 @@ before the next turn is sent.
 | Surface | Substrate | What Inferoa Makes Native | Why It Matters |
 | --- | --- | --- | --- |
 | Loop Engineering | [Inferoa Goal Mode](https://inferoa.agentic-in.ai/docs/workflows/goal-mode) | Recursive long-horizon goals, horizons, candidate work, reflection, and completion evidence | The engineering loop keeps running until the work is proven |
-| Agent Harness | [Inferoa](https://github.com/agentic-in/inferoa) | Sessions, tools, plans, autoresearch, resources, recovery, and prefix-cache discipline | Long work gets a durable runtime while preserving reusable prompt prefixes |
+| Agent Harness | [Inferoa](https://github.com/agentic-in/inferoa) | Sessions, tools, plans, research goals, resources, recovery, and prefix-cache discipline | Long work gets a durable runtime while preserving reusable prompt prefixes |
 | Context Optimization | [CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph), [RTK](https://github.com/rtk-ai/rtk) | Compression, graph-shaped repo context, bounded tool output, and evidence selection | The model sees evidence, not raw sprawl |
 | Intelligent Routing | [vLLM Semantic Router](https://github.com/vllm-project/semantic-router) | Model paths respond to cost, safety, privacy, capability, and session pressure | Turns can route between self-hosted vLLM models and external frontier models |
 | Model Serving | [vLLM Engine](https://github.com/vllm-project/vllm), [vLLM Omni](https://github.com/vllm-project/vllm-omni) | High-throughput, memory-efficient serving and multimodal endpoints stay visible to the harness | Self-hosted paths make cost, safety, privacy, and data sovereignty controllable when an external frontier model is unnecessary |
@@ -101,7 +101,7 @@ proof before completion.
 ![Inferoa goal mode](/gif/goal.gif)
 
 Goal Mode is deliberately not just a persistent note in the prompt. It gives the
-runtime a durable outcome, a visible Horizon 0 orientation, a strategy,
+runtime a durable outcome, a visible Horizon 0 orientation, an approach,
 candidate work, step status, verifier-ready evidence, reflection decisions, and
 a completion report. That is the difference between asking for the next step and
 engineering the loop that can keep going.
@@ -121,11 +121,11 @@ runtime on process overhead.
 
 ![Inferoa plan mode](/gif/plan.gif)
 
-Autoresearch mode makes the evaluation loop native: define the experiment, run
-the harness, record failures, patch the implementation, and keep the metric
-trail in the same session.
+Research goals make the evaluation loop native: define experiments, run the
+harness, record failures, patch the implementation, and keep the metric trail
+inside the goal reflection loop.
 
-![Inferoa autoresearch iteration](/gif/research.gif)
+![Inferoa research goal iteration](/gif/research.gif)
 
 Tokenmaxxing is the savings ledger for prefix-cache reuse, context optimization,
 [RTK](https://github.com/rtk-ai/rtk) tool-output savings, recent turn usage, and
@@ -134,9 +134,9 @@ efficient, not just how many tokens were spent.
 
 ![Inferoa tokenmaxxing report](/img/screenshots/tokenmaxxing.png)
 
-The command surface stays small: `/goal` for durable objectives, `/plan` for
-inspectable scope, `/autoresearch` for metric-driven iteration, and
-`/tokenmaxxing` for the savings ledger across prefix cache,
+The command surface stays small: `/goal` for durable task and research
+objectives, `/plan` for inspectable scope, and `/tokenmaxxing` for the savings
+ledger across prefix cache,
 [CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph) and
 [RTK](https://github.com/rtk-ai/rtk) context savings, recent turn usage, and
 model-selection cost pressure.

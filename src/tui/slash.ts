@@ -9,7 +9,6 @@ export type SlashCommandName =
   | "skills"
   | "goal"
   | "plan"
-  | "autoresearch"
   | "tokenmaxxing"
   | "context"
   | "tools"
@@ -40,9 +39,8 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: "system", description: "Show model, web search, Omni, and runtime status" },
   { name: "access", description: "Change this workspace's file and tool access" },
   { name: "skills", description: "List skills or manage enabled skills" },
-  { name: "goal", description: "Run /goal to start a long-horizon recursive goal" },
+  { name: "goal", description: "Start or manage task and research goals" },
   { name: "plan", description: "Start or manage plan mode" },
-  { name: "autoresearch", description: "Start or manage autoresearch experiments" },
   { name: "tokenmaxxing", description: "Show token, cache, RTK, and routing savings" },
   { name: "context", description: "Show context usage and compression state" },
   { name: "tools", description: "Show fixed tool schemas and renderer status" },
@@ -59,11 +57,13 @@ export const SLASH_SUBCOMMANDS: SlashSubcommandSpec[] = [
   { command: "skills", name: "list", value: "/skills list", description: "Show discovered skills" },
   { command: "skills", name: "manage", value: "/skills manage", description: "Enable or disable skills" },
   { command: "goal", name: "show", value: "/goal show", description: "Show active goal state" },
-  { command: "goal", name: "set", value: "/goal set", description: "Set or replace the goal objective" },
-  { command: "goal", name: "plan", value: "/goal plan", description: "Update the goal's internal plan" },
+  { command: "goal", name: "mode auto", value: "/goal mode auto", description: "Start a default auto goal" },
+  { command: "goal", name: "mode research", value: "/goal mode research", description: "Start a metric-driven research goal" },
+  { command: "goal", name: "mode focus", value: "/goal mode focus", description: "Start a focused goal" },
+  { command: "goal", name: "mode explore", value: "/goal mode explore", description: "Start an exploratory goal" },
+  { command: "goal", name: "mode timebox", value: "/goal mode timebox", description: "Start a timeboxed goal" },
   { command: "goal", name: "pause", value: "/goal pause", description: "Pause the current goal" },
   { command: "goal", name: "resume", value: "/goal resume", description: "Resume a paused goal" },
-  { command: "goal", name: "budget", value: "/goal budget", description: "Set or clear the goal token budget" },
   { command: "goal", name: "complete", value: "/goal complete", description: "Mark the goal complete" },
   { command: "goal", name: "drop", value: "/goal drop", description: "Drop the current goal" },
   { command: "plan", name: "show", value: "/plan show", description: "Show active plan state" },
@@ -72,9 +72,6 @@ export const SLASH_SUBCOMMANDS: SlashSubcommandSpec[] = [
   { command: "plan", name: "resume", value: "/plan resume", description: "Resume a paused plan" },
   { command: "plan", name: "approve", value: "/plan approve", description: "Approve the current plan for execution" },
   { command: "plan", name: "drop", value: "/plan drop", description: "Drop the current plan" },
-  { command: "autoresearch", name: "status", value: "/autoresearch status", description: "Show autoresearch state" },
-  { command: "autoresearch", name: "off", value: "/autoresearch off", description: "Disable autoresearch mode" },
-  { command: "autoresearch", name: "clear", value: "/autoresearch clear", description: "Clear autoresearch state" },
   { command: "access", name: "status", value: "/access status", description: "Show this workspace's access mode" },
   { command: "access", name: "full", value: "/access full", description: "Allow full local file and tool access for this workspace" },
   { command: "access", name: "auto", value: "/access auto", description: "Auto-approve routine tools for this workspace" },

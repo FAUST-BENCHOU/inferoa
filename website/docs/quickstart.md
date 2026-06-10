@@ -63,10 +63,10 @@ Slash commands live inside the TUI. See
   runtime status.
 - Run [`/goal`](./workflows/goal-mode.md) to start a recursive long-horizon
   goal.
+- Run `/goal mode research` for experiment-shaped work that needs repeated
+  measurement.
 - Use [`/plan set`](./workflows/plan-mode.md) for ambiguous work that needs an
   inspectable plan before execution.
-- Use [`/autoresearch`](./workflows/autoresearch-mode.md) for experiment-shaped
-  work that needs repeated measurement.
 - Use `/tokenmaxxing` (also `/cache`, `/rtk`, `/activity`) to see token, cache,
   RTK, and routing pressure.
 - Use `/access` to change this workspace's file and tool access mode.
@@ -109,7 +109,7 @@ Once Inferoa is running, explore the long-horizon workflows:
   recursive long-horizon goals.
 - [Plan mode](./workflows/plan-mode.md) turns ambiguous scope into an
   inspectable plan before execution.
-- [Autoresearch mode](./workflows/autoresearch-mode.md) runs benchmark-style
-  iteration with metrics and failure evidence.
+- Research goals under [Goal mode](./workflows/goal-mode.md) run
+  benchmark-style iteration with metrics and failure evidence.
 - [Architecture](./architecture.md) explains the system model and how the
   harness, context layer, and inference layer connect.

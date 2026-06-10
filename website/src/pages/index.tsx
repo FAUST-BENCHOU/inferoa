@@ -8,7 +8,7 @@ const modules = [
   ["01", "Loop Engineering", "Design the goal, feedback, verifier, memory, tools, and stop condition instead of hand-steering every prompt."],
   ["02", "Tokenmaxxing", "Keep each turn cache-aware, context-bounded, route-conscious, and measurable as the horizon grows."],
   ["03", "Inference-native runtime", "Expose context windows, prefix cache, model paths, endpoint signals, and serving constraints to the loop."],
-  ["04", "Proof-oriented loops", "Use plans, tests, tool evidence, autoresearch metrics, reflection, and completion reports to decide when to stop."],
+  ["04", "Proof-oriented loops", "Use plans, tests, tool evidence, research metrics, reflection, and completion reports to decide when to stop."],
 ];
 
 const stackFlow = [
@@ -35,8 +35,8 @@ const sessionDemos = [
     image: "/gif/plan.gif",
   },
   {
-    title: "Autoresearch",
-    body: "Benchmark runs, failures, fixes, and metrics stay in one research loop.",
+    title: "Research Goals",
+    body: "Benchmark runs, failures, fixes, and metrics stay inside the goal reflection loop.",
     image: "/gif/research.gif",
   },
 ];
@@ -351,7 +351,7 @@ export default function Home(): JSX.Element {
               <article>
                 <span>02</span>
                 <strong>Verifier-ready evidence</strong>
-                <p>Plans, tests, tool results, and autoresearch metrics give the loop concrete feedback to improve against.</p>
+                <p>Plans, tests, tool results, and research metrics give the loop concrete feedback to improve against.</p>
               </article>
               <article>
                 <span>03</span>

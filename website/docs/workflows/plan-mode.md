@@ -75,5 +75,5 @@ so the execution checklist and goal context stay aligned.
 ## Relationship To Other Modes
 
 Plan mode answers "what should we do?" Goal mode answers "keep working until it
-is done." Autoresearch answers "which measured change is better?" A common flow
-is plan first, approve, then execute under a goal.
+is done." Research goals answer "which measured change is better?" A common
+flow is plan first, approve, then execute under a goal.

@@ -1,3 +1,4 @@
+# Local Inferoa state, meta planning notes, and workspace-specific generated artifacts.
 .inferoa/
 .codegraph/
 .claude/

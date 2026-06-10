@@ -41,7 +41,7 @@ flowchart LR
 
 - **Goal-driven loop engineering** keeps recursive long-horizon goals,
   horizons, completion reflection, and evidence attached to a durable session.
-- **Plan and autoresearch modes** support approved scope and repeated
+- **Plan mode and research goals** support approved scope and repeated
   measurement inside the same long-running loop.
 - **Prefix-cache discipline** keeps the stable parts of the prompt stable, so
   reusable prefixes are not invalidated by avoidable churn.
@@ -74,7 +74,6 @@ behavior with inference behavior.
   [Context and RTK](./configuration/context-and-rtk.md) for configuration.
 - [Goal mode](./workflows/goal-mode.md),
   [Plan mode](./workflows/plan-mode.md),
-  [Autoresearch mode](./workflows/autoresearch-mode.md),
   [Coding workflow](./workflows/coding-workflow.md), and
   [Daemon runs](./workflows/daemon-jobs.md) for long-horizon workflows.
 - [Acceptance](./operations/acceptance.md) and

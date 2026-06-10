@@ -41,8 +41,8 @@ Engineering**:
   <img src="website/static/gif/welcome.gif" alt="Inferoa code index" width="860" />
   <p><strong>Plan Mode</strong></p>
   <img src="website/static/gif/plan.gif" alt="Inferoa plan mode" width="860" />
-  <p><strong>Autoresearch Mode</strong></p>
-  <img src="website/static/gif/research.gif" alt="Inferoa autoresearch mode" width="860" />
+  <p><strong>Auto Research</strong></p>
+  <img src="website/static/gif/research.gif" alt="Inferoa research goal" width="860" />
 </div>
 
 ## Why Inferoa
@@ -58,7 +58,7 @@ Inferoa gives that loop an inference-native runtime:
 - **Goal/rubric driven work**: `/goal` carries an objective across horizons,
   reflection, recovery, and completion evidence instead of stopping after the
   next answer.
-- **Independent feedback surfaces**: plans, tests, tool results, autoresearch
+- **Independent feedback surfaces**: plans, tests, tool results, research
   metrics, and completion evidence give the loop something concrete to improve
   against.
 - **Memory and context control**: compression, summaries, graph-shaped repo
@@ -78,7 +78,7 @@ the inference stack:
 | Surface | Substrate | Inferoa role | Tokenmaxxing target |
 | --- | --- | --- | --- |
 | Loop Engineering | [Inferoa Goal Mode](https://github.com/agentic-in/inferoa) | Recursive long-horizon goals, horizons, reflection, completion evidence, and recovery | Keep the engineering loop running until the work is proven |
-| Agent Harness | [Inferoa](https://github.com/agentic-in/inferoa) | Sessions, tools, plans, autoresearch, resources, evidence, and prefix-cache discipline | Give the loop a durable runtime while preserving reusable prompt prefixes |
+| Agent Harness | [Inferoa](https://github.com/agentic-in/inferoa) | Sessions, tools, plans, goals, resources, evidence, and prefix-cache discipline | Give the loop a durable runtime while preserving reusable prompt prefixes |
 | Context Optimization | [CodeGraph](https://www.npmjs.com/package/@colbymchenry/codegraph), [RTK](https://github.com/rtk-ai/rtk) | Select evidence and shrink mutable context without losing task continuity | Spend fewer prompt and tool-output tokens |
 | Intelligent routing | [vLLM Semantic Router](https://github.com/vllm-project/semantic-router) | Choose model paths by cost, safety, privacy, capability, and session pressure | Avoid one expensive path for every turn |
 | Model Serving | [vLLM Engine](https://github.com/vllm-project/vllm), [vLLM Omni](https://github.com/vllm-project/vllm-omni) | Use high-throughput, memory-efficient serving and multimodal endpoints while respecting inference-engine optimization rules | Control cost, safety, privacy, and data sovereignty when an external frontier model is unnecessary |
@@ -145,8 +145,6 @@ Use these commands as the task grows:
 - `/goal` starts a recursive long-horizon goal: Inferoa keeps the objective,
   horizons, evidence, and reflection loop active until the work is proven.
 - `/plan` turns ambiguous scope into an inspectable plan before execution.
-- `/autoresearch` runs benchmark-style iteration with metrics and failure
-  evidence in the same session.
 - `/tokenmaxxing` shows token and cost pressure across prefix-cache reuse,
   context savings, recent turn usage, and model-selection pressure.
 
