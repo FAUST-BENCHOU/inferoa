@@ -217,7 +217,18 @@ function isCompactToolGroup(group: ToolEventGroup, lines: string[]): boolean {
 }
 
 function shouldHideFailedToolTrace(group: ToolEventGroup): boolean {
-  return group.result?.ok === false && HIDDEN_FAILED_TOOL_TRACE_TOOLS.has(group.name);
+  if (group.result?.ok !== false) {
+    return false;
+  }
+  if (HIDDEN_FAILED_TOOL_TRACE_TOOLS.has(group.name)) {
+    return true;
+  }
+  if (group.name !== "list_dir") {
+    return false;
+  }
+  const error = objectField(group.result.error);
+  const code = stringField(error.code);
+  return code === "list_dir_failed" || group.result.summary.startsWith("list_dir_failed:");
 }
 
 function shouldExpandToolGroup(group: ToolEventGroup, body: string[]): boolean {

@@ -103,7 +103,7 @@ test("TUI tool renderer formats shell, diff, and todo cards", async () => {
   }
 });
 
-test("TUI tool renderer hides failed basic file read/write cards", async () => {
+test("TUI tool renderer hides failed basic file read, write, and list cards", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-tui-renderer-hidden-file-failures-"));
   const store = await SessionStore.open(dir);
   try {
@@ -146,6 +146,21 @@ test("TUI tool renderer hides failed basic file read/write cards", async () => {
         type: "tool.result",
         data: {
           tool_call_id: "c",
+          tool_name: "list_dir",
+          result: {
+            ok: false,
+            summary: "list_dir_failed: ENOENT: no such file or directory, scandir '/missing'",
+            data: { path: "/missing" },
+            error: { code: "list_dir_failed", message: "ENOENT: no such file or directory, scandir '/missing'" },
+          },
+        },
+      },
+      {
+        session_id: session.session_id,
+        run_id: "run",
+        type: "tool.result",
+        data: {
+          tool_call_id: "d",
           tool_name: "read_file",
           result: { ok: true, summary: "Read 1 line from visible.md", data: { path: "visible.md", content: "ok" } },
         },
@@ -155,7 +170,7 @@ test("TUI tool renderer hides failed basic file read/write cards", async () => {
         run_id: "run",
         type: "tool.result",
         data: {
-          tool_call_id: "d",
+          tool_call_id: "e",
           tool_name: "run_command",
           result: { ok: false, summary: "Command exited 1", data: { command: "false", cwd: ".", code: 1, output: "" } },
         },
@@ -165,10 +180,13 @@ test("TUI tool renderer hides failed basic file read/write cards", async () => {
 
     assert.doesNotMatch(plain, /Read file failed/);
     assert.doesNotMatch(plain, /Wrote file failed/);
+    assert.doesNotMatch(plain, /Listed directory failed/);
     assert.doesNotMatch(plain, /read_file_failed/);
     assert.doesNotMatch(plain, /write_file_failed/);
+    assert.doesNotMatch(plain, /list_dir_failed/);
     assert.doesNotMatch(plain, /README\.md/);
     assert.doesNotMatch(plain, /blocked\.md/);
+    assert.doesNotMatch(plain, /\/missing/);
     assert.match(plain, /Read file .*visible\.md/);
     assert.match(plain, /Ran failed false · exited 1/);
   } finally {

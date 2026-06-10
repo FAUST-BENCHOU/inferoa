@@ -1,4 +1,6 @@
 import { ansi, bgLine, center, fg256, padRight, truncateToWidth, visibleWidth } from "./ansi.js";
+import { parseSlashCommand } from "./slash.js";
+import { renderUnknownSlashCommandNotice } from "./slash-notice.js";
 import { isPathListInput, pathListEntries } from "../util/path-input.js";
 
 export interface ComposerSuggestion {
@@ -19,6 +21,7 @@ export interface ComposerRenderOptions {
   activity?: string;
   queue?: string[];
   footer?: string;
+  notice?: string;
   metadataLeft?: string;
   metadataRight?: string;
   placeholder?: string;
@@ -54,6 +57,19 @@ export interface ComposerCompactRange {
   label: string;
 }
 
+export interface ComposerSubmissionInput {
+  buffer: string;
+  compactRanges?: ComposerCompactRange[];
+  items: readonly { value: string }[];
+  selected: number;
+  selectionTouched: boolean;
+  validateSlashCommands?: boolean;
+}
+
+export type ComposerSubmissionDecision =
+  | { action: "submit"; text: string }
+  | { action: "stay"; notice?: string };
+
 interface LineSegment {
   text: string;
   start: number;
@@ -75,6 +91,29 @@ interface ComposerSuggestionWindow<T> {
 
 export const COMPOSER_SUGGESTION_PAGE_SIZE = 8;
 export const WELCOME_COMPOSER_SUGGESTION_PAGE_SIZE = 5;
+
+export function resolveComposerSubmission(input: ComposerSubmissionInput): ComposerSubmissionDecision {
+  const item = input.items[input.selected];
+  const trimmed = input.buffer.trim();
+  const prompt = input.compactRanges?.length ? input.buffer : trimmed;
+  if (!prompt.trim()) {
+    return { action: "stay" };
+  }
+  if (trimmed === "/" && item) {
+    return { action: "submit", text: item.value };
+  }
+  if (trimmed === "$" && item && input.selectionTouched) {
+    return { action: "submit", text: item.value };
+  }
+  if (input.validateSlashCommands !== false) {
+    const parsed = parseSlashCommand(prompt);
+    if (parsed.error) {
+      const commandName = prompt.trim().slice(1).split(/\s+/)[0] ?? "";
+      return { action: "stay", notice: renderUnknownSlashCommandNotice(commandName) };
+    }
+  }
+  return { action: "submit", text: prompt };
+}
 
 export function insertComposerText(buffer: string, cursor: number, text: string): { buffer: string; cursor: number } {
   const safeCursor = clampCursor(buffer, cursor);
@@ -271,6 +310,9 @@ export function renderComposerSurface(options: ComposerRenderOptions): ComposerR
 
   lines.push(bgLine(236, "", width));
 
+  if (options.notice) {
+    lines.push(renderComposerNoticeLine(options.notice, width));
+  }
   if (options.metadataLeft || options.metadataRight || options.footer) {
     lines.push(renderComposerMetadataLine(composerFooterMetadata(options.footer, options.metadataLeft), options.metadataRight, width));
   }
@@ -293,6 +335,10 @@ export function renderComposerActivityLine(activity: string, width: number): str
   return `  ${truncateToWidth(activity, Math.max(20, Math.max(20, width) - 2))}`;
 }
 
+function renderComposerNoticeLine(notice: string, width: number): string {
+  return `  ${truncateToWidth(notice, Math.max(20, Math.max(20, width) - 2))}`;
+}
+
 export function renderWelcomeComposerSurface(options: WelcomeComposerRenderOptions): ComposerRenderResult {
   const width = Math.max(36, options.width);
   const height = Math.max(12, options.height ?? 30);
@@ -303,7 +349,8 @@ export function renderWelcomeComposerSurface(options: WelcomeComposerRenderOptio
   const mark = renderWelcomeMark();
   const display = compactComposerDisplay(options.buffer, options.cursor, options.compactRanges);
   const inputSegments = display.buffer.length === 0 ? splitLines("") : splitLines(display.buffer);
-  const extraRows = options.items.length ? Math.min(5, options.items.length) : 1;
+  const launcherActive = options.buffer.startsWith("/") || options.buffer.startsWith("$");
+  const extraRows = launcherActive ? WELCOME_COMPOSER_SUGGESTION_PAGE_SIZE : options.items.length ? Math.min(5, options.items.length) : 1;
   const minInputRowsBeforeMeta = 3;
   const inputBoxRows = Math.max(5, 1 + inputSegments.length + 2);
   const naturalHeight = mark.length + 1 + inputBoxRows + 1 + extraRows;
@@ -360,6 +407,8 @@ export function renderWelcomeComposerSurface(options: WelcomeComposerRenderOptio
     const page = composerSuggestionWindow(options.items, options.selected, WELCOME_COMPOSER_SUGGESTION_PAGE_SIZE);
     lines.push(...page.items.map((item, offset) => `${" ".repeat(left + 1)}${renderComposerSuggestion(item, page.startIndex + offset === options.selected, boxWidth - 1)}`));
     lines.push(`${" ".repeat(left + 1)}${fg256(244, composerSuggestionHint(options.items[0]?.kind, page))}`);
+  } else if (options.notice) {
+    lines.push(`${" ".repeat(left + 1)}${renderComposerNoticeLine(options.notice, boxWidth - 1)}`);
   } else {
     const affordance = welcomeAffordanceLine(options, width, left, boxWidth);
     codeIntelligenceLine = lines.length;

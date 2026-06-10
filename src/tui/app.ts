@@ -103,6 +103,7 @@ import {
   renderComposerActivityLine,
   renderComposerSurface,
   renderWelcomeComposerSurface,
+  resolveComposerSubmission,
 } from "./composer.js";
 import {
   createPromptQueueState,
@@ -540,6 +541,7 @@ export class TuiApp {
     let renderedCodeIntelligenceLine: number | undefined;
     let renderedCodeIntelligenceColumn: number | undefined;
     let renderedCodeIntelligenceWidth: number | undefined;
+    let submissionNotice: string | undefined;
     let forceFullRedraw = false;
     let eraseAfterResize = false;
     const pasteState: TerminalPasteState = {};
@@ -683,6 +685,7 @@ export class TuiApp {
               activity: this.#composerActivity,
               queue: this.#composerQueue,
               footer: this.#composerFooter,
+              notice: submissionNotice,
               workspaceRoot: this.app.workspace.root,
               mode: this.app.config.model_setup.mode,
               model: this.app.config.model_setup.model ?? "unconfigured",
@@ -701,6 +704,7 @@ export class TuiApp {
               activity: this.#composerActivity,
               queue: this.#composerQueue,
               footer: this.#composerFooter,
+              notice: submissionNotice,
               metadataLeft: this.composerMetadataLeft(),
               metadataRight: this.composerMetadataRight(),
               placeholder: options.placeholder,
@@ -741,6 +745,7 @@ export class TuiApp {
         selected = 0;
         selectionTouched = false;
         historyNavigation = undefined;
+        submissionNotice = undefined;
         render();
         return true;
       };
@@ -753,6 +758,7 @@ export class TuiApp {
         selected = 0;
         selectionTouched = false;
         historyNavigation = undefined;
+        submissionNotice = undefined;
         render();
       };
       const insertPaste = (text: string) => {
@@ -767,6 +773,7 @@ export class TuiApp {
         selected = 0;
         selectionTouched = false;
         historyNavigation = undefined;
+        submissionNotice = undefined;
         render();
       };
       const deleteRange = (start: number, end: number) => {
@@ -776,6 +783,7 @@ export class TuiApp {
         selected = 0;
         selectionTouched = false;
         historyNavigation = undefined;
+        submissionNotice = undefined;
         render();
       };
       const navigateHistory = (direction: "previous" | "next") => {
@@ -792,6 +800,7 @@ export class TuiApp {
         compactRanges = [];
         selected = 0;
         selectionTouched = false;
+        submissionNotice = undefined;
         render();
         return true;
       };
@@ -803,27 +812,25 @@ export class TuiApp {
         }
         selected = moveComposerSuggestionPage(selected, items.length, pageSize, delta);
         selectionTouched = true;
+        submissionNotice = undefined;
         render();
         return true;
       };
       const submit = () => {
-        const items = composerItems();
-        const item = items[selected];
-        const trimmed = buffer.trim();
-        const prompt = compactRanges.length ? buffer : trimmed;
-        if (!prompt.trim()) {
+        const decision = resolveComposerSubmission({
+          buffer,
+          compactRanges,
+          items: composerItems(),
+          selected,
+          selectionTouched,
+          validateSlashCommands: options.suggestions !== false,
+        });
+        if (decision.action === "stay") {
+          submissionNotice = decision.notice;
           render();
           return;
         }
-        if (trimmed === "/" && item) {
-          finish(item.value);
-          return;
-        }
-        if (trimmed === "$" && item && selectionTouched) {
-          finish(item.value);
-          return;
-        }
-        finish(prompt);
+        finish(decision.text);
       };
       const onData = (chunk: Buffer) => {
         if (this.#inputModalActive) {
@@ -851,6 +858,7 @@ export class TuiApp {
               selected = 0;
               selectionTouched = false;
               historyNavigation = undefined;
+              submissionNotice = undefined;
               render();
             } else if (this.interruptActiveLoop()) {
               render();
@@ -863,6 +871,7 @@ export class TuiApp {
             if (count) {
               selected = (selected - 1 + count) % count;
               selectionTouched = true;
+              submissionNotice = undefined;
               render();
             } else {
               navigateHistory("previous");
@@ -872,6 +881,7 @@ export class TuiApp {
             if (count) {
               selected = (selected + 1) % count;
               selectionTouched = true;
+              submissionNotice = undefined;
               render();
             } else {
               navigateHistory("next");
@@ -901,6 +911,7 @@ export class TuiApp {
               selected = 0;
               selectionTouched = false;
               historyNavigation = undefined;
+              submissionNotice = undefined;
               render();
             } else {
               completeSelection();
@@ -926,6 +937,7 @@ export class TuiApp {
               selected = 0;
               selectionTouched = false;
               historyNavigation = undefined;
+              submissionNotice = undefined;
               render();
             }
           } else if (isPrintableInput(key)) {

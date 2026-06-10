@@ -14,6 +14,7 @@ import {
   renderComposerActivityLine,
   renderComposerSurface,
   renderWelcomeComposerSurface,
+  resolveComposerSubmission,
 } from "../src/tui/composer.js";
 import { stripAnsi } from "../src/tui/ansi.js";
 
@@ -228,6 +229,32 @@ test("composer suggestions page around the selected command", () => {
   assert.ok(plain.some((line) => line.includes("2/2") && line.includes("←/→ page")));
 });
 
+test("composer keeps unknown slash commands in the input instead of submitting", () => {
+  const decision = resolveComposerSubmission({
+    buffer: "/docker",
+    compactRanges: [],
+    items: [],
+    selected: 0,
+    selectionTouched: false,
+  });
+
+  assert.equal(decision.action, "stay");
+  assert.match(stripAnsi(decision.notice ?? ""), /Unrecognized command '\/docker'/);
+});
+
+test("composer submits slash-looking text when slash validation is disabled", () => {
+  const decision = resolveComposerSubmission({
+    buffer: "/docker",
+    compactRanges: [],
+    items: [],
+    selected: 0,
+    selectionTouched: false,
+    validateSlashCommands: false,
+  });
+
+  assert.deepEqual(decision, { action: "submit", text: "/docker" });
+});
+
 function visiblePlainWidth(text: string): number {
   return [...text].reduce((width, char) => width + (char.codePointAt(0)! > 0xff ? 2 : 1), 0);
 }
@@ -376,6 +403,37 @@ test("welcome composer keeps multiline cursor math stable for resize redraws", (
   assert.ok(wide.cursorColumn > narrow.cursorColumn);
   assert.match(stripAnsi(narrow.lines.join("\n")), /second line/);
   assert.match(stripAnsi(wide.lines.join("\n")), /second line/);
+});
+
+test("welcome composer keeps the input row stable while slash suggestions disappear", () => {
+  const base = {
+    selected: 0,
+    width: 120,
+    height: 40,
+    workspaceRoot: "/tmp/workspace",
+    mode: "direct",
+    model: "demo",
+    contextWindow: 128_000,
+  };
+  const slashSuggestions = Array.from({ length: 8 }, (_, index) => ({
+    label: `/command-${index}`,
+    description: `Command ${index}`,
+    kind: "command" as const,
+  }));
+  const withSuggestions = renderWelcomeComposerSurface({
+    ...base,
+    buffer: "/",
+    cursor: 1,
+    items: slashSuggestions,
+  });
+  const withoutSuggestions = renderWelcomeComposerSurface({
+    ...base,
+    buffer: "/docker",
+    cursor: "/docker".length,
+    items: [],
+  });
+
+  assert.equal(withoutSuggestions.cursorLine, withSuggestions.cursorLine);
 });
 
 test("welcome composer suggestions page around the selected command", () => {
