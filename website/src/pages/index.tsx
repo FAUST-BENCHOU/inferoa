@@ -5,10 +5,10 @@ import useBaseUrl from "@docusaurus/useBaseUrl";
 import styles from "./index.module.css";
 
 const modules = [
-  ["01", "Loop Engineering", "Run /goal to start a long-horizon recursive goal that keeps inspecting, changing, testing, and reflecting."],
-  ["02", "Tokenmaxxing discipline", "Stable prompt epochs and deterministic tool schemas protect reusable session prefixes."],
-  ["03", "Context + routing", "Compression, graph-shaped repo context, bounded tool output, and route choice reduce token waste while preserving evidence."],
-  ["04", "Inference-native serving", "vLLM Engine and Omni keep cache, latency, cost, and multimodal signals native to the harness."],
+  ["01", "Loop Engineering", "Design the goal, feedback, verifier, memory, tools, and stop condition instead of hand-steering every prompt."],
+  ["02", "Tokenmaxxing", "Keep each turn cache-aware, context-bounded, route-conscious, and measurable as the horizon grows."],
+  ["03", "Inference-native runtime", "Expose context windows, prefix cache, model paths, endpoint signals, and serving constraints to the loop."],
+  ["04", "Proof-oriented loops", "Use plans, tests, tool evidence, autoresearch metrics, reflection, and completion reports to decide when to stop."],
 ];
 
 const stackFlow = [
@@ -292,17 +292,17 @@ export default function Home(): JSX.Element {
 
         <section className={styles.problem}>
           <div className={styles.sectionInner}>
-            <span className={styles.sectionKicker}>The mismatch</span>
-            <h1>The Gap</h1>
+            <span className={styles.sectionKicker}>Why loops break</span>
+            <h1>Loops fail when inference is invisible.</h1>
             <p>
-              Most agents, routers, and inference engines are designed as{" "}
-              <strong>separate layers</strong>. The agent keeps sending{" "}
-              <strong>generic chat traffic</strong>, while{" "}
-              <strong>prefix cache stability</strong>,{" "}
-              <strong>route choice</strong>, <strong>serving behavior</strong>,
-              and <strong>context pressure</strong> stay invisible. Inferoa
-              brings those <strong>tokenmaxxing surfaces</strong> into the
-              agent harness itself.
+              Loop engineering works when a model can run against{" "}
+              <strong>goals, rubrics, feedback, memory, and verification</strong>.
+              But every loop is also an <strong>inference workload</strong>:
+              prefixes drift, <strong>cache reuse</strong> collapses, stale
+              evidence fills <strong>context</strong>, <strong>routing</strong>{" "}
+              gets harder, and <strong>serving constraints</strong> start to
+              shape the result. Inferoa keeps those{" "}
+              <strong>tokenmaxxing surfaces</strong> inside the harness.
             </p>
           </div>
         </section>
@@ -310,8 +310,8 @@ export default function Home(): JSX.Element {
         <section className={styles.modules}>
           <div className={styles.sectionInner}>
             <div className={styles.sectionHeader}>
-              <span className={styles.sectionKicker}>Loop engineering surfaces</span>
-              <h2>The Goal Loop</h2>
+              <span className={styles.sectionKicker}>Three words, one runtime</span>
+              <h2>Loop Engineering needs Tokenmaxxing.</h2>
             </div>
             <div className={styles.moduleGrid}>
               {modules.map(([number, title, body]) => (
@@ -329,32 +329,34 @@ export default function Home(): JSX.Element {
           <div className={styles.sectionInner}>
             <div className={styles.missionCopy}>
               <span className={styles.sectionKicker}>Mission</span>
-              <h2>Engineer the loop, not the next prompt.</h2>
+              <h2>Design loops with inference feedback.</h2>
               <p>
-                <strong>Inferoa</strong> starts with coding because coding
-                exposes <strong>long-horizon pressure</strong> clearly: large
-                repos, changing goals, tool failures, repeated model calls,
-                context limits, and proof through tests. The goal is to
-                co-design the agent harness, goal loop, and inference stack so every turn spends{" "}
+                <strong>Inferoa</strong> starts with <strong>coding</strong>{" "}
+                because coding exposes <strong>loop pressure</strong> clearly:
+                changing goals, tool failures, repeated model calls, context
+                limits, memory needs, verifier signals, and proof through
+                tests. The goal is to co-design the{" "}
+                <strong>agent harness, goal loop, and inference stack</strong>{" "}
+                so every turn spends{" "}
                 <strong>context, cache, route choice, and serving capacity</strong>{" "}
-                more deliberately.
+                deliberately.
               </p>
             </div>
             <div className={styles.loopCards} aria-label="Inference loop design points">
               <article>
                 <span>01</span>
-                <strong>Goal mode drives the loop</strong>
-                <p>One durable outcome expands through horizons, evidence, reflection, and completion reports.</p>
+                <strong>Goal and rubric feedback</strong>
+                <p>One durable outcome expands through horizons, evidence, reflection, recovery, and completion reports.</p>
               </article>
               <article>
                 <span>02</span>
-                <strong>Tokenmaxxing keeps it stable</strong>
-                <p>Stable prompt epochs, bounded context, and fixed tool schemas keep long sessions warm.</p>
+                <strong>Verifier-ready evidence</strong>
+                <p>Plans, tests, tool results, and autoresearch metrics give the loop concrete feedback to improve against.</p>
               </article>
               <article>
                 <span>03</span>
-                <strong>Routing and serving stay native</strong>
-                <p>vLLM SR chooses paths while vLLM Engine supplies high-throughput, memory-efficient serving.</p>
+                <strong>Inference stays visible</strong>
+                <p>Prefix cache, context pressure, routing, multimodal endpoints, and serving constraints stay in the loop.</p>
               </article>
             </div>
           </div>

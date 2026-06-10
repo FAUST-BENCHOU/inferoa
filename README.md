@@ -14,22 +14,25 @@
   <a href="https://inferoa.agentic-in.ai/blog/announcing-inferoa">Blog</a>
 </p>
 
-Most agents call models as if inference were a **black box**. The loop lives in
-one layer, while routing, serving, context, and multimodal handling live
-somewhere else. Prefix cache stability is ignored, routing is bolted on later,
-and context is pasted until it fits.
+Prompting is no longer the whole interface. The frontier is **Loop
+Engineering**: give the model a goal, feedback, verification, memory, and tools,
+then let it self-correct until the work is proven.
+
+But every loop is also an inference workload. As turns accumulate, prompt
+prefixes drift, cache reuse collapses, stale evidence fills context, model
+routing gets harder, and serving choices start to matter.
 
 Inferoa is an **Inference-native Tokenmaxxing Agent Harness for Loop
-Engineering**. It starts from the inference stack, not from a generic chat loop:
-prefix-cache discipline, context optimization, vLLM Semantic Router,
-high-throughput vLLM serving, vLLM Omni multimodal capability, and
-RTK/CodeGraph-backed context selection are part of the harness itself.
+Engineering**:
 
-That lets recursive long-horizon goals keep inspecting, changing, testing,
-reflecting, and continuing until the work is proven, while tokenmaxxing the
-inference path underneath every turn.
+- **Inference-native**: the loop sees serving, routing, context windows, prefix
+  cache, multimodal endpoints, and self-hosted model paths.
+- **Tokenmaxxing**: each turn is shaped to preserve cacheable prefixes, bound
+  mutable context, expose token pressure, and pick the right inference path.
+- **Loop Engineering**: `/goal` runs durable recursive loops that inspect, edit,
+  test, verify, reflect, remember, and continue across horizons.
 
-## Preview
+## Loop is All You Need
 
 <div align="center">
   <p><strong>Goal Mode</strong></p>
@@ -46,27 +49,26 @@ inference path underneath every turn.
 
 Inferoa = **Infer**(Inference-native)**o**(Tokenmaxxing Loop)**a**(Agent Harness).
 
-Long-horizon agents are not one prompt. They are many turns of planning,
-editing, tool use, retries, compaction, cache warmup, route selection, and
-verification. If the harness treats every turn as generic chat traffic, it
-throws away the optimization surface underneath it.
+<div align="center">
+  <img src="website/static/img/readme-why-inferoa.png" alt="Why Inferoa: Inference-native Loop Tokenmaxxing" width="860" />
+</div>
 
-Inferoa makes the recursive engineering loop and its tokenmaxxing surfaces
-first-class:
+Inferoa gives that loop an inference-native runtime:
 
-- **Loop engineering keeps recursive work moving**, not just the next prompt:
-  Goal mode carries a durable objective forward until the work is proven, with
-  plan and autoresearch available when the loop needs scoped approval or
-  measurement.
-- **Prefix cache is protected**, not merely reported after the turn.
-- **Context is optimized** through compression, summaries, graph-shaped code
-  context, bounded tool output, and evidence selection instead of pasting until
-  the window is full.
-- **Intelligent routing chooses the model path** by cost, safety, privacy,
-  capability, and session pressure.
-- **High-performance model serving is respected**: Inferoa follows inference
-  engine optimization rules so high-throughput, memory-efficient vLLM serving
-  is not treated like generic chat traffic.
+- **Goal/rubric driven work**: `/goal` carries an objective across horizons,
+  reflection, recovery, and completion evidence instead of stopping after the
+  next answer.
+- **Independent feedback surfaces**: plans, tests, tool results, autoresearch
+  metrics, and completion evidence give the loop something concrete to improve
+  against.
+- **Memory and context control**: compression, summaries, graph-shaped repo
+  context, bounded history, and bounded tool output keep useful evidence in the
+  window without letting stale state take over.
+- **Prefix-cache discipline**: prompt epochs, deterministic tool schemas, and
+  bounded system sections protect reusable prefixes while the loop runs.
+- **Serving and routing remain visible**: model paths can respond to cost,
+  safety, privacy, capability, session pressure, multimodal needs, and whether
+  a self-hosted vLLM path is enough.
 
 ## The Tokenmaxxing Stack
 
@@ -88,23 +90,6 @@ the inference stack:
   <img src="website/static/img/screenshots/tokenmaxxing.png" alt="Welcome" width="860" />
 
 </div>
-
-## Core Design
-
-- **Loop engineering for recursive long-horizon work**: `/goal` starts a
-  durable objective and keeps the loop moving until the work is proven; plan
-  and autoresearch help shape scope and measure progress along the way.
-- **Prefix-cache discipline**: stable prompt epochs, deterministic tool schemas,
-  bounded context sections, and cache reports protect reusable prefixes.
-- **Continuous context optimization**: compression, summaries, structured repo
-  context, bounded history, and bounded tool output preserve evidence while
-  reducing token pressure.
-- **Intelligent routing**: model paths can respond to cost, safety, privacy,
-  capability, and session pressure, including routing between self-hosted vLLM
-  models and external frontier models.
-- **Inference-engine alignment**: prompt shape, endpoint choice, throughput,
-  memory efficiency, cache behavior, and model capacity remain visible to the
-  harness so the agent can follow serving optimization rules.
 
 ## Installation
 
