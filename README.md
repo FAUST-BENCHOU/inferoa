@@ -14,32 +14,28 @@
   <a href="https://inferoa.agentic-in.ai/blog/announcing-inferoa">Blog</a>
 </p>
 
-Most agents call models as if inference were a **black box**. The agent loop,
-router, serving engine, context system, and multimodal path are usually split
-apart, so the agent cannot tokenmaxx across the optimization rules that modern
-inference systems make possible.
-
-> Prefix cache stability is ignored. Routing is
-bolted on later. Context is pasted until it fits. Users pay for that gap.
+Most agents call models as if inference were a **black box**. The loop lives in
+one layer, while routing, serving, context, and multimodal handling live
+somewhere else. Prefix cache stability is ignored, routing is bolted on later,
+and context is pasted until it fits.
 
 Inferoa is an **Inference-native Tokenmaxxing Agent Harness for Loop
-Engineering**. It is built for recursive long-horizon goals: define the outcome
-once, then Inferoa keeps the engineering loop inspecting, changing, testing,
-reflecting, and continuing until the work is proven.
+Engineering**. It starts from the inference stack, not from a generic chat loop:
+prefix-cache discipline, context optimization, vLLM Semantic Router,
+high-throughput vLLM serving, vLLM Omni multimodal capability, and
+RTK/CodeGraph-backed context selection are part of the harness itself.
 
-That is what **inference-native** means here: Inferoa starts from the inference
-stack and co-designs loop engineering around **tokenmaxxing**: prefix-cache
-discipline, context optimization, intelligent routing through vLLM Semantic
-Router, high-throughput vLLM serving, vLLM Omni multimodal capability, and
-RTK/CodeGraph-backed context selection.
+That lets recursive long-horizon goals keep inspecting, changing, testing,
+reflecting, and continuing until the work is proven, while tokenmaxxing the
+inference path underneath every turn.
 
 ## Preview
 
 <div align="center">
   <p><strong>Goal Mode</strong></p>
   <img src="website/static/gif/goal.gif" alt="Inferoa goal mode" width="860" />
-  <p><strong>Welcome</strong></p>
-  <img src="website/static/gif/welcome.gif" alt="Welcome" width="860" />
+  <p><strong>Code Index</strong></p>
+  <img src="website/static/gif/welcome.gif" alt="Inferoa code index" width="860" />
   <p><strong>Plan Mode</strong></p>
   <img src="website/static/gif/plan.gif" alt="Inferoa plan mode" width="860" />
   <p><strong>Autoresearch Mode</strong></p>
@@ -48,8 +44,7 @@ RTK/CodeGraph-backed context selection.
 
 ## Why Inferoa
 
-Inferoa = **Infer**(Inference-native)**o**(Tokenmaxxing Loop
-Engineering)**a**(Agent Harness).
+Inferoa = **Infer**(Inference-native)**o**(Tokenmaxxing Loop)**a**(Agent Harness).
 
 Long-horizon agents are not one prompt. They are many turns of planning,
 editing, tool use, retries, compaction, cache warmup, route selection, and
@@ -59,11 +54,11 @@ throws away the optimization surface underneath it.
 Inferoa makes the recursive engineering loop and its tokenmaxxing surfaces
 first-class:
 
-- **Goal mode runs the loop**, not just the next prompt: horizons, evidence,
-  reflection, and completion reports stay attached to the durable objective.
+- **Loop engineering keeps recursive work moving**, not just the next prompt:
+  Goal mode carries a durable objective forward until the work is proven, with
+  plan and autoresearch available when the loop needs scoped approval or
+  measurement.
 - **Prefix cache is protected**, not merely reported after the turn.
-- **Plans and autoresearch** are native companion modes for approved scope and
-  measurement-driven iteration.
 - **Context is optimized** through compression, summaries, graph-shaped code
   context, bounded tool output, and evidence selection instead of pasting until
   the window is full.
@@ -97,11 +92,9 @@ the inference stack:
 
 ## Core Design
 
-- **Goal-driven loop engineering**: `/goal` starts a recursive long-horizon
-  objective, then keeps horizons, evidence, reflection, and completion reports
-  active until the work is proven.
-- **Native companion modes**: plan and autoresearch are workflows for approved
-  scope and measurement-driven iteration, not prompt templates.
+- **Loop engineering for recursive long-horizon work**: `/goal` starts a
+  durable objective and keeps the loop moving until the work is proven; plan
+  and autoresearch help shape scope and measure progress along the way.
 - **Prefix-cache discipline**: stable prompt epochs, deterministic tool schemas,
   bounded context sections, and cache reports protect reusable prefixes.
 - **Continuous context optimization**: compression, summaries, structured repo
