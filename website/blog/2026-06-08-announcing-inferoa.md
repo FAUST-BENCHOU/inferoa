@@ -22,7 +22,7 @@ That loop is also an inference workload. As turns accumulate, prompt prefixes
 drift, cache reuse collapses, stale evidence fills context, model routing gets
 harder, and serving choices start to matter.
 
-![Loop engineering needs inference-native tokenmaxxing surfaces](/img/blog/inferoa-loop-inference-workload.png)
+![Loop Engineering as a recursive system of goals, tools, feedback, memory, verification, reflection, and proof](/img/blog/inferoa-loop-inference-workload.png)
 
 That is where Loop Engineering has to become inference-native. A long-horizon
 loop needs to see the substrate it is consuming: tokens, cache, context, routes,
