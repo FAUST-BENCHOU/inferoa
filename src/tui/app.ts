@@ -9600,13 +9600,14 @@ function selfImproveHelpLines(): string[] {
 }
 
 function selfImproveStatusLines(status: Awaited<ReturnType<typeof optLiteStatus>>): string[] {
+  const latestTargets = status.latest_proposal?.skill_targets?.map((target) => target.skill_id).join(", ");
   return [
-    `${fg256(39, "Purpose")} turn verified loop evidence into a reviewable workspace skill.`,
+    `${fg256(39, "Purpose")} turn verified loop evidence into reviewable Loop/Workspace Skills.`,
     `${fg256(39, "Evidence")} sessions ${status.eligible_goal_sessions} · verifications ${status.verified_records} · feedback ${status.human_feedback_records} · signals ${status.learning_signal_records}`,
     `${fg256(39, "Proposals")} total ${status.proposal_count} · staged ${status.staged_count} · adopted ${status.adopted_count}`,
     `${fg256(39, "Replay")} reports ${status.replay_count}`,
     status.latest_proposal
-      ? `${fg256(39, "Latest proposal")} ${status.latest_proposal.id} · ${status.latest_proposal.status} · ${status.latest_proposal.skill_id}`
+      ? `${fg256(39, "Latest proposal")} ${status.latest_proposal.id} · ${status.latest_proposal.status} · ${latestTargets || status.latest_proposal.skill_id}`
       : `${fg256(39, "Latest proposal")} none`,
     status.latest_replay
       ? `${fg256(39, "Latest replay")} ${status.latest_replay.id} · ${status.latest_replay.status} · samples ${status.latest_replay.sample_count} · ${formatOptScore(status.latest_replay.baseline_score)} -> ${formatOptScore(status.latest_replay.candidate_score)}`
@@ -9622,10 +9623,10 @@ function selfImproveCommandLines(): string[] {
     fg256(39, "Commands"),
     `${fg256(48, "  /self-improve help")} ${fg256(244, "show this workflow")}`,
     `${fg256(48, "  /self-improve status")} ${fg256(244, "show evidence, proposals, and replay reports")}`,
-    `${fg256(48, "  /self-improve propose")} ${fg256(244, "stage a learned workspace skill from verified loop evidence")}`,
+    `${fg256(48, "  /self-improve propose")} ${fg256(244, "stage learned Loop/Workspace Skills from verified loop evidence")}`,
     `${fg256(48, "  /self-improve run --replay [proposal_id]")} ${fg256(244, "gate the staged proposal against replay samples")}`,
     `${fg256(48, "  /self-improve report [replay_id]")} ${fg256(244, "show the latest replay gate report")}`,
-    `${fg256(48, "  /self-improve adopt [proposal_id]")} ${fg256(244, "adopt an accepted staged skill")}`,
+    `${fg256(48, "  /self-improve adopt [proposal_id]")} ${fg256(244, "adopt accepted staged Loop/Workspace Skills")}`,
   ];
 }
 

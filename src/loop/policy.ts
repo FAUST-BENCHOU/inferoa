@@ -6,7 +6,9 @@ import { effectiveWorkspacePermission } from "../tools/permissions.js";
 import { listConnectorActionRunnerDefinitions } from "./actions.js";
 import { listConnectorVerifierDefinitions } from "./connector-verifiers.js";
 
-const LEARNED_LOOP_SKILL_ID = "workspace-learned-loop-policy";
+const LOOP_SKILL_ID = "inferoa-loop-skill";
+const WORKSPACE_SKILL_ID = "inferoa-workspace-skill";
+const LEGACY_LEARNED_LOOP_SKILL_ID = "workspace-learned-loop-policy";
 
 export interface LoopPolicyReport {
   workspace_id: string;
@@ -76,14 +78,10 @@ export interface LoopSkillPolicyReport {
   loaded_count: number;
   missing_enabled: string[];
   enabled: LoopSkillPolicyItem[];
-  learned_workspace_skill: {
-    skill_id: string;
-    expected_path: string;
-    configured: boolean;
-    discovered: boolean;
-    enabled: boolean;
-    path?: string;
-  };
+  learned_loop_skill: LoopLearnedSkillPolicyItem;
+  learned_workspace_skill: LoopLearnedSkillPolicyItem;
+  learned_skills: LoopLearnedSkillPolicyItem[];
+  legacy_learned_loop_policy?: LoopLearnedSkillPolicyItem;
 }
 
 export interface LoopSkillPolicyItem {
@@ -92,6 +90,15 @@ export interface LoopSkillPolicyItem {
   description: string;
   trust: SkillDescriptor["trust"];
   source: string;
+  path?: string;
+}
+
+export interface LoopLearnedSkillPolicyItem {
+  skill_id: string;
+  expected_path: string;
+  configured: boolean;
+  discovered: boolean;
+  enabled: boolean;
   path?: string;
 }
 
@@ -183,7 +190,9 @@ export async function readLoopSkillPolicy(config: VllmAgentConfig, workspace: Wo
     .map(skillPolicyItem)
     .sort((left, right) => left.id.localeCompare(right.id) || left.source.localeCompare(right.source));
   const loadedCount = (await registry.loadEnabled(descriptors)).length;
-  const learned = descriptors.find((descriptor) => descriptor.id === LEARNED_LOOP_SKILL_ID);
+  const learnedLoopSkill = learnedSkillPolicyItem(LOOP_SKILL_ID, descriptors, configuredEnabled, enabledIds, workspace);
+  const learnedWorkspaceSkill = learnedSkillPolicyItem(WORKSPACE_SKILL_ID, descriptors, configuredEnabled, enabledIds, workspace);
+  const legacyLearnedLoopPolicy = learnedSkillPolicyItem(LEGACY_LEARNED_LOOP_SKILL_ID, descriptors, configuredEnabled, enabledIds, workspace);
   return {
     prompt_contract: {
       catalog_visible: true,
@@ -198,14 +207,10 @@ export async function readLoopSkillPolicy(config: VllmAgentConfig, workspace: Wo
     loaded_count: loadedCount,
     missing_enabled: missingEnabled.sort(),
     enabled,
-    learned_workspace_skill: {
-      skill_id: LEARNED_LOOP_SKILL_ID,
-      expected_path: path.join(workspace.root, ".inferoa", "skills", LEARNED_LOOP_SKILL_ID, "SKILL.md"),
-      configured: configuredEnabled.includes(LEARNED_LOOP_SKILL_ID) || Boolean(learned && configuredEnabled.includes(learned.name)),
-      discovered: Boolean(learned),
-      enabled: Boolean(learned && enabledIds.has(learned.id)),
-      path: learned?.path,
-    },
+    learned_loop_skill: learnedLoopSkill,
+    learned_workspace_skill: learnedWorkspaceSkill,
+    learned_skills: [learnedLoopSkill, learnedWorkspaceSkill],
+    legacy_learned_loop_policy: legacyLearnedLoopPolicy.discovered || legacyLearnedLoopPolicy.configured ? legacyLearnedLoopPolicy : undefined,
   };
 }
 
@@ -217,6 +222,24 @@ function skillPolicyItem(skill: SkillDescriptor): LoopSkillPolicyItem {
     trust: skill.trust,
     source: skill.source,
     path: skill.path,
+  };
+}
+
+function learnedSkillPolicyItem(
+  skillId: string,
+  descriptors: SkillDescriptor[],
+  configuredEnabled: string[],
+  enabledIds: Set<string>,
+  workspace: WorkspaceIdentity,
+): LoopLearnedSkillPolicyItem {
+  const descriptor = descriptors.find((item) => item.id === skillId);
+  return {
+    skill_id: skillId,
+    expected_path: path.join(workspace.root, ".inferoa", "skills", skillId, "SKILL.md"),
+    configured: configuredEnabled.includes(skillId) || Boolean(descriptor && configuredEnabled.includes(descriptor.name)),
+    discovered: Boolean(descriptor),
+    enabled: Boolean(descriptor && enabledIds.has(descriptor.id)),
+    path: descriptor?.path,
   };
 }
 
