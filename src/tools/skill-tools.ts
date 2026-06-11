@@ -1,7 +1,9 @@
 import { promises as fs } from "node:fs";
 import type { JsonObject, ToolResult } from "../types.js";
 import { saveUserConfig } from "../config/config.js";
+import { readGoalState } from "../goals/state.js";
 import { SkillRegistry } from "../skills/registry.js";
+import { sha256Hex } from "../util/hash.js";
 import { clampLimit, fail, ok } from "../util/limit.js";
 import type { ToolExecutionContext } from "./context.js";
 
@@ -50,6 +52,25 @@ export async function skillRead(args: JsonObject, context: ToolExecutionContext)
           source: skill.source,
         }).uri
       : undefined;
+  const activeGoal = readGoalState(context.store, context.session_id)?.goal;
+  context.store.appendEvent({
+    session_id: context.session_id,
+    run_id: context.run_id,
+    type: "skill.body.loaded",
+    data: {
+      skill_id: skill.id,
+      name: skill.name,
+      trust: skill.trust,
+      source: skill.source,
+      path: skill.path,
+      body_hash: sha256Hex(body),
+      total_lines: lines.length,
+      returned_lines: Math.min(lines.length, lineCount),
+      resource_uri: resource,
+      goal_id: activeGoal?.id,
+      horizon_generation: activeGoal?.horizon_generation,
+    },
+  });
   return {
     ...ok(`Read skill ${skill.id}`, {
       id: skill.id,

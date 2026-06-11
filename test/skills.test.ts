@@ -4,6 +4,8 @@ import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { DEFAULT_CONFIG } from "../src/config/defaults.js";
+import { createGoalState, writeGoalState } from "../src/goals/state.js";
+import { readGoalLoopView } from "../src/loop/projection.js";
 import { SkillRegistry } from "../src/skills/registry.js";
 import { SessionStore } from "../src/session/store.js";
 import { ToolRegistry } from "../src/tools/registry.js";
@@ -30,6 +32,8 @@ test("SkillRegistry discovers native and imported skills and tools read details 
     assert.ok(discovered.some((skill) => skill.id === "agents" && skill.trust === "imported"));
 
     const session = store.createSession(workspace, "skills");
+    const goal = createGoalState({ objective: "Use the demo skill" });
+    writeGoalState(store, session.session_id, goal, "run_goal");
     const tools = new ToolRegistry(config, workspace, store);
     const listed = await tools.call({ id: "tc1", name: "skill_list", arguments: { query: "demo" } }, { session_id: session.session_id });
     assert.equal(listed.ok, true);
@@ -37,6 +41,17 @@ test("SkillRegistry discovers native and imported skills and tools read details 
     const read = await tools.call({ id: "tc2", name: "skill_read", arguments: { id: "demo-skill" } }, { session_id: session.session_id });
     assert.equal(read.ok, true);
     assert.match(JSON.stringify(read.data), /progressive skill loading/);
+    const loadedEvents = store.listEvents(session.session_id).filter((event) => event.type === "skill.body.loaded");
+    assert.equal(loadedEvents.length, 1);
+    assert.equal(loadedEvents[0]?.data.skill_id, "demo-skill");
+    assert.match(String(loadedEvents[0]?.data.body_hash), /^[a-f0-9]{64}$/);
+    assert.equal(loadedEvents[0]?.data.path, path.join(skillDir, "SKILL.md"));
+    assert.equal(loadedEvents[0]?.data.total_lines, 7);
+    assert.equal(loadedEvents[0]?.data.goal_id, goal.goal.id);
+    const view = readGoalLoopView(store, session.session_id);
+    assert.equal(view.skill_body_loads.length, 1);
+    assert.equal(view.skill_body_loads[0]?.skill_id, "demo-skill");
+    assert.equal(view.skill_body_loads[0]?.body_hash, loadedEvents[0]?.data.body_hash);
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });

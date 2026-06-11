@@ -18,6 +18,7 @@ export interface OptLiteStatus {
   verified_records: number;
   human_feedback_records: number;
   learning_signal_records: number;
+  skill_body_load_records?: number;
   latest_proposal?: OptLiteProposalSummary;
   latest_replay?: OptReplayReportSummary;
 }
@@ -102,6 +103,7 @@ export interface OptEvidenceSummary {
   human_feedback_records: number;
   learning_signal_records: number;
   skill_snapshots: number;
+  skill_body_load_records?: number;
   workspace_command_records?: number;
 }
 
@@ -180,6 +182,7 @@ export async function optLiteStatus(store: SessionStore, workspace: WorkspaceIde
     verified_records: evidence.summary.verification_records,
     human_feedback_records: evidence.summary.human_feedback_records,
     learning_signal_records: evidence.summary.learning_signal_records,
+    skill_body_load_records: evidence.summary.skill_body_load_records,
     latest_proposal: latest ? proposalSummary(latest) : undefined,
     latest_replay: latestReplay ? replaySummary(latestReplay) : undefined,
   };
@@ -377,6 +380,7 @@ function recordSkillProposalStaged(store: SessionStore, workspace: WorkspaceIden
       human_feedback_records: proposal.evidence.human_feedback_records,
       learning_signal_records: proposal.evidence.learning_signal_records,
       skill_snapshots: proposal.evidence.skill_snapshots,
+      skill_body_load_records: proposal.evidence.skill_body_load_records,
       workspace_command_records: proposal.evidence.workspace_command_records,
     },
   });
@@ -454,6 +458,7 @@ function collectOptEvidence(store: SessionStore, workspace: WorkspaceIdentity): 
   let humanFeedbackRecords = 0;
   let learningSignalRecords = 0;
   let skillSnapshots = 0;
+  let skillBodyLoadRecords = 0;
   for (const session of store.listSessions(workspace.id, { includeArchived: true })) {
     const view = readGoalLoopView(store, session.session_id);
     if (!view.goal) {
@@ -477,6 +482,7 @@ function collectOptEvidence(store: SessionStore, workspace: WorkspaceIdentity): 
     verificationRecords += view.verifications.length;
     learningSignalRecords += view.learning_signals.length;
     skillSnapshots += view.skill_snapshots.length;
+    skillBodyLoadRecords += view.skill_body_loads.length;
     for (const command of workspaceCommandEvidence(view, session.session_id)) {
       workspaceCommands.set(`${command.command}:${command.cwd ?? ""}:${command.session_id}:${command.run_id ?? ""}`, command);
     }
@@ -505,6 +511,7 @@ function collectOptEvidence(store: SessionStore, workspace: WorkspaceIdentity): 
       human_feedback_records: humanFeedbackRecords,
       learning_signal_records: learningSignalRecords,
       skill_snapshots: skillSnapshots,
+      skill_body_load_records: skillBodyLoadRecords,
       workspace_command_records: workspaceCommands.size,
     },
   };
@@ -862,6 +869,7 @@ function renderLoopSkillBody(
     `- Human feedback records: ${evidence.summary.human_feedback_records}`,
     `- Learning signals: ${evidence.summary.learning_signal_records}`,
     `- Skill snapshots: ${evidence.summary.skill_snapshots}`,
+    `- Skill body loads: ${evidence.summary.skill_body_load_records ?? 0}`,
     "",
     "## Controller Rules",
     "",
@@ -902,6 +910,7 @@ function renderWorkspaceSkillBody(
     "",
     `- Loop sessions: ${evidence.summary.goal_sessions}`,
     `- Verification records: ${evidence.summary.verification_records}`,
+    `- Skill body loads: ${evidence.summary.skill_body_load_records ?? 0}`,
     `- Workspace command records: ${evidence.summary.workspace_command_records ?? commands.length}`,
     "",
     "## Workspace Rules",

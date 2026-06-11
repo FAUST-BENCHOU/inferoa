@@ -8,6 +8,7 @@ import type {
   GoalLoopLearningSignalCategory,
   GoalLoopLearningSignalPolarity,
   GoalLoopRunStatus,
+  GoalLoopSkillBodyLoad,
   GoalLoopSkillSnapshot,
   GoalLoopSkillSnapshotItem,
   GoalLoopVerification,
@@ -40,9 +41,40 @@ export function readGoalLoopView(store: SessionStore, sessionId: string): GoalLo
     attempts: runAttempts(events),
     verifications,
     skill_snapshots: goal ? skillSnapshots(events, goal.id) : [],
+    skill_body_loads: goal ? skillBodyLoads(events, goal.id) : [],
     learning_signals: goal ? learningSignals(events, goal.id) : [],
     pending_review_decision: goal?.pending_review_decision,
     blocker: goal?.blocker,
+  };
+}
+
+function skillBodyLoads(events: SessionEvent[], goalId: string): GoalLoopSkillBodyLoad[] {
+  return events
+    .filter((event) => event.type === "skill.body.loaded" && stringValue(event.data.goal_id) === goalId)
+    .map(parseSkillBodyLoadEvent)
+    .filter((load): load is GoalLoopSkillBodyLoad => Boolean(load))
+    .sort(compareSkillBodyLoads);
+}
+
+function parseSkillBodyLoadEvent(event: SessionEvent): GoalLoopSkillBodyLoad | undefined {
+  const skillId = stringValue(event.data.skill_id);
+  if (!skillId) {
+    return undefined;
+  }
+  return {
+    run_id: event.run_id,
+    goal_id: stringValue(event.data.goal_id),
+    horizon_generation: numberValue(event.data.horizon_generation),
+    skill_id: skillId,
+    name: stringValue(event.data.name),
+    trust: stringValue(event.data.trust),
+    source: stringValue(event.data.source),
+    path: stringValue(event.data.path),
+    body_hash: stringValue(event.data.body_hash),
+    total_lines: numberValue(event.data.total_lines),
+    returned_lines: numberValue(event.data.returned_lines),
+    resource_uri: stringValue(event.data.resource_uri),
+    created_at: event.created_at,
   };
 }
 
@@ -268,6 +300,12 @@ function verificationKey(record: GoalLoopVerification): string {
 
 function compareSkillSnapshots(a: GoalLoopSkillSnapshot, b: GoalLoopSkillSnapshot): number {
   return (a.created_at ?? "").localeCompare(b.created_at ?? "") || (a.run_id ?? "").localeCompare(b.run_id ?? "");
+}
+
+function compareSkillBodyLoads(a: GoalLoopSkillBodyLoad, b: GoalLoopSkillBodyLoad): number {
+  return (a.created_at ?? "").localeCompare(b.created_at ?? "")
+    || (a.run_id ?? "").localeCompare(b.run_id ?? "")
+    || a.skill_id.localeCompare(b.skill_id);
 }
 
 function compareLearningSignals(a: GoalLoopLearningSignal, b: GoalLoopLearningSignal): number {
