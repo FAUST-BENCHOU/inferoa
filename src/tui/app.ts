@@ -240,7 +240,7 @@ interface EndpointProbeResult {
   errors: string[];
 }
 
-interface SelectOption<T extends string> {
+export interface SelectOption<T extends string> {
   value: T;
   label: string;
   description?: string;
@@ -4074,29 +4074,61 @@ export class TuiApp {
     if (!options.length) {
       throw new Error(`${title} has no options`);
     }
-    const defaultValue = options[Math.max(0, Math.min(defaultIndex, options.length - 1))]!.value;
-    const previousPanel = this.#composerPanel;
-    let error: string | undefined;
-    try {
-      for (;;) {
-        this.#composerPanel = {
-          lines: renderGoalSetupChoicePanel(title, options, defaultValue, error, footer, safeTerminalWidth()),
-        };
-        const raw = (await this.readComposer({
-          placeholder: `${title}: ${defaultValue}`,
-          initialBuffer: defaultValue,
-          suggestions: false,
-          cancelOnInterrupt: true,
-        })).trim();
-        const resolved = resolveGoalSetupChoice(raw, options);
-        if (resolved !== undefined) {
-          return resolved;
+    let state: GoalSetupChoiceState = {
+      selectedIndex: Math.max(0, Math.min(defaultIndex, options.length - 1)),
+    };
+    const previousInputModalActive = this.#inputModalActive;
+    this.#inputModalActive = true;
+    this.#rl?.pause();
+    const render = () => {
+      this.renderCenteredPanel(title, renderGoalSetupChoicePanel(title, options, state.selectedIndex, footer, setupDialogContentWidth()), true);
+    };
+    render();
+    return await new Promise((resolve, reject) => {
+      const cleanup = () => {
+        this.clearCenteredPrompt();
+        stdin.off("data", onData);
+        stdout.off("resize", onResize);
+        if (stdin.isTTY) {
+          stdin.setRawMode(false);
         }
-        error = `Unknown choice: ${oneLine(raw)}`;
+        this.#inputModalActive = previousInputModalActive;
+        this.resumeReadline();
+      };
+      const finish = (value: T) => {
+        cleanup();
+        resolve(value);
+      };
+      const cancel = () => {
+        cleanup();
+        reject(new Error(`${title} selection cancelled`));
+      };
+      const onData = (chunk: Buffer) => {
+        for (const key of terminalInputTokens(chunk.toString("utf8"))) {
+          const result = applyGoalSetupChoiceToken(state, options, key);
+          state = result.state;
+          if (result.cancelled) {
+            cancel();
+            return;
+          }
+          if (result.value !== undefined) {
+            finish(result.value);
+            return;
+          }
+        }
+        render();
+      };
+      const onResize = () => {
+        render();
+      };
+      if (stdin.isTTY) {
+        stdin.setRawMode(true);
       }
-    } finally {
-      this.#composerPanel = previousPanel;
-    }
+      stdin.resume();
+      stdin.on("data", onData);
+      stdout.on("resize", onResize);
+      render();
+    });
   }
 
   private async askGoalSetupValue(title: string, defaultValue: string, detail: string[], error?: string): Promise<string> {
@@ -6834,46 +6866,68 @@ function renderTranscriptBand(title: string, body: string[], width = terminalWid
   ];
 }
 
-function resolveGoalSetupChoice<T extends string>(input: string, options: SelectOption<T>[]): T | undefined {
-  const normalized = input.trim().toLowerCase();
-  if (/^\d+$/.test(normalized)) {
-    return options[Number.parseInt(normalized, 10) - 1]?.value;
-  }
-  return options.find((option) => option.value.toLowerCase() === normalized || option.label.toLowerCase() === normalized)?.value;
+export interface GoalSetupChoiceState {
+  selectedIndex: number;
 }
 
-function renderGoalSetupChoicePanel<T extends string>(
+export interface GoalSetupChoiceTokenResult<T extends string> {
+  state: GoalSetupChoiceState;
+  value?: T;
+  cancelled?: boolean;
+}
+
+export function applyGoalSetupChoiceToken<T extends string>(
+  state: GoalSetupChoiceState,
+  options: SelectOption<T>[],
+  key: string,
+): GoalSetupChoiceTokenResult<T> {
+  if (!options.length) {
+    return { state: { selectedIndex: 0 } };
+  }
+  const selectedIndex = Math.max(0, Math.min(state.selectedIndex, options.length - 1));
+  if (key === "\u0003" || key === "\u001b") {
+    return { state: { selectedIndex }, cancelled: true };
+  }
+  if (key === "\u001b[A" || key === "k") {
+    return { state: { selectedIndex: (selectedIndex - 1 + options.length) % options.length } };
+  }
+  if (key === "\u001b[B" || key === "j") {
+    return { state: { selectedIndex: (selectedIndex + 1) % options.length } };
+  }
+  if (key === "\r" || key === "\n") {
+    return { state: { selectedIndex }, value: options[selectedIndex]?.value };
+  }
+  return { state: { selectedIndex } };
+}
+
+export function renderGoalSetupChoicePanel<T extends string>(
   title: string,
   options: SelectOption<T>[],
-  defaultValue: T,
-  error: string | undefined,
-  footer: string[],
+  selectedIndex: number,
+  footer: string[] = [],
   width = terminalWidth(),
 ): string[] {
+  const safeWidth = Math.max(24, width);
+  const selected = Math.max(0, Math.min(selectedIndex, Math.max(0, options.length - 1)));
   const lines = [
-    bgLine(236, "", width),
-    bgLine(236, `  ${fg256(75, title)}`, width),
-    bgLine(236, `  ${fg256(244, "type a value or number, then press enter · esc cancels")}`, width),
-    bgLine(236, "", width),
+    `${fg256(75, title)} ${fg256(238, "·")} ${fg256(244, "↑/↓ choose · enter select · esc cancels")}`,
+    "",
   ];
   for (const [index, option] of options.entries()) {
-    const isDefault = option.value === defaultValue;
-    const value = isDefault ? fg256(48, option.value) : fg256(250, option.value);
+    const active = index === selected;
+    const marker = active ? fg256(75, "›") : fg256(238, " ");
+    const label = active ? fg256(252, option.label) : fg256(248, option.label);
+    const value = active ? fg256(48, option.value) : fg256(244, option.value);
     const suffix = [
-      isDefault ? fg256(244, "default") : undefined,
+      active ? fg256(244, "selected") : undefined,
       option.description ? fg256(244, option.description) : undefined,
     ].filter(Boolean).join(` ${fg256(238, "·")} `);
     const detail = suffix ? ` ${fg256(238, "·")} ${suffix}` : "";
-    lines.push(bgLine(236, `  ${fg256(244, `${index + 1}.`)} ${fg256(250, option.label)} ${fg256(238, "·")} ${value}${detail}`, width));
+    lines.push(padRight(`${marker} ${label} ${fg256(238, "·")} ${value}${detail}`, safeWidth));
   }
   for (const item of footer) {
-    lines.push(bgLine(236, `  ${fg256(244, item)}`, width));
+    lines.push(fg256(244, item));
   }
-  if (error) {
-    lines.push(bgLine(236, "", width));
-    lines.push(bgLine(236, `  ${fg256(203, error)}`, width));
-  }
-  lines.push(bgLine(236, "", width));
   return lines;
 }
 
