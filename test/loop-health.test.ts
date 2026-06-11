@@ -353,14 +353,17 @@ test("loop policy command returns configured default background isolation", asyn
   const configPath = path.join(workspaceRoot, ".inferoa", "config.yaml");
   await mkdir(path.dirname(configPath), { recursive: true });
   const demoSkillDir = path.join(workspaceRoot, ".inferoa", "skills", "demo-loop");
-  const learnedSkillDir = path.join(workspaceRoot, ".inferoa", "skills", "workspace-learned-loop-policy");
+  const loopSkillDir = path.join(workspaceRoot, ".inferoa", "skills", "inferoa-loop-skill");
+  const workspaceSkillDir = path.join(workspaceRoot, ".inferoa", "skills", "inferoa-workspace-skill");
   await mkdir(demoSkillDir, { recursive: true });
-  await mkdir(learnedSkillDir, { recursive: true });
+  await mkdir(loopSkillDir, { recursive: true });
+  await mkdir(workspaceSkillDir, { recursive: true });
   await writeFile(path.join(demoSkillDir, "SKILL.md"), "---\nname: Demo Loop Skill\ndescription: Demo loop policy skill\n---\n\nUse verifier evidence.\n", "utf8");
-  await writeFile(path.join(learnedSkillDir, "SKILL.md"), "---\nname: workspace-learned-loop-policy\ndescription: Learned loop policy\n---\n\nUse structured loop evidence.\n", "utf8");
+  await writeFile(path.join(loopSkillDir, "SKILL.md"), "---\nname: Inferoa Loop Skill\ndescription: Learned loop control policy\n---\n\nUse structured loop evidence.\n", "utf8");
+  await writeFile(path.join(workspaceSkillDir, "SKILL.md"), "---\nname: Inferoa Workspace Skill\ndescription: Learned workspace workflow policy\n---\n\nRun npm test before completion.\n", "utf8");
   const config = structuredClone(DEFAULT_CONFIG);
   config.loop.default_background_isolation = "worktree";
-  config.skills.enabled = ["demo-loop-skill", "missing-loop-skill", "workspace-learned-loop-policy"];
+  config.skills.enabled = ["demo-loop-skill", "inferoa-loop-skill", "inferoa-workspace-skill", "missing-loop-skill"];
   await writeFile(configPath, YAML.stringify(config), "utf8");
   try {
     const cliPath = fileURLToPath(new URL("../src/cli.js", import.meta.url));
@@ -408,7 +411,9 @@ test("loop policy command returns configured default background isolation", asyn
         loaded_count?: number;
         missing_enabled?: string[];
         enabled?: Array<{ id?: string; trust?: string; path?: string }>;
+        learned_loop_skill?: { configured?: boolean; discovered?: boolean; enabled?: boolean; expected_path?: string; path?: string };
         learned_workspace_skill?: { configured?: boolean; discovered?: boolean; enabled?: boolean; expected_path?: string; path?: string };
+        learned_skills?: Array<{ skill_id?: string; configured?: boolean; discovered?: boolean; enabled?: boolean; expected_path?: string; path?: string }>;
         prompt_contract?: { skill_bodies_embedded?: boolean; skill_body_access?: string; learned_skill_adoption?: string };
       };
     };
@@ -540,16 +545,22 @@ test("loop policy command returns configured default background isolation", asyn
     assert.equal(parsed.skill_policy?.prompt_contract?.skill_bodies_embedded, false);
     assert.equal(parsed.skill_policy?.prompt_contract?.skill_body_access, "on_demand_skill_read");
     assert.equal(parsed.skill_policy?.prompt_contract?.learned_skill_adoption, "explicit_adopt_or_skill_enable");
-    assert.ok(parsed.skill_policy?.configured_enabled?.includes("workspace-learned-loop-policy"));
+    assert.ok(parsed.skill_policy?.configured_enabled?.includes("inferoa-loop-skill"));
+    assert.ok(parsed.skill_policy?.configured_enabled?.includes("inferoa-workspace-skill"));
     assert.equal(parsed.skill_policy?.missing_enabled?.includes("missing-loop-skill"), true);
-    assert.ok((parsed.skill_policy?.discovered_count ?? 0) >= 2);
-    assert.equal(parsed.skill_policy?.enabled_count, 2);
-    assert.equal(parsed.skill_policy?.loaded_count, 2);
+    assert.ok((parsed.skill_policy?.discovered_count ?? 0) >= 3);
+    assert.equal(parsed.skill_policy?.enabled_count, 3);
+    assert.equal(parsed.skill_policy?.loaded_count, 3);
     assert.ok(parsed.skill_policy?.enabled?.some((item) => item.id === "demo-loop-skill" && item.trust === "workspace"));
+    assert.equal(parsed.skill_policy?.learned_loop_skill?.configured, true);
+    assert.equal(parsed.skill_policy?.learned_loop_skill?.discovered, true);
+    assert.equal(parsed.skill_policy?.learned_loop_skill?.enabled, true);
+    assert.ok(parsed.skill_policy?.learned_loop_skill?.expected_path?.endsWith("/.inferoa/skills/inferoa-loop-skill/SKILL.md"));
     assert.equal(parsed.skill_policy?.learned_workspace_skill?.configured, true);
     assert.equal(parsed.skill_policy?.learned_workspace_skill?.discovered, true);
     assert.equal(parsed.skill_policy?.learned_workspace_skill?.enabled, true);
-    assert.ok(parsed.skill_policy?.learned_workspace_skill?.expected_path?.endsWith("/.inferoa/skills/workspace-learned-loop-policy/SKILL.md"));
+    assert.ok(parsed.skill_policy?.learned_workspace_skill?.expected_path?.endsWith("/.inferoa/skills/inferoa-workspace-skill/SKILL.md"));
+    assert.deepEqual(parsed.skill_policy?.learned_skills?.map((item) => item.skill_id).sort(), ["inferoa-loop-skill", "inferoa-workspace-skill"]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

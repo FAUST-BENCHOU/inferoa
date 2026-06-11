@@ -110,7 +110,7 @@ export type OptSkillTargetKind = "loop_skill" | "workspace_skill";
 export interface OptSkillTargetSummary {
   target: OptSkillTargetKind;
   skill_id: string;
-  staged_skill_path?: string;
+  staged_skill_path: string;
   skill_path?: string;
   edit_count: number;
 }
@@ -528,8 +528,9 @@ function collectReplaySamples(store: SessionStore, workspace: WorkspaceIdentity,
       fail_records: counts.fail,
       blocked_records: counts.blocked,
       partial_records: counts.partial,
-      baseline_policy_score: baselinePolicyScore(view),
+      baseline_policy_score: baselinePolicyScore(proposal, view),
       candidate_policy_score: candidatePolicyScore(proposal, view),
+      target_scores: replayTargetScores(proposal, view),
     });
   }
   return samples.sort((left, right) => left.session_id.localeCompare(right.session_id));
@@ -544,7 +545,11 @@ function verificationCounts(view: GoalLoopView): { pass: number; fail: number; b
   };
 }
 
-function baselinePolicyScore(view: GoalLoopView): number {
+function baselinePolicyScore(proposal: OptLiteProposal, view: GoalLoopView): number {
+  const targetScores = replayTargetScores(proposal, view);
+  if (targetScores.length) {
+    return targetScores.reduce((sum, score) => sum + score.baseline_score, 0) / targetScores.length;
+  }
   const latest = view.skill_snapshots.at(-1);
   if (!latest || !latest.skills.length) {
     return 0;
@@ -554,6 +559,10 @@ function baselinePolicyScore(view: GoalLoopView): number {
 }
 
 function candidatePolicyScore(proposal: OptLiteProposal, view: GoalLoopView): number {
+  const targetScores = replayTargetScores(proposal, view);
+  if (targetScores.length) {
+    return targetScores.reduce((sum, score) => sum + score.candidate_score, 0) / targetScores.length;
+  }
   const body = proposal.skill_body.toLowerCase();
   let score = 0;
   if (proposal.source_sessions.some((session) => session.session_id === view.session_id)) {
@@ -572,6 +581,79 @@ function candidatePolicyScore(proposal: OptLiteProposal, view: GoalLoopView): nu
     score += 0.2;
   }
   return Math.min(1, score);
+}
+
+function replayTargetScores(proposal: OptLiteProposal, view: GoalLoopView): OptReplayTargetScore[] {
+  return proposalSkillTargets(proposal).map((target) => {
+    if (target.target === "loop_skill") {
+      return loopSkillReplayScore(target, proposal, view);
+    }
+    return workspaceSkillReplayScore(target, view);
+  });
+}
+
+function loopSkillReplayScore(target: OptSkillTarget, proposal: OptLiteProposal, view: GoalLoopView): OptReplayTargetScore {
+  const body = target.body.toLowerCase();
+  const latest = view.skill_snapshots.at(-1);
+  const baseline = latest?.skills.some((skill) => skill.id === target.skill_id || skill.id === "workspace-learned-loop-policy") ? 1 : 0;
+  let candidate = 0;
+  const checks: string[] = [];
+  if (proposal.source_sessions.some((session) => session.session_id === view.session_id)) {
+    candidate += 0.2;
+    checks.push("source-session-covered");
+  }
+  if (body.includes("soft-only") && view.verifications.some((verification) => verification.confidence === "soft")) {
+    candidate += 0.25;
+    checks.push("soft-only-completion-rule");
+  }
+  if (body.includes("fail, blocked, or partial") && view.verifications.some((verification) => verification.verdict === "fail" || verification.verdict === "blocked" || verification.verdict === "partial")) {
+    candidate += 0.25;
+    checks.push("non-pass-verifier-rule");
+  }
+  if (body.includes("human feedback") && proposal.evidence.human_feedback_records > 0) {
+    candidate += 0.2;
+    checks.push("human-feedback-rule");
+  }
+  if (body.includes("verifier-backed evidence") || body.includes("command, checker, connector")) {
+    candidate += 0.2;
+    checks.push("verifier-backed-completion-rule");
+  }
+  return {
+    target: "loop_skill",
+    baseline_score: baseline,
+    candidate_score: Math.min(1, candidate),
+    checks,
+  };
+}
+
+function workspaceSkillReplayScore(target: OptSkillTarget, view: GoalLoopView): OptReplayTargetScore {
+  const body = target.body;
+  const latest = view.skill_snapshots.at(-1);
+  const baseline = latest?.skills.some((skill) => skill.id === target.skill_id) ? 1 : 0;
+  const commands = uniqueCommands(workspaceCommandEvidence(view, view.session_id));
+  let candidate = 0;
+  const checks: string[] = [];
+  if (commands.length) {
+    for (const command of commands.slice(0, 3)) {
+      if (body.includes(command.command)) {
+        candidate += 0.3;
+        checks.push(`command:${command.command}`);
+      }
+    }
+    if (body.includes("observed verifier command")) {
+      candidate += 0.2;
+      checks.push("observed-verifier-command-rule");
+    }
+  } else if (body.includes("inspect verifier history")) {
+    candidate += 0.25;
+    checks.push("no-command-evidence-guard");
+  }
+  return {
+    target: "workspace_skill",
+    baseline_score: baseline,
+    candidate_score: Math.min(1, candidate),
+    checks,
+  };
 }
 
 function splitReplaySamples(samples: OptReplaySample[]): OptReplayReport["splits"] {
@@ -701,7 +783,7 @@ function loopSkillEdits(evidence: { source_events: OptSourceEvent[]; summary: Op
       target: "loop_skill",
       op: "add",
       section: "completion",
-      content: "When completion evidence is reflection-only or otherwise soft-only, do not mark the loop complete until a command, checker, connector, research metric, or explicit human approval verifies the result.",
+      content: "When completion evidence is reflection-only or otherwise soft-only completion evidence, do not mark the loop complete until a command, checker, connector, research metric, or explicit human approval verifies the result.",
       rationale: "Loop completion should be tied to verifier-backed evidence instead of the agent's own reflection.",
       source_event_indexes: sourceIndexes(evidence.source_events, (event) => event.summary.includes("soft") || event.summary.includes("reflection")),
     },
@@ -847,8 +929,53 @@ function optProposalDir(workspaceRoot: string): string {
   return path.join(workspaceRoot, ".inferoa", "self-improve", "proposals");
 }
 
+function optProposalArtifactDir(workspaceRoot: string, proposalId: string): string {
+  return path.join(optProposalDir(workspaceRoot), proposalId);
+}
+
+function stagedTargetFilename(target: OptSkillTargetKind): string {
+  return target === "loop_skill" ? "proposed.loop.SKILL.md" : "proposed.workspace.SKILL.md";
+}
+
 function optReplayDir(workspaceRoot: string): string {
   return path.join(workspaceRoot, ".inferoa", "self-improve", "replays");
+}
+
+function proposalSkillTargets(proposal: OptLiteProposal): OptSkillTarget[] {
+  if (proposal.skill_targets?.length) {
+    return proposal.skill_targets;
+  }
+  return [{
+    target: "loop_skill",
+    skill_id: proposal.skill_id,
+    skill_name: proposal.skill_id,
+    staged_skill_path: proposal.staged_skill_path,
+    skill_path: proposal.skill_path,
+    edit_count: 0,
+    edits: [],
+    body: proposal.skill_body,
+  }];
+}
+
+function uniqueCommands(commands: OptWorkspaceCommandEvidence[]): OptWorkspaceCommandEvidence[] {
+  const seen = new Set<string>();
+  const output: OptWorkspaceCommandEvidence[] = [];
+  for (const command of commands) {
+    const key = `${command.command}:${command.cwd ?? ""}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    output.push(command);
+  }
+  return output.sort((left, right) => left.command.localeCompare(right.command) || (left.cwd ?? "").localeCompare(right.cwd ?? ""));
+}
+
+function sourceIndexes(events: OptSourceEvent[], predicate: (event: OptSourceEvent) => boolean): number[] {
+  return events
+    .map((event, index) => predicate(event) ? index : undefined)
+    .filter((index): index is number => index !== undefined)
+    .slice(0, 12);
 }
 
 async function readProposals(workspaceRoot: string): Promise<OptLiteProposal[]> {
@@ -892,6 +1019,13 @@ function proposalSummary(proposal: OptLiteProposal): OptLiteProposalSummary {
     adopted_at: proposal.adopted_at,
     skill_id: proposal.skill_id,
     skill_path: proposal.skill_path,
+    skill_targets: proposalSkillTargets(proposal).map((target) => ({
+      target: target.target,
+      skill_id: target.skill_id,
+      staged_skill_path: target.staged_skill_path,
+      skill_path: target.skill_path,
+      edit_count: target.edit_count,
+    })),
     evidence: proposal.evidence,
   };
 }
