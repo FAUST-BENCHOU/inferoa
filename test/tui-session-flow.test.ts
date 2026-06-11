@@ -397,6 +397,91 @@ test("bare loop command asks objective before goal type and approach setup", asy
   }
 });
 
+test("bare loop command with objective still walks goal setup steps", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-loop-objective-setup-"));
+  const store = await SessionStore.open(stateDir);
+  try {
+    const workspace = { id: "w_loop_objective_setup", root: stateDir, alias: "loop-objective-setup" };
+    const tui = new TuiApp(
+      {
+        config: structuredClone(DEFAULT_CONFIG),
+        configFiles: [],
+        workspace,
+        store,
+        runtime: {},
+      } as never,
+    );
+    const session = store.createSession(workspace, "loop objective setup");
+    const calls: Array<string | { objective: string; options?: { kind?: string; strategy?: { mode?: string }; hil_policy?: string } }> = [];
+    const view = tui as unknown as {
+      renderLoopControlView: (args: string) => Promise<void>;
+      optionalSession: () => { session_id: string } | undefined;
+      createModeSession: (title: string) => { session_id: string };
+      chooseGoalSetup: () => Promise<{ kind?: string; strategy?: { mode?: string }; hil_policy?: string }>;
+      askModeObjective: (label: string) => Promise<string>;
+      startGoal: (session: { session_id: string }, objective: string, options?: { kind?: string; strategy?: { mode?: string }; hil_policy?: string }) => Promise<void>;
+    };
+    view.optionalSession = () => undefined;
+    view.createModeSession = () => session;
+    view.chooseGoalSetup = async () => {
+      calls.push("setup");
+      return { kind: "research", strategy: { mode: "focused" }, hil_policy: "review" };
+    };
+    view.askModeObjective = async () => {
+      calls.push("objective");
+      return "should not prompt";
+    };
+    view.startGoal = async (_session, objective, options) => {
+      calls.push({ objective, options });
+    };
+
+    await view.renderLoopControlView("Improve codebase quality");
+
+    assert.deepEqual(calls, [
+      "setup",
+      { objective: "Improve codebase quality", options: { kind: "research", strategy: { mode: "focused" }, hil_policy: "review" } },
+    ]);
+  } finally {
+    store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("goal setup labels human review as human in the loop", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-hil-title-"));
+  const store = await SessionStore.open(stateDir);
+  try {
+    const workspace = { id: "w_goal_hil_title", root: stateDir, alias: "goal-hil-title" };
+    const tui = new TuiApp(
+      {
+        config: structuredClone(DEFAULT_CONFIG),
+        configFiles: [],
+        workspace,
+        store,
+        runtime: {},
+      } as never,
+    );
+    const titles: string[] = [];
+    const choices = ["task", "auto", "auto", "start"];
+    const view = tui as unknown as {
+      chooseGoalSetup: () => Promise<{ hil_policy?: string }>;
+      chooseGoalSetupOption: <T extends string>(title: string) => Promise<T>;
+    };
+    view.chooseGoalSetupOption = async (title) => {
+      titles.push(title);
+      return choices.shift() as string as never;
+    };
+
+    const setup = await view.chooseGoalSetup();
+
+    assert.deepEqual(titles, ["Loop Type", "Loop Approach", "Human in the Loop", "Start Loop"]);
+    assert.equal(setup.hil_policy, "auto");
+  } finally {
+    store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("loop mode command starts a typed research approach with review policy", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-mode-command-"));
   const store = await SessionStore.open(stateDir);
@@ -472,7 +557,7 @@ test("mode objective composer cancels on interrupt instead of submitting exit te
   }
 });
 
-test("bare loop command accepts review policy flag", async () => {
+test("bare loop command flags do not bypass human-in-the-loop setup", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-review-flag-"));
   const store = await SessionStore.open(stateDir);
   try {
@@ -492,10 +577,12 @@ test("bare loop command accepts review policy flag", async () => {
       renderLoopControlView: (args: string) => Promise<void>;
       optionalSession: () => { session_id: string } | undefined;
       createModeSession: (title: string) => { session_id: string };
+      chooseGoalSetup: () => Promise<{ kind?: string; hil_policy?: string }>;
       startGoal: (session: { session_id: string }, objective: string, options?: { kind?: string; hil_policy?: string }) => Promise<void>;
     };
     view.optionalSession = () => undefined;
     view.createModeSession = () => session;
+    view.chooseGoalSetup = async () => ({ kind: "research", hil_policy: "auto" });
     view.startGoal = async (_session, objective, options) => {
       calls.push({ objective, options });
     };
@@ -504,8 +591,8 @@ test("bare loop command accepts review policy flag", async () => {
 
     assert.equal(calls.length, 1);
     assert.equal(calls[0]?.objective, "Improve codebase quality");
-    assert.equal(calls[0]?.options?.kind, "task");
-    assert.equal(calls[0]?.options?.hil_policy, "review");
+    assert.equal(calls[0]?.options?.kind, "research");
+    assert.equal(calls[0]?.options?.hil_policy, "auto");
   } finally {
     store.close();
     await rm(stateDir, { recursive: true, force: true });
@@ -704,8 +791,9 @@ test("pending HIL review prompt shows details without auto-approving", async () 
     assert.match(plain, /evidence .*verdict=partial/);
     assert.match(plain, /Proposed next steps/);
     assert.match(plain, /second .* Run the inline reviewed horizon/);
-    assert.match(plain, /\/loop review approve/);
-    assert.match(plain, /\/loop review revise <feedback>/);
+    assert.match(plain, /inline review prompt/);
+    assert.doesNotMatch(plain, /\/loop review approve/);
+    assert.doesNotMatch(plain, /\/loop review revise <feedback>/);
     assert.doesNotMatch(plain, /╭|╮|╰|╯/);
     assert.equal(store.listEvents(session.session_id).some((event) => event.type === "goal.review.resolved"), false);
   } finally {
@@ -813,6 +901,64 @@ test("inbox view renders in transcript flow without a framed panel", async () =>
     assert.match(plain, /Open 1/);
     assert.match(plain, /Review loop decision: expand/);
     assert.match(plain, /Needs inline inbox review/);
+  } finally {
+    store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("self-improve status renders in transcript flow with workflow commands", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-self-improve-transcript-"));
+  const store = await SessionStore.open(stateDir);
+  try {
+    const workspace = { id: "w_self_improve_transcript", root: stateDir, alias: "self-improve-transcript" };
+    const tui = new TuiApp(
+      {
+        config: structuredClone(DEFAULT_CONFIG),
+        configFiles: [],
+        workspace,
+        store,
+        runtime: {},
+      } as never,
+    );
+    const panels: Array<{ title: string; body: string[] }> = [];
+    const transcripts: Array<{ title: string; body: string[] }> = [];
+    const view = tui as unknown as {
+      renderSelfImproveView: (args?: string) => Promise<void>;
+      renderPanel: (title: string, body: string[]) => void;
+      renderLoopTranscriptPanel: (title: string, body: string[]) => void;
+      composerSuggestions: (buffer: string, skills: []) => Array<{ value: string }>;
+    };
+    view.renderPanel = (title, body) => {
+      panels.push({ title, body });
+    };
+    view.renderLoopTranscriptPanel = (title, body) => {
+      transcripts.push({ title, body });
+    };
+
+    await view.renderSelfImproveView("");
+
+    assert.deepEqual(panels, []);
+    const latest = transcripts.at(-1);
+    assert.equal(latest?.title, "Self-Improve");
+    const plain = stripAnsi(latest?.body.join("\n") ?? "");
+    assert.match(plain, /verified loop evidence/i);
+    assert.match(plain, /\/self-improve status/);
+    assert.match(plain, /\/self-improve propose/);
+    assert.match(plain, /\/self-improve run --replay/);
+    assert.match(plain, /\/self-improve report/);
+    assert.match(plain, /\/self-improve adopt/);
+    assert.deepEqual(
+      view.composerSuggestions("/self-improve ", []).map((item) => item.value),
+      [
+        "/self-improve help",
+        "/self-improve status",
+        "/self-improve propose",
+        "/self-improve run --replay",
+        "/self-improve report",
+        "/self-improve adopt",
+      ],
+    );
   } finally {
     store.close();
     await rm(stateDir, { recursive: true, force: true });
@@ -1379,6 +1525,42 @@ test("inline panels sanitize embedded newlines before writing background rows", 
     const plainLines = stripAnsi(output).split("\n");
     assert.equal(plainLines.length, 5);
     assert.match(plainLines[2] ?? "", /queued goal Loop objective: deep research/);
+  } finally {
+    process.stdout.write = originalStdoutWrite;
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("inline panels patch stable-height redraws without clearing the region", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-inline-panel-patch-"));
+  const originalStdoutWrite = process.stdout.write;
+  try {
+    const tui = new TuiApp(
+      {
+        config: structuredClone(DEFAULT_CONFIG),
+        configFiles: [],
+        workspace: { id: "w_inline_panel_patch", root: stateDir, alias: "inline-panel-patch" },
+        store: { close() {} },
+        runtime: {},
+      } as never,
+    );
+    const view = tui as unknown as {
+      renderInlinePanel: (title: string, body: string[]) => void;
+    };
+    const writes: string[] = [];
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      writes.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+      return true;
+    }) as typeof process.stdout.write;
+
+    view.renderInlinePanel("Goal Setup", ["Progress · Type", "", "› Task", "  Research"]);
+    writes.length = 0;
+    view.renderInlinePanel("Goal Setup", ["Progress · Type", "", "  Task", "› Research"]);
+
+    const output = writes.join("");
+    assert.doesNotMatch(output, /\x1b\[J/);
+    assert.match(output, /\x1b\[[0-9]+A/);
+    assert.match(output, /\x1b\[2K/);
   } finally {
     process.stdout.write = originalStdoutWrite;
     await rm(stateDir, { recursive: true, force: true });

@@ -84,6 +84,7 @@ export const SLASH_SUBCOMMANDS: SlashSubcommandSpec[] = [
   { command: "inbox", name: "resolve", value: "/inbox resolve", description: "Mark an inbox item resolved" },
   { command: "inbox", name: "dismiss", value: "/inbox dismiss", description: "Hide an inbox item" },
   { command: "inbox", name: "promote", value: "/inbox promote", description: "Queue a runnable inbox item" },
+  { command: "self-improve", name: "help", value: "/self-improve help", description: "Show self-improve workflow and commands" },
   { command: "self-improve", name: "status", value: "/self-improve status", description: "Show learning evidence, proposals, and replay count" },
   { command: "self-improve", name: "propose", value: "/self-improve propose", description: "Stage a learned workspace skill proposal" },
   { command: "self-improve", name: "run replay", value: "/self-improve run --replay", description: "Run structured replay/gating for a proposal" },

@@ -184,7 +184,7 @@ test("slash registry exposes chat subcommands for completion", () => {
   );
   assert.deepEqual(
     slashSubcommands("self-improve").map((item) => item.value),
-    ["/self-improve status", "/self-improve propose", "/self-improve run --replay", "/self-improve report", "/self-improve adopt"],
+    ["/self-improve help", "/self-improve status", "/self-improve propose", "/self-improve run --replay", "/self-improve report", "/self-improve adopt"],
   );
   assert.deepEqual(
     slashSubcommands("inbox").map((item) => item.value),

@@ -27,6 +27,7 @@ type RenderGoalSetupChoicePanel = <T extends string>(
   selectedIndex: number,
   footer?: string[],
   width?: number,
+  context?: unknown,
 ) => string[];
 
 test("slash command picker pagination can reveal doctor command", () => {
@@ -93,4 +94,48 @@ test("loop setup choice panel renders selected row without numeric input afforda
   assert.match(plain, /↑\/↓ choose · enter select · esc cancels/);
   assert.match(plain, /› 2h · 2h · selected · 2h focused run\./);
   assert.doesNotMatch(plain, /type a value or number|1\.|2\./);
+});
+
+test("loop setup choice panel keeps wizard height stable across steps", () => {
+  const renderGoalSetupChoicePanel = (appModule as Record<string, unknown>).renderGoalSetupChoicePanel as RenderGoalSetupChoicePanel | undefined;
+  if (typeof renderGoalSetupChoicePanel !== "function") {
+    assert.fail("renderGoalSetupChoicePanel export is required");
+  }
+  const commonContext = {
+    objective: "Improve cache observability",
+    steps: ["Type", "Approach", "Human in the Loop", "Review"],
+  };
+  const typeLines = renderGoalSetupChoicePanel(
+    "Loop Type",
+    [
+      { value: "task", label: "Task", description: "Implementation work." },
+      { value: "research", label: "Research", description: "Metric-driven work." },
+    ],
+    0,
+    [],
+    100,
+    { ...commonContext, currentStep: "Type" },
+  );
+  const reviewLines = renderGoalSetupChoicePanel(
+    "Start Loop",
+    [{ value: "start", label: "Start", description: "Create the loop." }],
+    0,
+    [],
+    100,
+    {
+      ...commonContext,
+      currentStep: "Review",
+      selections: { type: "Research", approach: "Focus", hil: "Review" },
+      hint: "enter start · esc cancels",
+    },
+  );
+  const plainReview = reviewLines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+
+  assert.equal(typeLines.length, reviewLines.length);
+  assert.match(plainReview, /Type .*Approach .*Human in the Loop .*Review/);
+  assert.match(plainReview, /goal\s+Improve cache observability/);
+  assert.match(plainReview, /type\s+Research/);
+  assert.match(plainReview, /mode\s+Focus/);
+  assert.match(plainReview, /hil\s+Review/);
+  assert.match(plainReview, /enter start · esc cancels/);
 });

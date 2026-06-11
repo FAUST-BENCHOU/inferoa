@@ -137,6 +137,7 @@ reviewable workspace skill proposal. The first implementation uses structured
 replay/gating over recorded evidence rather than a live model rerun:
 
 ```text
+/self-improve help
 /self-improve status
 /self-improve propose
 /self-improve run --replay

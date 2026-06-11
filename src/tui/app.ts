@@ -192,6 +192,12 @@ import {
 } from "./prompt-queue.js";
 import { applyClarifyInputToken, createClarifyInputState, renderClarifyComposerPanel } from "./clarify.js";
 import {
+  applyLoopReviewInputToken,
+  createLoopReviewInputState,
+  renderLoopReviewPromptLines,
+  type LoopReviewInputResponse,
+} from "./loop-review.js";
+import {
   createComposerInputHistory,
   navigateComposerInputHistory,
   recordComposerInputHistoryEntry,
@@ -213,6 +219,10 @@ type GoalApproachChoice = "auto" | "focus" | "explore" | "timebox";
 type GoalCampaignHoursChoice = "auto" | "30m" | "2h" | "4h" | "custom";
 type GoalReviewPolicyChoice = "auto" | "review";
 type GoalReviewChoice = GoalReviewDecision;
+type GoalSetupWizardStep = "Type" | "Approach" | "Human in the Loop" | "Review";
+
+const GOAL_SETUP_WIZARD_STEPS: readonly GoalSetupWizardStep[] = ["Type", "Approach", "Human in the Loop", "Review"];
+const GOAL_SETUP_PANEL_BODY_ROWS = 10;
 
 interface GoalStartOptions {
   kind?: GoalKind;
@@ -224,6 +234,12 @@ interface GoalStartOptions {
 
 interface ParsedGoalModeOptions extends GoalStartOptions {
   objective: string;
+}
+
+export interface GoalSetupWizardSelections {
+  type?: string;
+  approach?: string;
+  hil?: string;
 }
 
 interface ComposerMetadataRightCache {
@@ -345,6 +361,7 @@ export class TuiApp {
   #inlineMode = false;
   #inlineRenderedLines = 0;
   #inlinePanelStartRow: number | undefined;
+  #inlineRenderedContent: string[] | undefined;
   #toolTraceMode: ToolTraceMode = "compact";
   #composerFooter: string | undefined;
   #composerActivity: string | undefined;
@@ -567,7 +584,20 @@ export class TuiApp {
       return;
     }
     this.renderGoalSupervisorRecord("Loop review", goalReviewPendingDetail(state.goal.pending_review_decision), 220);
-    this.renderLoopReviewPanel(state);
+    if (!stdin.isTTY) {
+      this.renderLoopReviewPanel(state);
+      return;
+    }
+    try {
+      const response = await this.askLoopReviewDecision(state);
+      await this.applyGoalReviewDecision(session, state, response.decision, response.feedback);
+    } catch (error) {
+      if (error instanceof Error && /cancelled/i.test(error.message)) {
+        this.renderGoalSupervisorRecord("Loop review pending", "no decision recorded", 220);
+        return;
+      }
+      throw error;
+    }
   }
 
   private updateQueueFooter(): void {
@@ -1144,7 +1174,7 @@ export class TuiApp {
   private composerSuggestions(buffer: string, skills: SkillDescriptor[]): ComposerItem[] {
     if (buffer.startsWith("/")) {
       const lower = buffer.toLowerCase();
-      const subcommandMatch = lower.match(/^\/([a-z]+)\s+(.*)$/);
+      const subcommandMatch = lower.match(/^\/([a-z-]+)\s+(.*)$/);
       if (subcommandMatch) {
         const commandName = subcommandMatch[1] as SlashCommandName;
         const query = subcommandMatch[2]?.trim().toLowerCase() ?? "";
@@ -1397,6 +1427,8 @@ export class TuiApp {
     const previousInline = this.#inlineMode;
     this.#inlineMode = true;
     this.#inlineRenderedLines = 0;
+    this.#inlinePanelStartRow = undefined;
+    this.#inlineRenderedContent = undefined;
     try {
       switch (command) {
         case "setup":
@@ -3205,7 +3237,7 @@ export class TuiApp {
         this.renderNotice("No loop objective entered.");
         return;
       }
-      const setup = await this.chooseGoalSetup();
+      const setup = await this.chooseGoalSetup(objective);
       await this.startGoal(session, objective, setup);
       return;
     }
@@ -3250,7 +3282,15 @@ export class TuiApp {
         this.renderNotice("No loop objective entered.");
         return;
       }
-      await this.startGoal(session, objective, { kind: "task", hil_policy: start.hil_policy, owner: start.owner, review_owner: start.review_owner });
+      const setup = await this.chooseGoalSetup(objective);
+      const options: GoalStartOptions = { ...setup };
+      if (start.owner ?? setup.owner) {
+        options.owner = start.owner ?? setup.owner;
+      }
+      if (start.review_owner ?? setup.review_owner) {
+        options.review_owner = start.review_owner ?? setup.review_owner;
+      }
+      await this.startGoal(session, objective, options);
       return;
     }
 
@@ -3430,7 +3470,12 @@ export class TuiApp {
     }
     const parsed = parseGoalReviewArgs(args);
     if (!parsed.decision) {
-      this.renderLoopReviewPanel(current);
+      if (!stdin.isTTY) {
+        this.renderLoopReviewPanel(current);
+        return;
+      }
+      const response = await this.askLoopReviewDecision(current);
+      await this.applyGoalReviewDecision(session, current, response.decision, response.feedback);
       return;
     }
     const decision = parsed.decision;
@@ -3438,6 +3483,10 @@ export class TuiApp {
     if (!feedback && decision !== "approve") {
       feedback = (await this.ask(decision === "block" ? "Block reason" : "Review feedback", current.goal.pending_review_decision.summary)).trim();
     }
+    await this.applyGoalReviewDecision(session, current, decision, feedback);
+  }
+
+  private async applyGoalReviewDecision(session: SessionRecord, current: GoalState, decision: GoalReviewDecision, feedback?: string): Promise<void> {
     const registry = new ToolRegistry(this.app.config, this.app.workspace, this.app.store);
     const result = await registry.call(
       {
@@ -3461,6 +3510,65 @@ export class TuiApp {
     if (saved?.enabled && saved.goal.status === "active" && !saved.goal.pending_review_decision) {
       await this.enqueueGoalContinuation(saved);
     }
+  }
+
+  private async askLoopReviewDecision(current: GoalState): Promise<LoopReviewInputResponse> {
+    if (!stdin.isTTY) {
+      throw new Error("Loop review requires an interactive terminal.");
+    }
+    let state = createLoopReviewInputState();
+    const previousInputModalActive = this.#inputModalActive;
+    this.#inputModalActive = true;
+    this.#rl?.pause();
+    if (stdin.isTTY) {
+      stdin.setRawMode(true);
+    }
+    stdout.write(ansi.showCursor);
+    return await new Promise((resolve, reject) => {
+      const render = () => {
+        this.renderInlinePanel("Loop Review", renderLoopReviewPromptLines(current.goal, state, safeTerminalWidth()));
+      };
+      const cleanup = () => {
+        this.eraseInlinePanel();
+        this.#inputModalActive = previousInputModalActive;
+        stdin.off("data", onData);
+        stdout.off("resize", onResize);
+        if (stdin.isTTY) {
+          stdin.setRawMode(false);
+        }
+        stdout.write(ansi.hideCursor);
+        this.resumeReadline();
+      };
+      const finish = (response: LoopReviewInputResponse) => {
+        cleanup();
+        resolve(response);
+      };
+      const cancel = () => {
+        cleanup();
+        reject(new Error("Loop review cancelled"));
+      };
+      const onData = (chunk: Buffer) => {
+        for (const key of terminalInputTokens(chunk.toString("utf8"))) {
+          const result = applyLoopReviewInputToken(state, key);
+          state = result.state;
+          if (result.cancelled) {
+            cancel();
+            return;
+          }
+          if (result.response) {
+            finish(result.response);
+            return;
+          }
+        }
+        render();
+      };
+      const onResize = () => {
+        render();
+      };
+      stdin.on("data", onData);
+      stdout.on("resize", onResize);
+      render();
+    });
   }
 
   private renderLoopReviewPanel(state: GoalState): void {
@@ -4000,33 +4108,73 @@ export class TuiApp {
     await this.enqueueGoalContinuation(state);
   }
 
-  private async chooseGoalSetup(): Promise<GoalStartOptions> {
+  private async chooseGoalSetup(objective?: string): Promise<GoalStartOptions> {
     const kind = await this.chooseGoalSetupOption<GoalKindChoice>(
       "Loop Type",
       [
-        { value: "task", label: "Task", description: "Ordinary implementation or investigation goal." },
-        { value: "research", label: "Research", description: "Metric-driven experimental goal." },
+        { value: "task", label: "Task", description: "Implementation, investigation, or operational work." },
+        { value: "research", label: "Research", description: "Metric-driven experiment with tracked evidence." },
       ],
       0,
+      [],
+      {
+        objective,
+        currentStep: "Type",
+      },
     );
+    const typeLabel = goalKindSetupLabel(kind);
     const approach = await this.chooseGoalSetupOption<GoalApproachChoice>(
       "Loop Approach",
       [
-        { value: "auto", label: "Auto", description: "Inferoa decides after orientation." },
-        { value: "focus", label: "Focus", description: "Finish only the current goal." },
+        { value: "auto", label: "Auto", description: "Orient first, then choose the right loop strategy." },
+        { value: "focus", label: "Focus", description: "Finish this objective only." },
         { value: "explore", label: "Explore", description: "Explore related high-value directions." },
-        { value: "timebox", label: "Timebox", description: "Keep going until a time checkpoint." },
+        { value: "timebox", label: "Timebox", description: "Work until a checkpoint, then review progress." },
       ],
       0,
+      [],
+      {
+        objective,
+        currentStep: "Approach",
+        selections: { type: typeLabel },
+      },
     );
-    const targetHours = approach === "timebox" ? await this.chooseCampaignHours() : undefined;
+    const targetHours = approach === "timebox"
+      ? await this.chooseCampaignHours({
+          objective,
+          currentStep: "Approach",
+          selections: { type: typeLabel, approach: goalApproachSetupLabel(approach) },
+        })
+      : undefined;
+    const approachLabel = goalApproachSetupLabel(approach, targetHours);
     const reviewPolicy = await this.chooseGoalSetupOption<GoalReviewPolicyChoice>(
-      "Review Policy",
+      "Human in the Loop",
       [
-        { value: "auto", label: "Auto", description: "Continue automatically after internal reflection." },
-        { value: "review", label: "Review", description: "Pause for approval before applying reflection decisions." },
+        { value: "auto", label: "Auto", description: "Continue after internal reflection." },
+        { value: "review", label: "Review", description: "Pause before applying major loop decisions." },
       ],
       0,
+      [],
+      {
+        objective,
+        currentStep: "Human in the Loop",
+        selections: { type: typeLabel, approach: approachLabel },
+      },
+    );
+    const hilLabel = goalHilSetupLabel(reviewPolicy);
+    await this.chooseGoalSetupOption<"start">(
+      "Start Loop",
+      [
+        { value: "start", label: "Start", description: "Create the loop with this setup." },
+      ],
+      0,
+      [],
+      {
+        objective,
+        currentStep: "Review",
+        selections: { type: typeLabel, approach: approachLabel, hil: hilLabel },
+        hint: "enter start · esc cancels",
+      },
     );
     return {
       kind,
@@ -4035,7 +4183,7 @@ export class TuiApp {
     };
   }
 
-  private async chooseCampaignHours(): Promise<number | undefined> {
+  private async chooseCampaignHours(wizard?: GoalSetupWizardContext): Promise<number | undefined> {
     const choice = await this.chooseGoalSetupOption<GoalCampaignHoursChoice>(
       "Timebox",
       [
@@ -4046,6 +4194,8 @@ export class TuiApp {
         { value: "custom", label: "Custom", description: "Enter a time like 1h or 90m." },
       ],
       0,
+      [],
+      wizard,
     );
     if (choice === "auto") {
       return undefined;
@@ -4070,7 +4220,13 @@ export class TuiApp {
     }
   }
 
-  private async chooseGoalSetupOption<T extends string>(title: string, options: SelectOption<T>[], defaultIndex = 0, footer: string[] = []): Promise<T> {
+  private async chooseGoalSetupOption<T extends string>(
+    title: string,
+    options: SelectOption<T>[],
+    defaultIndex = 0,
+    footer: string[] = [],
+    wizard?: GoalSetupWizardContext,
+  ): Promise<T> {
     if (!options.length) {
       throw new Error(`${title} has no options`);
     }
@@ -4081,7 +4237,8 @@ export class TuiApp {
     this.#inputModalActive = true;
     this.#rl?.pause();
     const render = () => {
-      this.renderCenteredPanel(title, renderGoalSetupChoicePanel(title, options, state.selectedIndex, footer, setupDialogContentWidth()), true);
+      this.renderGoalSetupChoicePrompt(renderGoalSetupChoicePanel(title, options, state.selectedIndex, footer, setupDialogContentWidth(), wizard));
+      stdout.write(ansi.hideCursor);
     };
     render();
     return await new Promise((resolve, reject) => {
@@ -4092,6 +4249,7 @@ export class TuiApp {
         if (stdin.isTTY) {
           stdin.setRawMode(false);
         }
+        stdout.write(ansi.showCursor);
         this.#inputModalActive = previousInputModalActive;
         this.resumeReadline();
       };
@@ -4129,6 +4287,14 @@ export class TuiApp {
       stdout.on("resize", onResize);
       render();
     });
+  }
+
+  private renderGoalSetupChoicePrompt(body: string[]): void {
+    if (this.#inlineMode) {
+      this.renderInlinePanel("Goal Setup", body);
+      return;
+    }
+    this.renderCenteredPanel("Goal Setup", body, true);
   }
 
   private async askGoalSetupValue(title: string, defaultValue: string, detail: string[], error?: string): Promise<string> {
@@ -4233,7 +4399,7 @@ export class TuiApp {
       appendGoalPanelField(lines, "proposed", goalPanelProposedStepsSummary(goal), width, 250, 203);
     }
     if (goal.pending_review_decision) {
-      appendGoalPanelField(lines, "next", "/loop review approve · /loop review revise · /loop review block", width, 244, 203);
+      appendGoalPanelField(lines, "next", "review prompt · Approve · Adjust · Continue · Block", width, 244, 203);
     }
     if (goal.planning) {
       lines.push(`${fg256(39, "task plan")} ${goalPlanningProgressSummary(goal.planning)}`);
@@ -4690,6 +4856,7 @@ export class TuiApp {
   private redrawVisibleSessionSurface(): void {
     this.#inlineRenderedLines = 0;
     this.#inlinePanelStartRow = undefined;
+    this.#inlineRenderedContent = undefined;
     stdout.write(ansi.clear);
     const session = this.optionalSession();
     if (!session) {
@@ -4710,6 +4877,7 @@ export class TuiApp {
   private resetVisibleSessionSurface(): void {
     this.#inlineRenderedLines = 0;
     this.#inlinePanelStartRow = undefined;
+    this.#inlineRenderedContent = undefined;
     this.#composerFooter = undefined;
     this.#composerActivity = undefined;
     this.#composerQueue = undefined;
@@ -5040,24 +5208,24 @@ export class TuiApp {
     const tokens = args.trim().split(/\s+/).filter(Boolean);
     const action = (tokens[0] ?? "status").toLowerCase();
     try {
+      if (action === "help") {
+        this.renderLoopTranscriptPanel("Self-Improve", selfImproveHelpLines());
+        return;
+      }
       if (action === "status" || action === "show") {
         const status = await optLiteStatus(this.app.store, this.app.workspace);
-        this.renderPanel("Self-Improve", [
-          `${fg256(39, "Evidence")} sessions ${status.eligible_goal_sessions} · verifications ${status.verified_records} · feedback ${status.human_feedback_records} · signals ${status.learning_signal_records}`,
-          `${fg256(39, "Proposals")} total ${status.proposal_count} · staged ${status.staged_count} · adopted ${status.adopted_count}`,
-          `${fg256(39, "Replay")} reports ${status.replay_count}`,
-          status.latest_proposal ? `${fg256(39, "Latest proposal")} ${status.latest_proposal.id} · ${status.latest_proposal.status} · ${status.latest_proposal.skill_id}` : `${fg256(39, "Latest proposal")} none`,
-          status.latest_replay ? `${fg256(39, "Latest replay")} ${status.latest_replay.id} · ${status.latest_replay.status} · samples ${status.latest_replay.sample_count} · ${formatOptScore(status.latest_replay.baseline_score)} -> ${formatOptScore(status.latest_replay.candidate_score)}` : `${fg256(39, "Latest replay")} none`,
-        ]);
+        this.renderLoopTranscriptPanel("Self-Improve", selfImproveStatusLines(status));
         return;
       }
       if (action === "propose") {
         const proposal = await optLitePropose(this.app.store, this.app.workspace);
-        this.renderPanel("Self-Improve Proposal", [
+        this.renderLoopTranscriptPanel("Self-Improve Proposal", [
           `${fg256(48, "•")} staged ${proposal.id}`,
           `  skill ${proposal.skill_id}`,
           `  evidence sessions ${proposal.evidence.goal_sessions} · verifications ${proposal.evidence.verification_records} · signals ${proposal.evidence.learning_signal_records}`,
           `  ${proposal.staged_skill_path}`,
+          "",
+          `${fg256(39, "Next")} /self-improve run --replay ${proposal.id}`,
         ]);
         return;
       }
@@ -5067,7 +5235,16 @@ export class TuiApp {
         return;
       }
       if (action === "run") {
-        const run = await optLiteRun(this.app.store, this.app.workspace, parseOptRunFlags(tokens.slice(1)));
+        const options = parseOptRunFlags(tokens.slice(1));
+        if (!options.replay) {
+          this.renderLoopTranscriptPanel("Self-Improve", [
+            fg256(203, "Usage: /self-improve run --replay [proposal_id]"),
+            "",
+            ...selfImproveCommandLines(),
+          ]);
+          return;
+        }
+        const run = await optLiteRun(this.app.store, this.app.workspace, options);
         this.renderOptReplayPanel(run.replay);
         return;
       }
@@ -5078,26 +5255,40 @@ export class TuiApp {
       }
       if (action === "adopt") {
         const proposal = await optLiteAdopt(this.app.store, this.app.workspace, this.app.config, tokens[1]);
-        this.renderPanel("Self-Improve Adopted", [
+        this.renderLoopTranscriptPanel("Self-Improve Adopted", [
           `${fg256(48, "•")} adopted ${proposal.id}`,
           `  skill ${proposal.skill_id}`,
           proposal.skill_path ? `  ${proposal.skill_path}` : undefined,
+          "",
+          `${fg256(39, "Next")} future loop sessions can use ${proposal.skill_id}`,
         ].filter((line): line is string => Boolean(line)));
         return;
       }
-      this.renderNotice("Usage: /self-improve status | /self-improve propose | /self-improve run --replay [proposal_id] | /self-improve report [replay_id] | /self-improve adopt [proposal_id]");
+      this.renderLoopTranscriptPanel("Self-Improve", [
+        fg256(203, `Unknown self-improve command: ${action}`),
+        "",
+        ...selfImproveCommandLines(),
+      ]);
     } catch (error) {
-      this.renderNotice(error instanceof Error ? error.message : String(error));
+      this.renderLoopTranscriptPanel("Self-Improve", [
+        fg256(203, error instanceof Error ? error.message : String(error)),
+        "",
+        ...selfImproveCommandLines(),
+      ]);
     }
   }
 
   private renderOptReplayPanel(report: Awaited<ReturnType<typeof optLiteReport>>): void {
-    this.renderPanel("Self-Improve Replay", [
+    this.renderLoopTranscriptPanel("Self-Improve Replay", [
       `${fg256(39, "Report")} ${report.id} · ${report.status} · proposal ${report.proposal_id}`,
       `${fg256(39, "Samples")} total ${report.sample_count} · train ${report.splits.train.length} · validation ${report.splits.validation.length} · heldout ${report.splits.heldout.length}`,
       `${fg256(39, "Scores")} baseline ${formatOptScore(report.baseline_score)} · candidate ${formatOptScore(report.candidate_score)}`,
       `${fg256(39, "Gate")} validation ${report.gate.validation_improved ? "improved" : "not improved"} · heldout ${report.gate.heldout_not_regressed ? "not regressed" : "regressed"} · hard failures ${report.gate.hard_failures}`,
       `${fg256(39, "Path")} ${report.report_path}`,
+      "",
+      report.status === "accepted"
+        ? `${fg256(39, "Next")} /self-improve adopt ${report.proposal_id}`
+        : `${fg256(39, "Next")} inspect this report, collect stronger verified loop evidence, then /self-improve propose`,
     ]);
   }
 
@@ -6228,7 +6419,7 @@ export class TuiApp {
       `  /skills    list · manage`,
       `  /loop      status · mode auto|research|focus|explore|timebox · health · review · verify · pause · resume · drop`,
       `  /inbox     show · all · resolve · dismiss · promote`,
-      `  /self-improve status · propose · run --replay · report · adopt`,
+      `  /self-improve help · status · propose · run --replay · report · adopt`,
       `  /plan      show · set · pause · resume · approve · drop`,
       `  /tools     expand · compact · last`,
       `  /worktree  list · health · adopt`,
@@ -6613,7 +6804,6 @@ export class TuiApp {
   }
 
   private renderInlinePanel(title: string, body: string[]): void {
-    this.eraseInlinePanel();
     const width = safeTerminalWidth();
     const line = (text = "") => bgLine(236, terminalLine(text), width);
     const lines = [
@@ -6622,10 +6812,42 @@ export class TuiApp {
       ...body.map((item) => line(`  ${item}`)),
       line(),
     ];
+    if (this.patchInlinePanel(lines)) {
+      return;
+    }
+    this.eraseInlinePanel();
     this.#inlineRenderedLines = lines.length;
     this.#inlinePanelStartRow = undefined;
+    this.#inlineRenderedContent = lines;
     stdout.write(lines.join("\n"));
     stdout.write("\n");
+  }
+
+  private patchInlinePanel(lines: string[]): boolean {
+    if (
+      !this.#inlineRenderedLines ||
+      this.#inlinePanelStartRow !== undefined ||
+      !this.#inlineRenderedContent ||
+      this.#inlineRenderedContent.length !== lines.length
+    ) {
+      return false;
+    }
+    stdout.write(ansi.hideCursor);
+    stdout.write(`\x1b[${this.#inlineRenderedLines}A`);
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index] ?? "";
+      if (this.#inlineRenderedContent[index] !== line) {
+        stdout.write(`\r${CLEAR_LINE}${line}`);
+      }
+      if (index < lines.length - 1) {
+        stdout.write("\x1b[1B");
+      }
+    }
+    stdout.write("\r\x1b[1B");
+    stdout.write(ansi.showCursor);
+    this.#inlineRenderedLines = lines.length;
+    this.#inlineRenderedContent = lines;
+    return true;
   }
 
   private renderInlineCenteredPanel(title: string, body: string[]): void {
@@ -6641,6 +6863,7 @@ export class TuiApp {
     const startRow = Math.max(1, terminalHeight() - lines.length - 2);
     this.#inlineRenderedLines = terminalHeight() - startRow + 1;
     this.#inlinePanelStartRow = startRow;
+    this.#inlineRenderedContent = undefined;
     stdout.write(`\x1b[${startRow};1H\x1b[J`);
     stdout.write(lines.join("\n"));
   }
@@ -6656,6 +6879,7 @@ export class TuiApp {
     }
     this.#inlineRenderedLines = 0;
     this.#inlinePanelStartRow = undefined;
+    this.#inlineRenderedContent = undefined;
   }
 
   private resumeReadline(): void {
@@ -6842,11 +7066,9 @@ function loopReviewPanelLines(goal: GoalRecord, width = terminalWidth()): string
     lines.push(fg256(203, "No proposed next steps were recorded for this expand decision."));
   }
   lines.push("");
-  lines.push(fg256(39, "Actions"));
-  lines.push(`${fg256(48, "  /loop review approve")} ${fg256(244, loopReviewApproveDescription(pending.action))}`);
-  lines.push(`${fg256(75, "  /loop review revise <feedback>")} ${fg256(244, "keep the loop active and re-plan with your feedback")}`);
-  lines.push(`${fg256(220, "  /loop review reject <reason>")} ${fg256(244, "discard the staged decision and keep the current loop task active")}`);
-  lines.push(`${fg256(203, "  /loop review block <reason>")} ${fg256(244, "pause the loop with a blocker")}`);
+  lines.push(fg256(39, "Decision"));
+  lines.push(`${fg256(244, "The TUI opens an inline review prompt to Approve, Adjust, Continue, or Block this decision.")}`);
+  lines.push(`${fg256(244, `Approve will ${loopReviewApproveDescription(pending.action)}.`)}`);
   return lines;
 }
 
@@ -6874,6 +7096,14 @@ export interface GoalSetupChoiceTokenResult<T extends string> {
   state: GoalSetupChoiceState;
   value?: T;
   cancelled?: boolean;
+}
+
+export interface GoalSetupWizardContext {
+  objective?: string;
+  steps?: readonly string[];
+  currentStep?: string;
+  selections?: GoalSetupWizardSelections;
+  hint?: string;
 }
 
 export function applyGoalSetupChoiceToken<T extends string>(
@@ -6906,11 +7136,14 @@ export function renderGoalSetupChoicePanel<T extends string>(
   selectedIndex: number,
   footer: string[] = [],
   width = terminalWidth(),
+  wizard?: GoalSetupWizardContext,
 ): string[] {
   const safeWidth = Math.max(24, width);
   const selected = Math.max(0, Math.min(selectedIndex, Math.max(0, options.length - 1)));
   const lines = [
-    `${fg256(75, title)} ${fg256(238, "·")} ${fg256(244, "↑/↓ choose · enter select · esc cancels")}`,
+    ...(wizard ? [renderGoalSetupStepRail(wizard, safeWidth), ""] : []),
+    `${fg256(75, title)} ${fg256(238, "·")} ${fg256(244, wizard?.hint ?? "↑/↓ choose · enter select · esc cancels")}`,
+    ...renderGoalSetupSummaryLines(wizard, safeWidth),
     "",
   ];
   for (const [index, option] of options.entries()) {
@@ -6928,7 +7161,44 @@ export function renderGoalSetupChoicePanel<T extends string>(
   for (const item of footer) {
     lines.push(fg256(244, item));
   }
+  while (lines.length < GOAL_SETUP_PANEL_BODY_ROWS) {
+    lines.push("");
+  }
   return lines;
+}
+
+function renderGoalSetupStepRail(wizard: GoalSetupWizardContext, width: number): string {
+  const steps = wizard.steps?.length ? wizard.steps : GOAL_SETUP_WIZARD_STEPS;
+  const currentIndex = Math.max(0, steps.findIndex((step) => step === wizard.currentStep));
+  const rendered = steps.map((step, index) => {
+    if (index === currentIndex) {
+      return fg256(75, step);
+    }
+    if (index < currentIndex) {
+      return fg256(250, step);
+    }
+    return fg256(244, step);
+  }).join(` ${fg256(238, "→")} `);
+  return truncateToWidth(`${fg256(39, "Progress")} ${fg256(238, "·")} ${rendered}`, width);
+}
+
+function renderGoalSetupSummaryLines(wizard: GoalSetupWizardContext | undefined, width: number): string[] {
+  if (!wizard) {
+    return [];
+  }
+  const rows: Array<[string, string | undefined]> = [
+    ["goal", wizard.objective],
+    ["type", wizard.selections?.type],
+    ["mode", wizard.selections?.approach],
+    ["hil", wizard.selections?.hil],
+  ];
+  const lines = rows
+    .filter((row): row is [string, string] => Boolean(row[1]))
+    .map(([label, value]) => {
+      const safeValue = truncateToWidth(oneLine(value), Math.max(12, width - 9));
+      return `${fg256(244, padRight(label, 5))} ${fg256(250, safeValue)}`;
+    });
+  return lines.length ? ["", ...lines] : [];
 }
 
 function renderGoalSetupValuePanel(title: string, detail: string[], error: string | undefined, width = terminalWidth()): string[] {
@@ -7076,6 +7346,34 @@ function goalStrategyInputForApproach(approach: GoalApproachChoice, targetHours?
     target_hours: mode === "campaign" ? targetHours : undefined,
     rationale: `User selected ${approach} approach.`,
   };
+}
+
+function goalKindSetupLabel(kind: GoalKindChoice): string {
+  return kind === "research" ? "Research" : "Task";
+}
+
+function goalApproachSetupLabel(approach: GoalApproachChoice, targetHours?: number): string {
+  switch (approach) {
+    case "auto":
+      return "Auto";
+    case "focus":
+      return "Focus";
+    case "explore":
+      return "Explore";
+    case "timebox":
+      return targetHours === undefined ? "Timebox" : `Timebox ${formatGoalSetupHours(targetHours)}`;
+  }
+}
+
+function goalHilSetupLabel(policy: GoalReviewPolicyChoice): string {
+  return policy === "review" ? "Review" : "Auto";
+}
+
+function formatGoalSetupHours(hours: number): string {
+  if (hours === 0.5) {
+    return "30m";
+  }
+  return Number.isInteger(hours) ? `${hours}h` : `${hours}h`;
 }
 
 function goalPanelUsage(goal: GoalRecord): string | undefined {
@@ -9277,6 +9575,59 @@ function formatPercent(value: number): string {
 
 function formatOptionalPercent(value: number | undefined): string {
   return value === undefined ? "n/a" : formatPercent(value);
+}
+
+function selfImproveHelpLines(): string[] {
+  return [
+    `${fg256(39, "Purpose")} turn verified loop evidence into a reviewable workspace skill.`,
+    `${fg256(39, "Flow")} status -> propose -> run --replay -> report -> adopt`,
+    "",
+    ...selfImproveCommandLines(),
+  ];
+}
+
+function selfImproveStatusLines(status: Awaited<ReturnType<typeof optLiteStatus>>): string[] {
+  return [
+    `${fg256(39, "Purpose")} turn verified loop evidence into a reviewable workspace skill.`,
+    `${fg256(39, "Evidence")} sessions ${status.eligible_goal_sessions} · verifications ${status.verified_records} · feedback ${status.human_feedback_records} · signals ${status.learning_signal_records}`,
+    `${fg256(39, "Proposals")} total ${status.proposal_count} · staged ${status.staged_count} · adopted ${status.adopted_count}`,
+    `${fg256(39, "Replay")} reports ${status.replay_count}`,
+    status.latest_proposal
+      ? `${fg256(39, "Latest proposal")} ${status.latest_proposal.id} · ${status.latest_proposal.status} · ${status.latest_proposal.skill_id}`
+      : `${fg256(39, "Latest proposal")} none`,
+    status.latest_replay
+      ? `${fg256(39, "Latest replay")} ${status.latest_replay.id} · ${status.latest_replay.status} · samples ${status.latest_replay.sample_count} · ${formatOptScore(status.latest_replay.baseline_score)} -> ${formatOptScore(status.latest_replay.candidate_score)}`
+      : `${fg256(39, "Latest replay")} none`,
+    `${fg256(39, "Next")} ${selfImproveNextAction(status)}`,
+    "",
+    ...selfImproveCommandLines(),
+  ];
+}
+
+function selfImproveCommandLines(): string[] {
+  return [
+    fg256(39, "Commands"),
+    `${fg256(48, "  /self-improve help")} ${fg256(244, "show this workflow")}`,
+    `${fg256(48, "  /self-improve status")} ${fg256(244, "show evidence, proposals, and replay reports")}`,
+    `${fg256(48, "  /self-improve propose")} ${fg256(244, "stage a learned workspace skill from verified loop evidence")}`,
+    `${fg256(48, "  /self-improve run --replay [proposal_id]")} ${fg256(244, "gate the staged proposal against replay samples")}`,
+    `${fg256(48, "  /self-improve report [replay_id]")} ${fg256(244, "show the latest replay gate report")}`,
+    `${fg256(48, "  /self-improve adopt [proposal_id]")} ${fg256(244, "adopt an accepted staged skill")}`,
+  ];
+}
+
+function selfImproveNextAction(status: Awaited<ReturnType<typeof optLiteStatus>>): string {
+  if (!status.eligible_goal_sessions || !status.verified_records) {
+    return "finish a /loop with verification evidence, then /self-improve propose";
+  }
+  if (!status.staged_count) {
+    return "/self-improve propose";
+  }
+  if (status.latest_replay?.status === "accepted") {
+    return `/self-improve adopt ${status.latest_replay.proposal_id}`;
+  }
+  const proposalId = status.latest_proposal?.status === "staged" ? ` ${status.latest_proposal.id}` : "";
+  return `/self-improve run --replay${proposalId}`;
 }
 
 function formatOptScore(value: number): string {

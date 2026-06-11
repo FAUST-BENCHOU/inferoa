@@ -49,6 +49,7 @@ subcommands.
 /loop drop                   Drop the current loop
 
 # Self-improve
+/self-improve help           Show self-improve workflow and commands
 /self-improve status         Show learning evidence and proposals
 /self-improve propose        Stage a learned workspace skill proposal
 /self-improve run --replay   Run structured replay/gating
