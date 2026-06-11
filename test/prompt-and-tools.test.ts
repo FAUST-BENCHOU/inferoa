@@ -6,7 +6,7 @@ import os from "node:os";
 import { pathToFileURL } from "node:url";
 import { DEFAULT_CONFIG } from "../src/config/defaults.js";
 import { SessionStore } from "../src/session/store.js";
-import { PromptBuilder } from "../src/context/prompt.js";
+import { PROMPT_SESSION_SNAPSHOT_EVENT, PromptBuilder } from "../src/context/prompt.js";
 import { CORE_TOOL_DEFINITIONS } from "../src/tools/schemas.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 import { PermissionPolicy } from "../src/tools/permissions.js";
@@ -84,6 +84,31 @@ test("PromptBuilder keeps prompt epoch stable when only the session title change
     assert.equal(second.section_hashes["runtime.environment"], first.section_hashes["runtime.environment"]);
     assert.equal(second.epoch.prompt_epoch_id, first.epoch.prompt_epoch_id);
     assert.doesNotMatch(String(second.messages[0]?.content ?? ""), /Renamed for display/);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("PromptBuilder fails closed when an existing prompt snapshot is invalid", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-invalid-prompt-snapshot-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_invalid_prompt_snapshot", root: dir, alias: "invalid-prompt-snapshot" };
+    const session = store.createSession(workspace, "invalid-prompt-snapshot");
+    store.appendEvent({
+      session_id: session.session_id,
+      type: PROMPT_SESSION_SNAPSHOT_EVENT,
+      data: {
+        tools: [],
+        permission_mode: "full_access",
+      },
+    });
+
+    assert.throws(
+      () => new PromptBuilder(config(), store, workspace).build(session, "hello", CORE_TOOL_DEFINITIONS),
+      /Invalid prompt session snapshot/,
+    );
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });

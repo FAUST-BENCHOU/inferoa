@@ -7,6 +7,7 @@ import type {
   ModelMessage,
   ModelRequest,
   ModelResponse,
+  PermissionMode,
   RtkSavingsSummary,
   SessionRecord,
   ToolCall,
@@ -79,6 +80,9 @@ export type RuntimeStatusEvent =
       archive_resource_uri: string;
       archived_events: number;
       protected_tail_events: number;
+      preserved_tail_events?: number;
+      preserved_rounds?: number;
+      preserved_run_anchor_count?: number;
       summary: string;
       protected_user_prompts?: string[];
     }
@@ -236,7 +240,17 @@ export class Runtime {
         type: "user.prompt",
         data: { prompt: options.prompt, request_class: requestClass, visibility },
       });
-      toolCalls += await this.prefetchPromptUrls(options.prompt, session.session_id, runId, requestClass, visibility, options.onStatus, options.signal);
+      toolCalls += await this.prefetchPromptUrls(
+        options.prompt,
+        session.session_id,
+        runId,
+        requestClass,
+        visibility,
+        availableTools,
+        promptSnapshot.permissionMode,
+        options.onStatus,
+        options.signal,
+      );
 
       let currentPrompt = options.prompt;
       let response: ModelResponse | undefined;
@@ -275,6 +289,9 @@ export class Runtime {
               archive_resource_uri: compacted.resource_uri,
               archived_events: compacted.archived_events,
               protected_tail_events: compacted.protected_tail_events,
+              preserved_tail_events: compacted.preserved_tail_events,
+              preserved_rounds: compacted.preserved_rounds,
+              preserved_run_anchor_count: compacted.preserved_run_anchor_count,
               protected_prompt_count: compacted.protected_user_prompts.length,
               protected_user_prompts: compacted.protected_user_prompts,
               summary_strategy: compacted.summary_strategy,
@@ -288,6 +305,9 @@ export class Runtime {
             archive_resource_uri: compacted.resource_uri,
             archived_events: compacted.archived_events,
             protected_tail_events: compacted.protected_tail_events,
+            preserved_tail_events: compacted.preserved_tail_events,
+            preserved_rounds: compacted.preserved_rounds,
+            preserved_run_anchor_count: compacted.preserved_run_anchor_count,
             summary: compacted.summary,
             protected_user_prompts: compacted.protected_user_prompts,
           });
@@ -370,6 +390,9 @@ export class Runtime {
                 archive_resource_uri: compacted.resource_uri,
                 archived_events: compacted.archived_events,
                 protected_tail_events: compacted.protected_tail_events,
+                preserved_tail_events: compacted.preserved_tail_events,
+                preserved_rounds: compacted.preserved_rounds,
+                preserved_run_anchor_count: compacted.preserved_run_anchor_count,
                 protected_prompt_count: compacted.protected_user_prompts.length,
                 protected_user_prompts: compacted.protected_user_prompts,
                 summary_strategy: compacted.summary_strategy,
@@ -383,6 +406,9 @@ export class Runtime {
               archive_resource_uri: compacted.resource_uri,
               archived_events: compacted.archived_events,
               protected_tail_events: compacted.protected_tail_events,
+              preserved_tail_events: compacted.preserved_tail_events,
+              preserved_rounds: compacted.preserved_rounds,
+              preserved_run_anchor_count: compacted.preserved_run_anchor_count,
               summary: compacted.summary,
               protected_user_prompts: compacted.protected_user_prompts,
             });
@@ -442,7 +468,19 @@ export class Runtime {
         let shouldYieldAfterToolCalls = false;
         for (const call of response.tool_calls) {
           throwIfAborted(options.signal);
-          await this.executeToolCall(call, session.session_id, runId, stepId, stepIndex, requestClass, visibility, options.onStatus, options.onClarify);
+          await this.executeToolCall(
+            call,
+            session.session_id,
+            runId,
+            stepId,
+            stepIndex,
+            requestClass,
+            visibility,
+            availableTools,
+            promptSnapshot.permissionMode,
+            options.onStatus,
+            options.onClarify,
+          );
           toolCalls += 1;
           throwIfAborted(options.signal);
           const yieldEvent = goalYieldEventAfterToolCall(this.store, session.session_id, runId, requestClass, visibility);
@@ -487,6 +525,9 @@ export class Runtime {
             archive_resource_uri: compacted.resource_uri,
             archived_events: compacted.archived_events,
             protected_tail_events: compacted.protected_tail_events,
+            preserved_tail_events: compacted.preserved_tail_events,
+            preserved_rounds: compacted.preserved_rounds,
+            preserved_run_anchor_count: compacted.preserved_run_anchor_count,
             protected_prompt_count: compacted.protected_user_prompts.length,
             protected_user_prompts: compacted.protected_user_prompts,
             summary_strategy: compacted.summary_strategy,
@@ -500,6 +541,9 @@ export class Runtime {
           archive_resource_uri: compacted.resource_uri,
           archived_events: compacted.archived_events,
           protected_tail_events: compacted.protected_tail_events,
+          preserved_tail_events: compacted.preserved_tail_events,
+          preserved_rounds: compacted.preserved_rounds,
+          preserved_run_anchor_count: compacted.preserved_run_anchor_count,
           summary: compacted.summary,
           protected_user_prompts: compacted.protected_user_prompts,
         });
@@ -771,6 +815,8 @@ export class Runtime {
     runId: string,
     requestClass: ModelRequest["request_class"],
     visibility: "normal" | "internal",
+    availableTools: ToolDefinition[],
+    permissionMode: PermissionMode,
     onStatus?: RuntimeRunOptions["onStatus"],
     signal?: AbortSignal,
   ): Promise<number> {
@@ -786,6 +832,8 @@ export class Runtime {
         undefined,
         requestClass,
         visibility,
+        availableTools,
+        permissionMode,
         onStatus,
       );
       toolCalls += 1;
@@ -817,6 +865,8 @@ export class Runtime {
     stepIndex: number | undefined,
     requestClass: ModelRequest["request_class"],
     visibility: "normal" | "internal",
+    availableTools: ToolDefinition[],
+    permissionMode: PermissionMode,
     onStatus?: RuntimeRunOptions["onStatus"],
     onClarify?: RuntimeRunOptions["onClarify"],
   ): Promise<ToolResult> {
@@ -833,7 +883,17 @@ export class Runtime {
     });
     let result: ToolResult;
     try {
-      result = await this.tools.call(call, { session_id: sessionId, run_id: runId, step_id: stepId, step_index: stepIndex, request_class: requestClass, visibility, clarify: onClarify });
+      result = await this.tools.call(call, {
+        session_id: sessionId,
+        run_id: runId,
+        step_id: stepId,
+        step_index: stepIndex,
+        request_class: requestClass,
+        visibility,
+        available_tools: availableTools,
+        permission_mode: permissionMode,
+        clarify: onClarify,
+      });
     } catch (error) {
       result = fail("tool_runtime_exception", error instanceof Error ? error.message : String(error));
       this.store.appendEvent({

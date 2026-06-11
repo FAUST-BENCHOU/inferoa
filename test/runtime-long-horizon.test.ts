@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { once } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DEFAULT_CONFIG } from "../src/config/defaults.js";
@@ -221,6 +221,80 @@ test("runtime freezes available tool schemas for a run", async () => {
     assert.equal(namesByRequest[1]?.includes("image_generation"), false);
     const started = store.listEvents(result.session.session_id).filter((event) => event.type === "model.request.started");
     assert.equal(started[0]?.data.tool_schema_hash, started[1]?.data.tool_schema_hash);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+    await new Promise<void>((resolve) => modelServer.close(() => resolve()));
+  }
+});
+
+test("runtime executes tool calls against the frozen session prompt snapshot", async () => {
+  let chatCalls = 0;
+  const modelServer = createServer((req, res) => {
+    if (serveEndpointSignal(req.url, res)) {
+      return;
+    }
+    req.resume();
+    req.on("end", () => {
+      chatCalls += 1;
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+      if (chatCalls === 1) {
+        writeSse(res, {
+          id: "resp_frozen_tool_exec",
+          model: "long-horizon-test",
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    id: "call_frozen_write",
+                    type: "function",
+                    function: { name: "write_file", arguments: JSON.stringify({ path: "frozen.txt", content: "snapshot execution\n" }) },
+                  },
+                ],
+              },
+            },
+          ],
+        });
+        writeSse(res, { choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 20, completion_tokens: 2 } });
+      } else {
+        writeSse(res, { id: "resp_after_frozen_tool_exec", model: "long-horizon-test", choices: [{ delta: { content: "frozen execution complete" } }] });
+        writeSse(res, { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 21, completion_tokens: 3 } });
+      }
+      res.end("data: [DONE]\n\n");
+    });
+  });
+  modelServer.listen(0, "127.0.0.1");
+  await once(modelServer, "listening");
+  const address = modelServer.address() as AddressInfo;
+
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-frozen-tool-exec-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const runtimeConfig = config(`http://127.0.0.1:${address.port}/v1`);
+    const workspace: WorkspaceIdentity = { id: "w_frozen_tool_exec", root: dir, alias: "frozen-tool-exec" };
+    runtimeConfig.permissions.workspaces = {
+      [workspace.id]: { mode: "full_access" },
+    };
+    const runtime = new Runtime(runtimeConfig, workspace, store);
+    const session = store.createSession(workspace, "frozen-tool-exec");
+
+    const result = await runtime.run({
+      prompt: "write the file with the frozen tool policy",
+      session_id: session.session_id,
+      onStatus: (event) => {
+        if (event.type === "tool_start" && event.tool_name === "write_file") {
+          runtimeConfig.permissions.workspaces = {
+            [workspace.id]: { mode: "ask" },
+          };
+        }
+      },
+    });
+
+    assert.equal(result.content, "frozen execution complete");
+    assert.equal(await readFile(path.join(dir, "frozen.txt"), "utf8"), "snapshot execution\n");
+    const writeResult = store.listEvents(session.session_id).find((event) => event.type === "tool.result" && event.data.tool_call_id === "call_frozen_write");
+    assert.equal((writeResult?.data.result as { ok?: boolean } | undefined)?.ok, true);
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });

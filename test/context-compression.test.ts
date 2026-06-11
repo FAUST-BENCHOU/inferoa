@@ -846,6 +846,183 @@ test("context compression uses the model summary and protects recent user loop p
   }
 });
 
+test("context compression preserves recent run anchors separately from tool-heavy rounds", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-compress-preserved-tail-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const config = structuredClone(DEFAULT_CONFIG);
+    config.model_setup.base_url = undefined;
+    config.model_setup.model = "compression-test";
+    config.context.context_window = 128_000;
+    config.model_setup.context_window = 128_000;
+    const workspace: WorkspaceIdentity = { id: "w_compress_preserved_tail", root: dir, alias: "compress-preserved-tail" };
+    const session = store.createSession(workspace, "compress-preserved-tail");
+
+    appendLoop(store, session.session_id, "run_old", "old run should be summarized only");
+    const previousPromptId = store.appendEvent({
+      session_id: session.session_id,
+      run_id: "run_previous",
+      type: "user.prompt",
+      data: { prompt: "previous user query with extremely long tool exploration" },
+    });
+    const heavyCalls = Array.from({ length: 40 }, (_, index) => ({
+      id: `previous_heavy_${index}`,
+      name: "read_file",
+      arguments: { path: `heavy-${index}.ts` },
+    }));
+    store.appendEvent({
+      session_id: session.session_id,
+      run_id: "run_previous",
+      type: "model.response.settled",
+      data: { content: "", tool_calls: heavyCalls },
+    });
+    for (const call of heavyCalls) {
+      store.appendEvent({
+        session_id: session.session_id,
+        run_id: "run_previous",
+        type: "tool.result",
+        data: {
+          tool_call_id: call.id,
+          tool_name: "read_file",
+          result: { ok: true, summary: `HEAVY_RESULT_${call.id}`, data: { content: "x".repeat(4000) } },
+        },
+      });
+    }
+    const previousFinalId = store.appendEvent({
+      session_id: session.session_id,
+      run_id: "run_previous",
+      type: "model.response.settled",
+      data: { content: "previous run final outcome is small and useful", tool_calls: [] },
+    });
+    const activePromptId = store.appendEvent({
+      session_id: session.session_id,
+      run_id: "run_active",
+      type: "user.prompt",
+      data: { prompt: "active run asks to preserve compact continuity" },
+    });
+    const activeModelId = store.appendEvent({
+      session_id: session.session_id,
+      run_id: "run_active",
+      type: "model.response.settled",
+      data: {
+        content: "",
+        tool_calls: [{ id: "active_call_1", name: "read_file", arguments: { path: "active.ts" } }],
+      },
+    });
+    const activeToolId = store.appendEvent({
+      session_id: session.session_id,
+      run_id: "run_active",
+      type: "tool.result",
+      data: {
+        tool_call_id: "active_call_1",
+        tool_name: "read_file",
+        result: { ok: true, summary: "active tool evidence should replay", data: { path: "active.ts" } },
+      },
+    });
+
+    const promptContext = new PromptBuilder(config, store, workspace).build(
+      store.getSession(session.session_id)!,
+      "continue active run after compact",
+      CORE_TOOL_DEFINITIONS,
+      [],
+      "run_active",
+    );
+    const compressor = new ContextCompressor(config, store, workspace, undefined as never);
+    await compressor.compact(store.getSession(session.session_id)!, promptContext, CORE_TOOL_DEFINITIONS, "threshold", {
+      activeRunId: "run_active",
+      currentPrompt: "continue active run after compact",
+    });
+
+    const compacted = store.listEvents(session.session_id).filter((event) => event.type === "context.compacted").at(-1);
+    assert.ok(compacted);
+    assert.ok((compacted.data.preserved_run_anchor_event_ids as unknown[]).includes(previousPromptId));
+    assert.ok((compacted.data.preserved_run_anchor_event_ids as unknown[]).includes(activePromptId));
+    assert.ok((compacted.data.preserved_tail_event_ids as unknown[]).includes(previousFinalId));
+    assert.ok((compacted.data.preserved_tail_event_ids as unknown[]).includes(activeModelId));
+    assert.ok((compacted.data.preserved_tail_event_ids as unknown[]).includes(activeToolId));
+
+    const rebuilt = new PromptBuilder(config, store, workspace).build(
+      store.getSession(session.session_id)!,
+      "continue active run after compact",
+      CORE_TOOL_DEFINITIONS,
+      [],
+      "run_active",
+    );
+    const rendered = JSON.stringify(rebuilt.messages);
+    assert.match(rendered, /previous user query with extremely long tool exploration/);
+    assert.match(rendered, /previous run final outcome is small and useful/);
+    assert.match(rendered, /active run asks to preserve compact continuity/);
+    assert.match(rendered, /active tool evidence should replay/);
+    assert.doesNotMatch(rendered, /HEAVY_RESULT_previous_heavy_39/);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("context compression re-summarizes old preserved events when they age out of the next epoch tail", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-compress-preserved-carry-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const config = structuredClone(DEFAULT_CONFIG);
+    config.model_setup.base_url = undefined;
+    config.model_setup.model = "compression-test";
+    const workspace: WorkspaceIdentity = { id: "w_compress_preserved_carry", root: dir, alias: "compress-preserved-carry" };
+    const session = store.createSession(workspace, "compress-preserved-carry");
+    const oldPromptId = store.appendEvent({
+      session_id: session.session_id,
+      run_id: "run_preserved_old",
+      type: "user.prompt",
+      data: { prompt: "old preserved query must be summarized on next compact" },
+    });
+    const firstCutoff = store.latestEventId(session.session_id);
+    store.appendEvent({
+      session_id: session.session_id,
+      type: "context.compacted",
+      data: {
+        reason: "threshold",
+        summary: "Goal\n- first compact",
+        archive_resource_uri: "resource://test/first",
+        archived_events: 1,
+        protected_tail_events: 1,
+        compacted_through_event_id: firstCutoff,
+        preserved_run_anchor_event_ids: [oldPromptId],
+        preserved_tail_event_ids: [],
+      },
+    });
+    for (let index = 0; index < 4; index += 1) {
+      store.appendEvent({
+        session_id: session.session_id,
+        run_id: `run_new_${index}`,
+        type: "user.prompt",
+        data: { prompt: `newer run query ${index}` },
+      });
+    }
+
+    const promptContext = new PromptBuilder(config, store, workspace).build(
+      store.getSession(session.session_id)!,
+      "newer run query 3",
+      CORE_TOOL_DEFINITIONS,
+      [],
+      "run_new_3",
+    );
+    const compressor = new ContextCompressor(config, store, workspace, undefined as never);
+    await compressor.compact(store.getSession(session.session_id)!, promptContext, CORE_TOOL_DEFINITIONS, "threshold", {
+      activeRunId: "run_new_3",
+      currentPrompt: "newer run query 3",
+    });
+
+    const compacted = store.listEvents(session.session_id).filter((event) => event.type === "context.compacted").at(-1);
+    assert.ok(compacted);
+    assert.equal((compacted.data.preserved_run_anchor_event_ids as unknown[]).includes(oldPromptId), false);
+    const archive = store.readResource(String(compacted.data.archive_resource_uri));
+    assert.match(archive?.content ?? "", /old preserved query must be summarized on next compact/);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 function appendLoop(store: SessionStore, sessionId: string, runId: string, prompt: string, resourceUri?: string): void {
   store.appendEvent({ session_id: sessionId, run_id: runId, type: "user.prompt", data: { prompt } });
   store.appendEvent({

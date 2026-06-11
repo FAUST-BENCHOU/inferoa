@@ -98,16 +98,28 @@ function promptSessionSnapshotFromEvents(events: SessionEvent[]): PromptSessionS
   if (!event) {
     return undefined;
   }
-  const tools = Array.isArray(event.data.tools) ? event.data.tools.map(parseToolDefinition).filter((tool): tool is ToolDefinition => Boolean(tool)) : [];
+  if (!Array.isArray(event.data.tools)) {
+    throw new Error("Invalid prompt session snapshot: tools must be an array");
+  }
+  const tools = event.data.tools.map(parseToolDefinition).filter((tool): tool is ToolDefinition => Boolean(tool));
   const skills = Array.isArray(event.data.skills) ? event.data.skills.map(parseSkillDescriptor).filter((skill): skill is SkillDescriptor => Boolean(skill)) : [];
   const enabledSkillNames = Array.isArray(event.data.enabled_skill_names)
     ? event.data.enabled_skill_names.filter((name): name is string => typeof name === "string").sort()
     : [];
   const permissionMode = parsePermissionMode(event.data.permission_mode);
   if (!tools.length || !permissionMode) {
-    return undefined;
+    throw new Error("Invalid prompt session snapshot: missing tools or permission mode");
   }
-  return createPromptSessionSnapshot(tools, skills, enabledSkillNames, permissionMode);
+  const snapshot = createPromptSessionSnapshot(tools, skills, enabledSkillNames, permissionMode);
+  const storedToolSchemaHash = stringField(event.data.tool_schema_hash);
+  if (storedToolSchemaHash && storedToolSchemaHash !== snapshot.toolSchemaHash) {
+    throw new Error("Invalid prompt session snapshot: tool schema hash mismatch");
+  }
+  const storedSnapshotHash = stringField(event.data.snapshot_hash);
+  if (storedSnapshotHash && storedSnapshotHash !== snapshot.snapshotHash) {
+    throw new Error("Invalid prompt session snapshot: snapshot hash mismatch");
+  }
+  return snapshot;
 }
 
 export class PromptBuilder {
@@ -661,7 +673,32 @@ function selectPromptEvents(events: SessionEvent[], latestCompaction?: SessionEv
     typeof latestCompaction.data.compacted_through_event_id === "number"
       ? latestCompaction.data.compacted_through_event_id
       : (latestCompaction.id ?? 0);
-  return events.filter((event) => (event.id ?? 0) > cutoff && event.type !== "context.compacted");
+  const preservedIds = preservedEventIdsFromCompaction(latestCompaction);
+  return events.filter((event) => {
+    if (event.type === "context.compacted") {
+      return false;
+    }
+    const id = event.id ?? 0;
+    return id > cutoff || preservedIds.has(id);
+  });
+}
+
+function preservedEventIdsFromCompaction(event: SessionEvent): Set<number> {
+  const ids = new Set<number>();
+  addNumberArrayToSet(ids, event.data.preserved_tail_event_ids);
+  addNumberArrayToSet(ids, event.data.preserved_run_anchor_event_ids);
+  return ids;
+}
+
+function addNumberArrayToSet(target: Set<number>, value: unknown): void {
+  if (!Array.isArray(value)) {
+    return;
+  }
+  for (const item of value) {
+    if (typeof item === "number" && Number.isFinite(item)) {
+      target.add(Math.trunc(item));
+    }
+  }
 }
 
 function toModelTools(tools: ToolDefinition[]): JsonObject[] {

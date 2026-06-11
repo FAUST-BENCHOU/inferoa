@@ -2781,7 +2781,10 @@ export class TuiApp {
       ? [
           `${fg256(39, "reason")} ${stringField(latestCompacted.data.reason) ?? "unknown"}`,
           `${fg256(39, "archive")} ${stringField(latestCompacted.data.archive_resource_uri) ?? "none"}`,
-          `${fg256(39, "protected")} ${numberField(latestCompacted.data.protected_tail_events) ?? "unknown"} user prompts preserved`,
+          `${fg256(39, "protected")} ${numberField(latestCompacted.data.protected_tail_events) ?? "unknown"}`,
+          numberField(latestCompacted.data.preserved_tail_events) === undefined
+            ? undefined
+            : `${fg256(39, "preserved")} ${numberField(latestCompacted.data.preserved_tail_events)} replay events`,
           `${fg256(39, "before")} ${numberField(latestCompacted.data.estimated_tokens_before) ?? "unknown"} estimated tokens`,
           ...(latestEvidence
             ? [
@@ -2790,7 +2793,7 @@ export class TuiApp {
               ]
             : []),
           ...(summaryLines.length ? ["", fg256(39, "Summary"), ...summaryLines.map((line) => `  ${truncateToWidth(line, Math.max(20, terminalWidth() - 8))}`)] : []),
-        ]
+        ].filter((line): line is string => line !== undefined)
       : ["  none"];
     const recent = events.slice(-8).map((event) => {
       const reason = stringField(event.data.reason);
@@ -8029,7 +8032,9 @@ function formatCompressionActivityLine(event: Extract<RuntimeStatusEvent, { type
   const detail = [
     compressionReasonLabel(event.reason),
     `${event.archived_events} archived`,
-    `${event.protected_tail_events} prompts kept`,
+    `${event.protected_tail_events} protected`,
+    event.preserved_tail_events === undefined ? undefined : `${event.preserved_tail_events} replayed`,
+    event.preserved_rounds === undefined ? undefined : `${event.preserved_rounds} rounds`,
     formatTokenPressure(event.estimated_tokens, event.threshold_tokens),
   ].filter(Boolean).join(" · ");
   return renderActivityRecordLine({

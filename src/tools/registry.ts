@@ -1,4 +1,4 @@
-import type { JsonObject, ToolCall, ToolDefinition, ToolResult, VllmAgentConfig, WorkspaceIdentity } from "../types.js";
+import type { JsonObject, PermissionMode, ToolCall, ToolDefinition, ToolResult, VllmAgentConfig, WorkspaceIdentity } from "../types.js";
 import { CodeIntelligenceHub } from "../code-intelligence/hub.js";
 import { SessionStore } from "../session/store.js";
 import { fail, truncateText } from "../util/limit.js";
@@ -121,9 +121,11 @@ export class ToolRegistry {
       visibility?: ToolExecutionContext["visibility"];
       control_plane?: boolean;
       clarify?: ToolExecutionContext["clarify"];
+      available_tools?: ToolDefinition[];
+      permission_mode?: PermissionMode;
     },
   ): Promise<ToolResult> {
-    const definition = this.list().find((tool) => tool.name === call.name);
+    const definition = (context.available_tools ?? this.list()).find((tool) => tool.name === call.name);
     if (!definition) {
       const result = fail("unknown_tool", `Unknown tool: ${call.name}`);
       this.recordCall(context, call);
@@ -138,7 +140,7 @@ export class ToolRegistry {
         return invalidArguments;
       }
     }
-    const decision = this.policy.decide(definition, call.arguments, { request_class: context.request_class });
+    const decision = this.policy.decide(definition, call.arguments, { request_class: context.request_class, permission_mode: context.permission_mode });
     if (decision.status !== "allow") {
       this.store.appendEvent({
         session_id: context.session_id,

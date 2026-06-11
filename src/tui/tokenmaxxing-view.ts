@@ -116,6 +116,9 @@ interface EpochSummary {
   summaryStrategy?: string;
   archivedEvents?: number;
   protectedTailEvents?: number;
+  preservedTailEvents?: number;
+  preservedRounds?: number;
+  preservedRunAnchorCount?: number;
   promptTurns: number;
   promptTokens: number;
   cachedTokens: number;
@@ -542,6 +545,9 @@ function epochSummaries(events: SessionEvent[], observations: CacheObservation[]
       summary.summaryStrategy = stringField(event.data.summary_strategy);
       summary.archivedEvents = optionalNumberField(event.data.archived_events);
       summary.protectedTailEvents = optionalNumberField(event.data.protected_tail_events);
+      summary.preservedTailEvents = optionalNumberField(event.data.preserved_tail_events);
+      summary.preservedRounds = optionalNumberField(event.data.preserved_rounds);
+      summary.preservedRunAnchorCount = optionalNumberField(event.data.preserved_run_anchor_count);
     }
   }
   return out;
@@ -856,6 +862,9 @@ function epochLine(epoch: EpochSummary, width: number): string {
   const retention = [
     epoch.archivedEvents === undefined ? undefined : `archived ${epoch.archivedEvents}`,
     epoch.protectedTailEvents === undefined ? undefined : `protected ${epoch.protectedTailEvents}`,
+    epoch.preservedTailEvents === undefined ? undefined : `preserved ${epoch.preservedTailEvents}`,
+    epoch.preservedRounds === undefined ? undefined : `rounds ${epoch.preservedRounds}`,
+    epoch.preservedRunAnchorCount === undefined ? undefined : `anchors ${epoch.preservedRunAnchorCount}`,
   ].filter((part): part is string => Boolean(part)).join(" · ");
   return centerLine(
     [
@@ -1136,6 +1145,9 @@ function compactSignalDetail(data: JsonObject): string {
     stringField(data.summary_strategy) ? `strategy ${stringField(data.summary_strategy)}` : undefined,
     optionalNumberField(data.archived_events) === undefined ? undefined : `archived ${optionalNumberField(data.archived_events)}`,
     optionalNumberField(data.protected_tail_events) === undefined ? undefined : `protected ${optionalNumberField(data.protected_tail_events)}`,
+    optionalNumberField(data.preserved_tail_events) === undefined ? undefined : `preserved ${optionalNumberField(data.preserved_tail_events)}`,
+    optionalNumberField(data.preserved_rounds) === undefined ? undefined : `rounds ${optionalNumberField(data.preserved_rounds)}`,
+    optionalNumberField(data.preserved_run_anchor_count) === undefined ? undefined : `anchors ${optionalNumberField(data.preserved_run_anchor_count)}`,
     stringField(data.archive_resource_uri),
   ].filter((part): part is string => Boolean(part));
   return compactInlineString(parts.join(" · "), 180);

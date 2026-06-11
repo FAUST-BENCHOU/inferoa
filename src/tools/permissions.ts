@@ -15,6 +15,7 @@ export interface PermissionDecision {
 
 export interface PermissionContext {
   request_class?: string;
+  permission_mode?: PermissionMode;
 }
 
 const destructivePatterns = [
@@ -34,7 +35,7 @@ export class PermissionPolicy {
 
   decide(tool: ToolDefinition, args: Record<string, unknown>, context: PermissionContext = {}): PermissionDecision {
     const policy = effectiveWorkspacePermission(this.config, this.workspace);
-    const mode = policy.mode;
+    const mode = context.permission_mode ?? policy.mode;
     if (tool.name === "run_command" && typeof args.command === "string" && isDestructiveCommand(args.command) && isUnattendedRequest(context.request_class)) {
       return {
         status: "deny",

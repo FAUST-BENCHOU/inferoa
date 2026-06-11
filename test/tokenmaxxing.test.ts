@@ -280,6 +280,9 @@ test("tokenmaxxing shows compact boundaries as epoch rows and signals", () => {
       archive_resource_uri: "resource://session/archive-1",
       archived_events: 12,
       protected_tail_events: 3,
+      preserved_tail_events: 7,
+      preserved_rounds: 2,
+      preserved_run_anchor_count: 3,
     }),
     event("evidence.context_compression", {
       reason: "threshold",
@@ -288,6 +291,9 @@ test("tokenmaxxing shows compact boundaries as epoch rows and signals", () => {
       archive_resource_uri: "resource://session/archive-1",
       archived_events: 12,
       protected_tail_events: 3,
+      preserved_tail_events: 7,
+      preserved_rounds: 2,
+      preserved_run_anchor_count: 3,
       estimated_tokens: 1200,
       threshold_tokens: 1000,
     }, "run_2"),
@@ -315,12 +321,12 @@ test("tokenmaxxing shows compact boundaries as epoch rows and signals", () => {
   const plain = stripAnsi(renderTokenmaxxingLines(events, evidence, 170, { detailLimit: Number.POSITIVE_INFINITY }).join("\n"));
   const signalPlain = stripAnsi(renderTokenmaxxingRows(events, evidence, 190, { activityOnly: true }).map((row) => row.text).join("\n"));
 
-  assert.match(plain, /epoch pe_2 .*compact threshold\/prefix_query .*prefix - .*archived 12 .*protected 3/);
+  assert.match(plain, /epoch pe_2 .*compact threshold\/prefix_query .*prefix - .*archived 12 .*protected 3 .*preserved 7 .*rounds 2 .*anchors 3/);
   assert.match(plain, /turn 3\.1 user .*warm actual\/oracle cache 50\.0%\/100\.0% .*warm gap 50\.0%/);
   assert.match(plain, /epoch pe_1 .*session-created .*prefix 90\.9% 1000\/1100/);
   assert.match(plain, /compact .*tokens 1140\/1140 .*actual\/oracle cache 90\.9%\/90\.9% .*cache gap 0\.0% .*tools 0/);
-  assert.match(signalPlain, /compact memory .*threshold .*strategy prefix_query .*archived 12 .*protected 3/);
-  assert.match(signalPlain, /compact .*est 1200\/1000 .*epoch pe_2 .*threshold .*strategy prefix_query/);
+  assert.match(signalPlain, /compact memory .*threshold .*strategy prefix_query .*archived 12 .*protected 3 .*preserved 7 .*rounds 2 .*anchors 3/);
+  assert.match(signalPlain, /compact .*est 1200\/1000 .*epoch pe_2 .*threshold .*strategy prefix_query .*preserved 7 .*rounds 2 .*anchors 3/);
 });
 
 test("tokenmaxxing cache gap marks large provider cache gaps in red", () => {

@@ -1,4 +1,4 @@
-import type { JsonObject, ModelMessage, SessionRecord, ToolDefinition, VllmAgentConfig, WorkspaceIdentity } from "../types.js";
+import type { JsonObject, ModelMessage, SessionEvent, SessionRecord, ToolDefinition, VllmAgentConfig, WorkspaceIdentity } from "../types.js";
 import { ModelGateway } from "../model/gateway.js";
 import { SessionStore } from "../session/store.js";
 import { hashJson, randomId } from "../util/hash.js";
@@ -7,6 +7,16 @@ import { estimateTokens, PromptBuilder, type PromptContext } from "./prompt.js";
 import type { SkillDescriptor } from "../skills/registry.js";
 
 const COMPACTION_PROTECTED_PROMPT_LIMIT = 4_000;
+const PRESERVED_RUN_ANCHOR_COUNT = 3;
+const PRESERVED_RECENT_ROUND_TARGET = 8;
+const PRESERVED_ACTIVE_ROUND_TARGET = 12;
+const PRESERVED_TAIL_MAX_RATIO = 0.25;
+const PRESERVED_TAIL_HARD_CAP_TOKENS = 40_000;
+const PRESERVED_TAIL_SAFETY_BUFFER_TOKENS = 12_000;
+const PRESERVED_SINGLE_ROUND_MAX_TOKENS = 12_000;
+const PRESERVED_OUTPUT_RESERVE_MAX_TOKENS = 16_000;
+const PRESERVED_OUTPUT_RESERVE_MIN_TOKENS = 2_048;
+
 type CompactionSummaryStrategy = "prefix_query" | "standalone_payload" | "deterministic";
 
 interface CompactionAttempt {
@@ -15,6 +25,26 @@ interface CompactionAttempt {
   tools: ToolDefinition[];
   toolSchemaHash: string;
   promptHash: string;
+}
+
+interface PreservedTailSelection {
+  preservedIds: Set<number>;
+  tailIds: number[];
+  runAnchorIds: number[];
+  preservedRoundCount: number;
+  preservedRunAnchorCount: number;
+  estimatedTokens: number;
+  budgetTokens: number;
+  droppedHeavyRounds: number;
+  droppedBudgetRounds: number;
+  policy: JsonObject;
+}
+
+interface ModelCallRound {
+  responseId: number;
+  runId?: string;
+  events: SessionEvent[];
+  estimatedTokens: number;
 }
 
 export interface CompactDecision {
@@ -73,6 +103,9 @@ export class ContextCompressor {
     resource_uri: string;
     archived_events: number;
     protected_tail_events: number;
+    preserved_tail_events: number;
+    preserved_rounds: number;
+    preserved_run_anchor_count: number;
     protected_user_prompts: string[];
   }> {
     const events = this.store.listEvents(session.session_id);
@@ -82,9 +115,10 @@ export class ContextCompressor {
       typeof previousCompaction?.data.compacted_through_event_id === "number"
         ? previousCompaction.data.compacted_through_event_id
         : (previousCompaction?.id ?? 0);
-    const compactedRegion = events.filter((event) => (event.id ?? 0) > previousCutoff);
-    const summaryRegion = compactedRegion.filter((event) => !isInternalRawEvent(event));
-    const protection = protectedLoopContext(events.filter((event) => !isInternalRawEvent(event)), options.activeRunId, options.currentPrompt, this.config.context.protected_recent_loops ?? 3);
+    const compactedRegion = compactableEventsForNextEpoch(events, previousCompaction, previousCutoff);
+    const preserved = selectPreservedTailEvents(compactedRegion, promptContext, tools, this.config, previousSummary, options);
+    const summaryRegion = compactedRegion.filter((event) => !preserved.preservedIds.has(event.id ?? 0) && !isInternalRawEvent(event));
+    const protection = protectedLoopContext(compactedRegion.filter((event) => !isInternalRawEvent(event)), options.activeRunId, options.currentPrompt, this.config.context.protected_recent_loops ?? 3);
     const protectedPromptExcerpts = protection.protected_user_prompts.map(protectedPromptExcerpt);
     const raw = JSON.stringify(compactedRegion, null, 2);
     const resource = this.store.putResource(session.session_id, "compaction.archive", raw, {
@@ -94,7 +128,15 @@ export class ContextCompressor {
     let summary = deterministicSummary(session, this.workspace.root, summaryRegion, previousSummary, protectedPromptExcerpts);
     let summaryStrategy: CompactionSummaryStrategy = "deterministic";
     if (this.config.model_setup.base_url && this.config.model_setup.model && compactedRegion.length > 0) {
-      const modelPayload = compactionPayload(previousSummary, resource.uri, protectedPromptExcerpts, protection, summaryRegion);
+      const modelPayload = compactionPayload(
+        previousSummary,
+        resource.uri,
+        protectedPromptExcerpts,
+        protection,
+        preserved,
+        toolResultCountsFor(compactedRegion, preserved.preservedIds),
+        summaryRegion,
+      );
       const attempts = compactionAttempts(promptContext, tools, modelPayload, reason);
       let lastError: unknown;
       for (const attempt of attempts) {
@@ -155,6 +197,16 @@ export class ContextCompressor {
         protected_prompt_count: protectedPromptExcerpts.length,
         protected_user_prompts: protectedPromptExcerpts,
         protected_loops: protection.protected_loops.map(boundProtectedLoop),
+        preserved_tail_event_ids: preserved.tailIds,
+        preserved_run_anchor_event_ids: preserved.runAnchorIds,
+        preserved_tail_events: preserved.preservedIds.size,
+        preserved_rounds: preserved.preservedRoundCount,
+        preserved_run_anchor_count: preserved.preservedRunAnchorCount,
+        preserved_tail_budget_tokens: preserved.budgetTokens,
+        preserved_tail_estimated_tokens: preserved.estimatedTokens,
+        preserved_tail_dropped_heavy_rounds: preserved.droppedHeavyRounds,
+        preserved_tail_dropped_budget_rounds: preserved.droppedBudgetRounds,
+        preserved_policy: preserved.policy,
         summary_strategy: summaryStrategy,
         compacted_through_event_id: compactedThroughEventId,
       },
@@ -169,6 +221,9 @@ export class ContextCompressor {
       resource_uri: resource.uri,
       archived_events: compactedRegion.length,
       protected_tail_events: protection.protected_event_count,
+      preserved_tail_events: preserved.preservedIds.size,
+      preserved_rounds: preserved.preservedRoundCount,
+      preserved_run_anchor_count: preserved.preservedRunAnchorCount,
       protected_user_prompts: protectedPromptExcerpts,
     };
   }
@@ -186,7 +241,8 @@ function compactionAttempts(promptContext: PromptContext, tools: ToolDefinition[
       content: [
         "<context.compaction.request>",
         "Summarize the session state visible in the conversation above and the bounded lifecycle evidence below.",
-        "The JSON payload is the authoritative compacted event set; use the preceding conversation only to preserve cached prefix and resolve references. Do not retain old user prompts unless they appear in protected_user_prompts or compacted_events.",
+        "The JSON payload is the authoritative event set to summarize. A preserved tail will be replayed verbatim after this summary; do not duplicate preserved raw details except where needed for continuity.",
+        "Use the preceding conversation only to preserve cached prefix and resolve references. Do not retain old user prompts unless they appear in protected_user_prompts or compacted_events.",
         "Merge previous_summary with new evidence; do not replace it or discard unresolved objectives, active goal state, blockers, verification evidence, or next actions.",
         "Use precise, dense language to maximize recoverable information while removing filler. Compress wording, not facts.",
         "Use exactly these headings: Goal, Open Objectives, Constraints And Preferences, Progress, Key Decisions, Files And Code, Commands And Outcomes, Errors And Fixes, Critical Context, Next Steps, Resources And Evidence.",
@@ -213,7 +269,7 @@ function standaloneCompactionAttempt(payload: JsonObject): CompactionAttempt {
     {
       role: "system",
       content:
-        "Summarize Inferoa session state as a precise, dense, recoverable memory. Merge previous_summary with new evidence; do not replace it or discard unresolved objectives, active goal state, blockers, verification evidence, next actions, exact paths, commands, endpoint names, resource URIs, or protected user prompt excerpts. Use exactly these headings: Goal, Open Objectives, Constraints And Preferences, Progress, Key Decisions, Files And Code, Commands And Outcomes, Errors And Fixes, Critical Context, Next Steps, Resources And Evidence. For active goal or long-running work, preserve the goal objective, current status, active step, blockers, verification evidence, and the next concrete action. Compress wording, not facts. Do not invent facts.",
+        "Summarize Inferoa session state as a precise, dense, recoverable memory. A preserved tail may be replayed verbatim after this summary; summarize the non-preserved compacted_events and do not duplicate preserved raw details except where needed for continuity. Merge previous_summary with new evidence; do not replace it or discard unresolved objectives, active goal state, blockers, verification evidence, next actions, exact paths, commands, endpoint names, resource URIs, or protected user prompt excerpts. Use exactly these headings: Goal, Open Objectives, Constraints And Preferences, Progress, Key Decisions, Files And Code, Commands And Outcomes, Errors And Fixes, Critical Context, Next Steps, Resources And Evidence. For active goal or long-running work, preserve the goal objective, current status, active step, blockers, verification evidence, and the next concrete action. Compress wording, not facts. Do not invent facts.",
     },
     {
       role: "user",
@@ -235,6 +291,8 @@ function compactionPayload(
   archiveResourceUri: string,
   protectedPromptExcerpts: string[],
   protection: ProtectedLoopContext,
+  preserved: PreservedTailSelection,
+  preservedToolResultCounts: Map<string, number>,
   summaryRegion: { id?: number; run_id?: string; type: string; data: JsonObject; created_at?: string }[],
 ): JsonObject {
   return {
@@ -242,8 +300,290 @@ function compactionPayload(
     archive_resource: archiveResourceUri,
     protected_user_prompts: protectedPromptExcerpts,
     protected_loops: protection.protected_loops.map(boundProtectedLoop),
-    compacted_events: summarizeEventsForCompaction(summaryRegion, protection.protected_user_prompts),
+    preserved_tail: {
+      replayed_event_count: preserved.preservedIds.size,
+      replayed_rounds: preserved.preservedRoundCount,
+      budget_tokens: preserved.budgetTokens,
+      estimated_tokens: preserved.estimatedTokens,
+      dropped_heavy_rounds: preserved.droppedHeavyRounds,
+      dropped_budget_rounds: preserved.droppedBudgetRounds,
+    },
+    compacted_events: summarizeEventsForCompaction(summaryRegion, protection.protected_user_prompts, preservedToolResultCounts),
   };
+}
+
+function compactableEventsForNextEpoch(events: SessionEvent[], previousCompaction: SessionEvent | undefined, previousCutoff: number): SessionEvent[] {
+  if (!previousCompaction) {
+    return events.filter((event) => event.type !== "context.compacted");
+  }
+  const previousPreservedIds = preservedEventIdsFromCompaction(previousCompaction);
+  return events.filter((event) => {
+    if (event.type === "context.compacted") {
+      return false;
+    }
+    const id = event.id ?? 0;
+    return id > previousCutoff || previousPreservedIds.has(id);
+  });
+}
+
+function preservedEventIdsFromCompaction(event: SessionEvent): Set<number> {
+  const ids = new Set<number>();
+  addNumberArrayToSet(ids, event.data.preserved_tail_event_ids);
+  addNumberArrayToSet(ids, event.data.preserved_run_anchor_event_ids);
+  return ids;
+}
+
+function addNumberArrayToSet(target: Set<number>, value: unknown): void {
+  if (!Array.isArray(value)) {
+    return;
+  }
+  for (const item of value) {
+    if (typeof item === "number" && Number.isFinite(item)) {
+      target.add(Math.trunc(item));
+    }
+  }
+}
+
+function toolResultCountsFor(events: SessionEvent[], ids: Set<number>): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const event of events) {
+    if (event.type !== "tool.result" || !ids.has(event.id ?? 0)) {
+      continue;
+    }
+    const runKey = event.run_id ?? "";
+    counts.set(runKey, (counts.get(runKey) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function selectPreservedTailEvents(
+  events: SessionEvent[],
+  promptContext: PromptContext,
+  tools: ToolDefinition[],
+  config: VllmAgentConfig,
+  previousSummary: unknown,
+  options: { activeRunId?: string; currentPrompt?: string },
+): PreservedTailSelection {
+  const budgetTokens = preservedTailBudget(promptContext, tools, config, previousSummary, options.currentPrompt);
+  const rounds = modelCallRounds(events, options.activeRunId);
+  const roundCandidates = dedupeRounds([
+    ...rounds.filter((round) => options.activeRunId && round.runId === options.activeRunId).slice(-PRESERVED_ACTIVE_ROUND_TARGET),
+    ...rounds.slice(-PRESERVED_RECENT_ROUND_TARGET),
+  ]).sort((left, right) => right.responseId - left.responseId);
+  const tailIds = new Set<number>();
+  const selectedRoundRunIds = new Set<string>();
+  let remaining = budgetTokens;
+  let estimatedTokens = 0;
+  let droppedHeavyRounds = 0;
+  let droppedBudgetRounds = 0;
+  let preservedRoundCount = 0;
+  for (const round of roundCandidates) {
+    if (round.estimatedTokens > PRESERVED_SINGLE_ROUND_MAX_TOKENS) {
+      droppedHeavyRounds += 1;
+      continue;
+    }
+    if (round.estimatedTokens > remaining) {
+      droppedBudgetRounds += 1;
+      continue;
+    }
+    for (const event of round.events) {
+      const id = event.id;
+      if (typeof id === "number") {
+        tailIds.add(id);
+      }
+    }
+    if (round.runId) {
+      selectedRoundRunIds.add(round.runId);
+    }
+    remaining -= round.estimatedTokens;
+    estimatedTokens += round.estimatedTokens;
+    preservedRoundCount += 1;
+  }
+
+  const runAnchorIds = new Set<number>();
+  const userPrompts = events.filter((event) => event.type === "user.prompt" && typeof event.data.prompt === "string");
+  for (const event of userPrompts.slice(-PRESERVED_RUN_ANCHOR_COUNT)) {
+    addEventId(runAnchorIds, event);
+  }
+  if (options.activeRunId) {
+    for (const event of userPrompts.filter((event) => event.run_id === options.activeRunId)) {
+      addEventId(runAnchorIds, event);
+    }
+  }
+  for (const runId of selectedRoundRunIds) {
+    const anchor = userPrompts.filter((event) => event.run_id === runId).at(-1);
+    if (anchor) {
+      addEventId(runAnchorIds, anchor);
+    }
+  }
+  if (options.activeRunId) {
+    const activeContext = events.filter((event) => event.run_id === options.activeRunId && event.type === "prompt.context").at(-1);
+    if (activeContext) {
+      addEventId(tailIds, activeContext);
+    }
+  }
+
+  const tailIdArray = [...tailIds].sort((left, right) => left - right);
+  const runAnchorIdArray = [...runAnchorIds].sort((left, right) => left - right);
+  const preservedIds = new Set<number>([...tailIdArray, ...runAnchorIdArray]);
+  return {
+    preservedIds,
+    tailIds: tailIdArray,
+    runAnchorIds: runAnchorIdArray,
+    preservedRoundCount,
+    preservedRunAnchorCount: runAnchorIdArray.length,
+    estimatedTokens,
+    budgetTokens,
+    droppedHeavyRounds,
+    droppedBudgetRounds,
+    policy: {
+      run_anchor_count: PRESERVED_RUN_ANCHOR_COUNT,
+      recent_round_target: PRESERVED_RECENT_ROUND_TARGET,
+      active_round_target: PRESERVED_ACTIVE_ROUND_TARGET,
+      max_ratio: PRESERVED_TAIL_MAX_RATIO,
+      hard_cap_tokens: PRESERVED_TAIL_HARD_CAP_TOKENS,
+      single_round_max_tokens: PRESERVED_SINGLE_ROUND_MAX_TOKENS,
+      safety_buffer_tokens: PRESERVED_TAIL_SAFETY_BUFFER_TOKENS,
+    },
+  };
+}
+
+function addEventId(target: Set<number>, event: SessionEvent): void {
+  if (typeof event.id === "number" && Number.isFinite(event.id)) {
+    target.add(Math.trunc(event.id));
+  }
+}
+
+function preservedTailBudget(
+  promptContext: PromptContext,
+  tools: ToolDefinition[],
+  config: VllmAgentConfig,
+  previousSummary: unknown,
+  currentPrompt: string | undefined,
+): number {
+  const contextWindow = config.model_setup.context_window ?? config.context.context_window;
+  const outputReserve = Math.min(
+    PRESERVED_OUTPUT_RESERVE_MAX_TOKENS,
+    Math.max(PRESERVED_OUTPUT_RESERVE_MIN_TOKENS, Math.floor(contextWindow * 0.125)),
+  );
+  const systemEstimate = estimateTokens(JSON.stringify(promptContext.messages[0] ?? ""));
+  const toolEstimate = estimateTokens(JSON.stringify(tools));
+  const summaryEstimate = typeof previousSummary === "string" && previousSummary.trim() ? estimateTokens(previousSummary) : 2_000;
+  const currentPromptEstimate = currentPrompt ? estimateTokens(currentPrompt) : 0;
+  const remaining = contextWindow - outputReserve - systemEstimate - toolEstimate - summaryEstimate - currentPromptEstimate - PRESERVED_TAIL_SAFETY_BUFFER_TOKENS;
+  return Math.max(0, Math.min(PRESERVED_TAIL_HARD_CAP_TOKENS, Math.floor(contextWindow * PRESERVED_TAIL_MAX_RATIO), remaining));
+}
+
+function modelCallRounds(events: SessionEvent[], activeRunId?: string): ModelCallRound[] {
+  const responses = events.filter(isPreservableModelResponse);
+  const toolResults = events.filter((event) => event.type === "tool.result");
+  const rounds: ModelCallRound[] = [];
+  for (const response of responses) {
+    const responseId = response.id;
+    if (typeof responseId !== "number") {
+      continue;
+    }
+    const eventsForRound: SessionEvent[] = [response];
+    const callIds = toolCallIdsFromResponse(response);
+    for (const result of toolResults) {
+      if (!sameRun(result.run_id, response.run_id)) {
+        continue;
+      }
+      const callId = typeof result.data.tool_call_id === "string" ? result.data.tool_call_id : undefined;
+      if (callId && callIds.has(callId)) {
+        eventsForRound.push(result);
+      }
+    }
+    const nextResponseId = responses.find((event) => sameRun(event.run_id, response.run_id) && (event.id ?? 0) > responseId)?.id ?? Number.POSITIVE_INFINITY;
+    for (const event of events) {
+      const id = event.id ?? 0;
+      if (!sameRun(event.run_id, response.run_id) || id <= responseId || id >= nextResponseId) {
+        continue;
+      }
+      if (event.type === "goal.completion_report" || event.type === "run.completed" || event.type === "run.stopped" || event.type === "run.failed") {
+        eventsForRound.push(event);
+      }
+    }
+    const uniqueEvents = dedupeEvents(eventsForRound).sort((left, right) => (left.id ?? 0) - (right.id ?? 0));
+    const estimatedTokens = uniqueEvents.reduce((total, event) => total + estimateEventPromptTokens(event), 0);
+    const isActive = activeRunId && response.run_id === activeRunId;
+    if (uniqueEvents.length > 1 || isActive || String(response.data.content ?? "").trim()) {
+      rounds.push({ responseId, runId: response.run_id, events: uniqueEvents, estimatedTokens });
+    }
+  }
+  return rounds.sort((left, right) => left.responseId - right.responseId);
+}
+
+function isPreservableModelResponse(event: SessionEvent): boolean {
+  if (event.type !== "model.response.settled") {
+    return false;
+  }
+  const requestClass = typeof event.data.request_class === "string" ? event.data.request_class : undefined;
+  if (requestClass === "compaction" || requestClass === "reflection") {
+    return false;
+  }
+  return true;
+}
+
+function toolCallIdsFromResponse(event: SessionEvent): Set<string> {
+  const ids = new Set<string>();
+  if (!Array.isArray(event.data.tool_calls)) {
+    return ids;
+  }
+  for (const call of event.data.tool_calls) {
+    const object = objectField(call);
+    if (typeof object.id === "string") {
+      ids.add(object.id);
+    }
+  }
+  return ids;
+}
+
+function sameRun(left: string | undefined, right: string | undefined): boolean {
+  return left === right;
+}
+
+function dedupeRounds(rounds: ModelCallRound[]): ModelCallRound[] {
+  const seen = new Set<number>();
+  const out: ModelCallRound[] = [];
+  for (const round of rounds) {
+    if (seen.has(round.responseId)) {
+      continue;
+    }
+    seen.add(round.responseId);
+    out.push(round);
+  }
+  return out;
+}
+
+function dedupeEvents(events: SessionEvent[]): SessionEvent[] {
+  const seen = new Set<number>();
+  const out: SessionEvent[] = [];
+  for (const event of events) {
+    const id = event.id ?? 0;
+    if (seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    out.push(event);
+  }
+  return out;
+}
+
+function estimateEventPromptTokens(event: SessionEvent): number {
+  if (event.type === "model.response.settled") {
+    return estimateTokens(String(event.data.content ?? "") + JSON.stringify(event.data.tool_calls ?? []));
+  }
+  if (event.type === "tool.result") {
+    return estimateTokens(JSON.stringify(event.data.result ?? event.data));
+  }
+  if (event.type === "user.prompt") {
+    return estimateTokens(String(event.data.prompt ?? ""));
+  }
+  if (event.type === "prompt.context" && Array.isArray(event.data.messages)) {
+    return estimateTokens(JSON.stringify(event.data.messages));
+  }
+  return estimateTokens(JSON.stringify(event.data));
 }
 
 interface ProtectedLoopContext {
@@ -332,9 +672,10 @@ function summarizeLoop(events: { type: string; data: JsonObject; created_at?: st
 function summarizeEventsForCompaction(
   events: { type: string; data: JsonObject; created_at?: string; run_id?: string }[],
   protectedUserPrompts: string[],
+  initialToolResultCounts: Map<string, number> = new Map(),
 ): JsonObject[] {
   const summaries: JsonObject[] = [];
-  const toolResultCounts = new Map<string, number>();
+  const toolResultCounts = new Map(initialToolResultCounts);
   const omittedToolResults = new Map<string, number>();
   for (const event of events) {
     if (event.type === "user.prompt" && !protectedUserPrompts.includes(String(event.data.prompt ?? ""))) {
