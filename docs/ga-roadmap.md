@@ -3,312 +3,221 @@
 Inferoa GA is scoped around a credible public evidence chain for an
 inference-native tokenmaxxing agent harness for loop engineering.
 
-The GA bar is not "all possible loop-engineering integrations are complete."
-The GA bar is that Inferoa can repeatedly close real loop tasks, verify those
-closures with durable evidence, show tokenmaxxing impact, and use Semantic
-Router-oriented inference signals as part of the loop workload.
+The GA bar is not broad feature coverage. The GA bar is a working loop system
+that can close real tasks, verify them with durable evidence, expose
+tokenmaxxing impact, and provide Semantic Router-ready inference workload
+signals.
 
-## Positioning
-
-Inferoa's GA claim is:
+## GA Claim
 
 ```text
 Inference-native Tokenmaxxing Agent Harness for Loop Engineering
 ```
 
-That claim has three testable parts:
+The claim has three proof obligations:
 
-1. Loop engineering: a task is not complete because the model says so. It is
-   complete when a durable loop records the goal, bounded work units, attempts,
-   verification evidence, decisions, and completion proof.
-2. Tokenmaxxing: the harness improves useful work per token by preserving
-   prompt-prefix stability, bounding mutable context, recording cache evidence,
-   compressing safely, and measuring token/cost pressure.
-3. Inference-native routing: the loop exposes workload signals that can be used
-   by vLLM Semantic Router policy and model selection, instead of treating every
-   model call as generic chat traffic.
+1. **Loop engineering**: the system carries the goal, work unit, attempt,
+   verification, memory, and next decision instead of relying on manual
+   prompt-by-prompt steering.
+2. **Tokenmaxxing**: the harness shows useful work per token through prompt
+   stability, bounded context, cache evidence, compression continuity, and
+   baseline comparison.
+3. **Inference-native routing**: loop workload signals are structured enough
+   for SR model-selection policy rather than treating every model request as
+   generic chat traffic.
 
-GA should be small but hard. The first public evidence set should be
-reproducible, explainable, and grounded in real tasks rather than broad
-leaderboard coverage.
+## Priority Model
 
-## Success Standard
+GitHub issues use explicit priority labels:
 
-GA uses three evidence layers together:
+| Priority | Meaning |
+| --- | --- |
+| `priority:p0-blocker` | Blocks the first credible GA evidence slice or a core GA claim |
+| `priority:p1-ga` | Required for GA, but not blocking the first closed evidence slice |
+| `priority:p2-followup` | Useful follow-up or release narrative work after the core proof |
 
-| Layer | Purpose | GA expectation |
-| --- | --- | --- |
-| Absolute gates | Prevent release without working software | Build, full tests, schema checks, curated eval smoke, and real endpoint acceptance pass |
-| Comparative proof | Support tokenmaxxing and SR claims | Baseline vs Inferoa traces compare pass rate, token pressure, cache stability, retries, and route choices |
-| Case studies | Explain loop engineering closure | At least three end-to-end examples show goal, attempts, verifier, context/token evidence, decision, and final proof |
-
-No single benchmark score is the product proof. GA requires a coherent evidence
-chain across the harness.
+Milestones are sequencing groups, not priority. P0 issues can appear in M0, M1,
+or M2 when they are needed for the first credible evidence chain.
 
 ## Milestones
 
-### GA-M0 Evidence Contract
+### GA-M0 First Closed Loop Evidence Slice
 
-Define the GA evidence contract and GitHub execution structure.
+Goal: run one real loop task and emit a valid GA evidence artifact.
+
+This milestone replaces the earlier internal "Evidence Contract" framing. Docs,
+labels, and issue setup are already done; M0 now means a runnable closed-loop
+slice.
 
 Exit criteria:
 
-- `docs/ga-roadmap.md` is the canonical roadmap.
-- `docs/ga-github-issues.md` contains the exact milestone, label, and issue
-  structure.
-- GitHub labels and milestones exist.
-- The GA eval result record is specified and can represent Terminal-Bench,
-  SWE-bench, internal corpus, SR replay, and final acceptance results.
-- The release gate distinguishes hard pass criteria from comparative metrics
-  and narrative case-study evidence.
+- `ga-eval/v1` schema, writer, validator, artifact layout, and fixtures exist.
+- `GoalLoopView` and loop metrics can be projected into `ga-eval/v1`.
+- One internal real-loop fixture runs from a clean temp workspace.
+- The fixture records goal, horizon, attempt, hard verifier, tokenmaxxing
+  fields, and SR feature-vector fields.
+- The artifact validates and has a reproduction command.
+
+P0 issues:
+
+- #8 `[GA-M0][Epic] First closed loop evidence slice`
+- #9 Define GA loop-closure rubric and evidence tiers
+- #10 Implement `ga-eval/v1` schema and result writer
+- #11 Implement `ga-eval` artifact validator command
+- #33 Project `GoalLoopView` and loop metrics into `ga-eval/v1`
+- #34 Add first internal real-loop closed evidence fixture
+- #35 Add validator fixtures for pass, fail, blocked, and error
+- #36 Add GA artifact directory layout and manifest index
 
 ### GA-M1 Terminal-Bench Loop Eval
 
-Adapt a curated 10-task Terminal-Bench set as the first external loop eval
-anchor.
+Goal: adapt Terminal-Bench through one vertical slice first, then expand to a
+curated 10-task proof set.
 
 Why Terminal-Bench first:
 
-- it is closest to Inferoa's terminal agent harness surface;
-- tasks include an instruction, environment, verification script, and reference
+- it is closest to Inferoa's terminal harness surface;
+- tasks have instructions, environments, verifier scripts, and reference
   solution shape;
-- it can prove end-to-end task closure without requiring the full SWE-bench
-  patch infrastructure first.
+- it can prove end-to-end closure before the heavier SWE patch pipeline.
 
 Exit criteria:
 
-- A curated 10-task Terminal-Bench set is recorded with selection rationale.
-- Inferoa can run each selected task through a stable adapter without changing
-  product runtime semantics.
-- Each run emits GA eval result records with loop, verifier, tokenmaxxing, and
-  artifact evidence.
-- Results include a baseline comparison against a simple non-loop or reduced
-  tokenmaxxing path.
+- One selected task runs through Inferoa and emits `ga-eval/v1`.
+- A baseline runner emits comparable `ga-eval/v1`.
+- Tokenmaxxing delta can be computed from paired results.
+- A curated 10-task manifest exists before broad adapter tuning.
+- Smoke validation covers success and setup/verifier/timeout failures.
+
+P0 issues:
+
+- #15 Implement 1-task Terminal-Bench vertical slice adapter
+- #17 Compute baseline vs Inferoa tokenmaxxing delta from eval results
+- #37 Add baseline runner for Terminal-Bench comparison
+
+P1 issues:
+
+- #13 Terminal-Bench loop eval track
+- #14 Curate Terminal-Bench 10-task manifest
+- #16 Add Terminal-Bench smoke validation command
+- #38 Materialize Terminal-Bench task workspaces in managed worktrees
+- #39 Add adapter failure-mode fixtures for setup, verifier, and timeout
 
 ### GA-M2 Tokenmaxxing + SR Policy
 
-Make Semantic Router a core GA track through `Trace -> Policy -> SR`.
+Goal: make SR model selection a core GA proof line through
+`Trace -> Policy -> SR`.
 
-This milestone does not start by hard-coding policy into the product. It first
-extracts routing signals from loop traces, evaluates policy offline, then sends
-stable metadata into the live SR path.
+The product should not start by hard-coding live route policy. First extract
+feature vectors from loop traces, replay policies offline, then promote stable
+fields into live SR metadata and route evidence capture.
 
 Exit criteria:
 
-- Loop eval traces expose routing feature candidates.
-- Offline replay compares baseline route choice against a candidate SR policy.
-- The live model path sends stable session and loop-pressure metadata to SR
-  without leaking bulky task context.
-- Tokenmaxxing reports include route choice, route rationale fields when
-  available, token/cache pressure, and model-selection pressure.
+- Loop traces produce bounded SR route feature vectors per model request.
+- Offline replay compares baseline and candidate route policies.
+- Replay report shows cost/latency proxy, pass preservation, verifier strength,
+  and self-hosted route ratio.
+- Live SR request path receives stable metadata without bulky task context.
+- Route/model evidence is captured when SR exposes headers or metadata.
+
+P0 issues:
+
+- #18 Trace -> Policy -> SR model-selection evidence
+- #19 Define SR loop workload feature set from traces
+- #20 Implement offline SR route-policy replay over `ga-eval` traces
+- #21 Add tests for SR metadata stability and cache-unavailable semantics
+- #22 Pass stable loop workload metadata to SR request path
+- #40 Record SR route feature vectors per model request
+- #41 Capture SR selected route and model evidence from responses
+- #42 Generate SR route policy replay report
+- #43 Add offline route replay fixtures for cost and quality guardrails
 
 ### GA-M3 SWE-bench + Internal Corpus
 
-Add SWE-bench smoke coverage and an internal real-loop corpus.
+Goal: add coding issue smoke coverage and a repeatable internal corpus for
+regression, self-improve, compression, verifier, and tokenmaxxing behavior.
 
-Why this is after Terminal-Bench and SR trace work:
-
-- SWE-bench and SWE-bench Pro are important for the coding-agent brand, but the
-  patch and verification pipeline is heavier.
-- Internal corpus tasks are cheaper and should be used as a regression and
-  self-improve control group, not as the sole public proof.
+SWE-bench is important for the coding-agent brand, but it should follow the
+closed evidence slice and Terminal/SR foundations. The internal corpus is the
+control group for repeatability and self-improve impact.
 
 Exit criteria:
 
-- A 3-5 task SWE-bench or SWE-bench Pro smoke set runs through the same GA eval
-  result shape.
-- A 10-20 task internal corpus covers loop completion, verifier gates,
-  self-improve impact, context compression, tokenmaxxing regressions, and SR
-  replay.
-- Internal corpus runs prove that learned Loop Skill and Workspace Skill changes
-  affect later loop behavior with verifier-backed evidence.
+- 3-5 SWE-bench or SWE-bench Pro smoke tasks are selected and at least one runs.
+- Internal real-loop corpus has a taxonomy, manifest, runner, and 3-task smoke
+  subset.
+- Self-improve impact is measured across corpus tasks, not only one hand-built
+  case.
+- Eval tasks that mutate repositories run in managed worktrees.
+- Maker/checker policy is explicit for eval tasks and records checker use or
+  skip reason.
+
+P1 issues:
+
+- #23 SWE-bench smoke and internal real-loop corpus
+- #24 Select 3-5 SWE-bench smoke tasks
+- #25 Implement SWE-bench smoke adapter
+- #26 Measure self-improve impact across internal corpus
+- #27 Persist GA corpus artifact index and patch reports
+- #44 Define internal real-loop corpus taxonomy and manifest
+- #45 Implement internal corpus runner
+- #46 Run GA eval tasks in managed worktrees
+- #47 Add maker/checker policy for eval tasks
+- #48 Add internal corpus smoke tasks for verifier, compression, and
+  self-improve
 
 ### GA-M4 Acceptance & Release
 
-Run final real-endpoint acceptance and prepare release artifacts.
+Goal: aggregate evidence, run real-endpoint acceptance, and publish only claims
+backed by result artifacts.
 
 Exit criteria:
 
-- `npm run build` passes.
-- `npm test` passes.
-- Curated GA eval gates pass.
-- Real endpoint acceptance runs with configured direct vLLM, SR, and Omni
-  endpoints where available.
-- The final evidence report records endpoint details, model names, loop trace,
-  token/cache evidence, context compression evidence, route metadata, verifier
-  results, changed files, and artifacts.
-- Release notes and public docs explain what was proven and what remains future
-  work.
+- Build and tests pass.
+- GA evidence index validates all required result artifacts.
+- Final acceptance report includes direct vLLM, SR, and Omni evidence where
+  available.
+- Final comparison explains consistency or gaps across Terminal-Bench, SWE,
+  internal corpus, SR replay, and real-endpoint acceptance.
+- Public docs and release notes link claims to evidence and mark limitations.
 
-## Capability Modules
+P1 issues:
 
-Issues use capability modules rather than file-path modules.
+- #28 Real-endpoint acceptance and release readiness
+- #30 Generate final acceptance evidence report from `ga-eval` artifacts
+- #31 Add GA release gate command
+- #49 Generate GA evidence index from `ga-eval` artifacts
+- #50 Add evidence index consistency checks
+- #51 Compare final acceptance against Terminal, SWE, and internal evidence
 
-| Module | Label | Responsibility |
+P2 issues:
+
+- #29 Write GA evidence narrative after reports exist
+- #32 Prepare GA release docs from evidence report
+
+## Capability Gaps Driving The Roadmap
+
+The current codebase already has the first goal-native loop closure: goal
+horizons, session/event memory, verification records, skills, automation,
+worktree isolation, checker roles, self-improve, and tokenmaxxing observability.
+The GA roadmap focuses on the remaining gaps that block a credible public proof.
+
+| Gap | Why It Matters | Roadmap Response |
 | --- | --- | --- |
-| Loop Control | `area:loop-control` | Goal, horizon, attempt, verifier, decision, HIL, inbox, and completion gates |
-| Evaluation Harness | `area:evaluation-harness` | Benchmark adapters, task corpus, result schema, artifact layout, reproducibility |
-| Tokenmaxxing + SR | `area:tokenmaxxing-sr` | Prompt/cache/context telemetry, route features, SR replay, live route metadata |
-| Self-Improve | `area:self-improve` | Learning signals, Loop Skill, Workspace Skill, replay gates, post-adoption impact |
-| Release Ops | `area:release-ops` | GitHub metadata, release gates, final acceptance, docs, issue closure |
-
-Every task issue also carries one task-kind label:
-
-- `kind:research`
-- `kind:evaluation`
-- `kind:testing`
-- `kind:engineering`
-
-## GA Eval Result Record
-
-The GA eval result record is the minimum common shape for Terminal-Bench,
-SWE-bench, internal corpus, SR replay, and final acceptance evidence.
-
-```ts
-type GaBenchmarkSource =
-  | "terminal-bench"
-  | "swe-bench"
-  | "swe-bench-pro"
-  | "internal-corpus"
-  | "sr-replay"
-  | "final-acceptance";
-
-type GaEvalVerdict = "pass" | "fail" | "partial" | "blocked" | "error";
-
-interface GaEvalResult {
-  schema_version: "ga-eval/v1";
-  result_id: string;
-  created_at: string;
-  workspace_id: string;
-  source: GaBenchmarkSource;
-  task_id: string;
-  task_title: string;
-  task_suite?: string;
-  task_tags: string[];
-
-  command: string;
-  reproduction_command: string;
-  artifact_dir: string;
-
-  loop: {
-    session_id?: string;
-    goal_id?: string;
-    goal_kind?: "task" | "research";
-    horizon_generations: number[];
-    attempt_run_ids: string[];
-    verifier_run_ids: string[];
-    final_status: "complete" | "paused" | "blocked" | "failed" | "dropped";
-  };
-
-  verification: {
-    verdict: GaEvalVerdict;
-    verifier_family: string[];
-    hard_passes: number;
-    failures: number;
-    summary: string;
-    evidence_refs: string[];
-  };
-
-  tokenmaxxing: {
-    model_calls: number;
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-    cached_prompt_tokens?: number;
-    cache_hit_rate?: number;
-    prompt_epoch_count: number;
-    tool_schema_hash_count: number;
-    compaction_count: number;
-    context_pressure_max?: number;
-    managed_resource_count: number;
-  };
-
-  sr: {
-    route_policy?: string;
-    selected_models: string[];
-    route_replay_baseline?: string;
-    route_replay_candidate?: string;
-    route_replay_delta?: Record<string, number>;
-    metadata_fields: string[];
-  };
-
-  artifacts: {
-    patch_refs: string[];
-    log_refs: string[];
-    resource_refs: string[];
-    media_refs: string[];
-    report_refs: string[];
-  };
-}
-```
-
-Adapters may store richer source-specific details next to this file, but this
-record is the cross-suite contract.
-
-## SR Routing Feature Candidates
-
-SR policy research should start from trace features and only promote stable
-fields into the live path.
-
-Candidate fields:
-
-- request class: interactive, reflection, verification, compaction, research,
-  self-improve;
-- goal kind: task or research;
-- verifier phase: none, proposed, running, failed, hard-pass, human-review;
-- horizon generation and attempt count;
-- context pressure and compaction proximity;
-- prompt epoch stability and tool schema hash stability;
-- cached prompt tokens and cache hit rate when exposed by the endpoint;
-- tool-heavy vs reasoning-heavy recent steps;
-- shell/test/code-intelligence/media tool mix;
-- privacy or self-hosting preference;
-- latency and cost budget;
-- background/unattended vs foreground/HIL path;
-- final acceptance or release-gate path.
-
-Live metadata must stay small, deterministic, and stable enough to preserve
-prefix-cache discipline. Bulky task evidence belongs in artifacts and traces,
-not in routing headers.
-
-## Benchmark Adapter Boundaries
-
-Benchmark adapters must stay separate from product runtime code.
-
-Rules:
-
-- invoke Inferoa through stable CLI or runtime entrypoints;
-- create isolated workspaces or worktrees per task;
-- store results in ignored evidence output directories;
-- never make benchmark-only behavior part of normal `/loop` semantics;
-- emit `GaEvalResult` plus source-specific raw logs;
-- support dry-run and selected-task execution;
-- preserve enough metadata to reproduce the result.
-
-## Release Gates
-
-GA release is blocked until these gates are satisfied:
-
-1. Build and unit test gate: `npm run build` and `npm test`.
-2. Evidence schema gate: GA result records validate against `ga-eval/v1`.
-3. Terminal-Bench gate: curated 10-task run emits reproducible artifacts and
-   records pass/fail outcomes.
-4. SR replay gate: offline policy replay has baseline and candidate results
-   over GA traces.
-5. SWE/internal gate: SWE smoke and internal corpus emit comparable result
-   records.
-6. Acceptance gate: real endpoint acceptance records vLLM, SR, Omni, context,
-   token/cache, and verifier evidence.
-7. Documentation gate: docs and release notes state what is proven, what is
-   partial, and what remains future work.
+| No common GA evidence artifact | Tests and demos cannot be compared or released as proof | `ga-eval/v1`, projector, validator, artifact index |
+| Eval path is not yet a loop workload | Benchmarks must prove goal/horizon/attempt/verifier closure, not only command success | internal closed slice, Terminal vertical slice, SWE smoke |
+| Tokenmaxxing is observable but not yet comparative | GA claims need baseline-vs-Inferoa deltas | baseline runner and tokenmaxxing delta reports |
+| SR only sees shallow metadata today | Model selection needs loop workload features | feature vectors, replay, live metadata, route capture |
+| Self-improve proof is narrow | One case does not prove corpus-level impact | internal corpus and impact measurement |
+| Maker/checker policy is not default for eval | Reflection-only completion is too weak for unattended proof | eval maker/checker policy and verifier gates |
+| Release evidence is fragmented | Public GA claims need traceable artifacts | evidence index and final acceptance report |
 
 ## Non-Goals For GA
 
-- Do not build a hosted dashboard.
-- Do not make broad connector coverage a GA blocker.
-- Do not auto-merge, publish, or deploy without explicit configured policy.
-- Do not claim large benchmark coverage from small curated runs.
-- Do not treat reflection-only evidence as a hard verifier.
-- Do not optimize model weights.
-- Do not require cross-repository Semantic Router changes before trace-backed
-  policy evidence exists.
+- Hosted dashboards.
+- Broad connector coverage beyond the workflows needed for GA evidence.
+- Auto-merge, publish, or deploy without explicit configured policy.
+- Large leaderboard claims from small curated runs.
+- Treating reflection-only evidence as a hard verifier.
+- Cross-repository SR changes before trace-backed policy evidence exists.
