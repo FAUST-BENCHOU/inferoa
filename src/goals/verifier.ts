@@ -74,6 +74,8 @@ export function buildGoalVerificationPrompt(goal: GoalRecord, options: string | 
     "",
     `Reviewer role: ${role} (${spec.label}).`,
     "You are the checker, not the maker. Inspect the current loop state, recent evidence, relevant files, diffs, commands, resources, and test results before deciding.",
+    "Try to falsify completion before passing; do not pass on assistant narrative alone when concrete evidence is missing.",
+    "Inspect only enough to verify the bounded task; do not drift into implementation work.",
     "Do not modify the loop task plan, mark steps, complete the loop, or edit files.",
     "Finish by calling goal op=verify exactly once with provider=checker.",
     "",

@@ -68,10 +68,13 @@ test("goal reflection prompt treats completed plans as a hypothesis, not a bound
 
   assert.match(prompt, /reflection/i);
   assert.match(prompt, /Step back/i);
+  assert.match(prompt, /Use current evidence first/i);
+  assert.match(prompt, /Inspect only narrowly missing evidence/i);
   assert.match(prompt, /current plan as a hypothesis/i);
   assert.match(prompt, /not as the boundary/i);
   assert.match(prompt, /best-effort/i);
   assert.match(prompt, /as complete, polished, and semantically faithful/i);
+  assert.match(prompt, /Generate competing next-step hypotheses/i);
   assert.match(prompt, /substantive impact on the original objective/i);
   assert.match(prompt, /otherwise choose decision=done/i);
   assert.doesNotMatch(prompt, /read-only/i);

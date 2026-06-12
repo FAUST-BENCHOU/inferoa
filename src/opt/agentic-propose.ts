@@ -156,6 +156,23 @@ export const SELF_IMPROVE_OPTIMIZER_TOOL_NAMES = [
   "skill_read",
 ] as const;
 
+const AGENTIC_OPTIMIZER_SYSTEM_LINES = [
+  "You are the Inferoa self-improve optimizer.",
+  "This is a proposal-only learning session, not a coding task.",
+  "Never modify workspace files, run shell commands, enable or disable skills, spawn subagents, update goals, or write notes.",
+  "Use only the read-only tools exposed in this session when extra context is necessary.",
+  "Reason across evidence first: identify recurring failure modes, competing explanations, and whether a rule would have prevented the issue.",
+  "Return only JSON. Prefer {observations, failure_modes, edits, rejected_signals}; edits may contain string or structured content.",
+  "Write bounded Loop Skill or Workspace Skill policy edits, not whole skill templates.",
+  "Prefer small triggerable rules with concrete activation conditions, expected_behavior_change, and eval_plan.",
+  "Do not propose source-code patches, diffs, or implementation changes; convert code findings into future loop/workspace behavior rules.",
+  "Use edit target as the string loop_skill or workspace_skill, not a source file object.",
+  "Every edit must cite source_signal_ids or source_event_ids from the evidence packet; use target loop_skill or workspace_skill.",
+  "Do not accept soft-only evidence as validation.",
+  "Reject one-off, weak, reflection-only, or uncited signals instead of generalizing from them.",
+  "If the evidence is insufficient, return {\"edits\":[],\"rejected_signals\":[...]} instead of attempting implementation.",
+];
+
 export function buildAgenticEvidencePacket(store: SessionStore, workspace: WorkspaceIdentity): AgenticEvidencePacket {
   recordGoalLearningSignals(store, workspace);
   const sessions: AgenticEvidenceSession[] = [];
@@ -798,17 +815,7 @@ function numberArray(value: unknown): number[] | undefined {
 
 function runtimeOptimizerPrompt(packet: AgenticEvidencePacket): string {
   return [
-    "You are the Inferoa self-improve optimizer.",
-    "This is a proposal-only learning session, not a coding task.",
-    "Never modify workspace files, run shell commands, enable or disable skills, spawn subagents, update goals, or write notes.",
-    "Use only the read-only tools exposed in this session when extra context is necessary.",
-    "Return only JSON. Prefer {observations, failure_modes, edits, rejected_signals}; edits may contain string or structured content.",
-    "Write bounded Loop Skill or Workspace Skill policy edits, not whole skill templates.",
-    "Do not propose source-code patches, diffs, or implementation changes; convert code findings into future loop/workspace behavior rules.",
-    "Use edit target as the string loop_skill or workspace_skill, not a source file object.",
-    "Every edit must cite source_signal_ids or source_event_ids from the evidence packet; use target loop_skill or workspace_skill.",
-    "Do not accept soft-only evidence as validation.",
-    "If the evidence is insufficient, return {\"edits\":[],\"rejected_signals\":[...]} instead of attempting implementation.",
+    ...AGENTIC_OPTIMIZER_SYSTEM_LINES,
     "",
     JSON.stringify(packet, null, 2),
   ].join("\n");
@@ -828,15 +835,7 @@ function modelRequest(config: VllmAgentConfig, packet: AgenticEvidencePacket): M
     messages: [
       {
         role: "system",
-        content: [
-          "You are the Inferoa self-improve optimizer.",
-          "Return only JSON. Prefer {observations, failure_modes, edits, rejected_signals}; edits may contain string or structured content.",
-          "Write bounded Loop Skill or Workspace Skill policy edits, not whole skill templates.",
-          "Do not propose source-code patches, diffs, or implementation changes; convert code findings into future loop/workspace behavior rules.",
-          "Use edit target as the string loop_skill or workspace_skill, not a source file object.",
-          "Every edit must cite source_signal_ids or source_event_ids from the packet; use target loop_skill or workspace_skill.",
-          "Do not accept soft-only evidence as validation.",
-        ].join("\n"),
+        content: AGENTIC_OPTIMIZER_SYSTEM_LINES.join("\n"),
       },
       {
         role: "user",

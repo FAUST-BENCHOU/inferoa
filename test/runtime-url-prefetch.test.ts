@@ -179,6 +179,12 @@ test("runtime continues the tool loop after a failed tool result", async () => {
     const secondRequest = modelRequests[1]!;
     const messages = secondRequest.messages as Array<{ role: string; content: string }>;
     assert.ok(messages.some((message) => message.role === "tool" && message.content.includes("read_file_failed")));
+    assert.equal(messages.at(-1)?.content, [
+      "Continue from the tool evidence.",
+      "Failed tool results are diagnostic evidence: adjust arguments, choose another path, or record the blocker; do not repeat the exact same failed call unless an input changed.",
+      "Keep calling tools while independent inspection, edits, tests, web evidence, or verification can materially improve the result.",
+      "Finish only when the objective can be answered with evidence or a concrete blocker is clear.",
+    ].join(" "));
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });

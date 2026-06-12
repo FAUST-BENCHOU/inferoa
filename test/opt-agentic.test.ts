@@ -306,6 +306,9 @@ test("runtime-backed agentic optimizer records a first-class read-only self-impr
     assert.equal(optimizerToolNames?.includes("run_command"), false);
     assert.match(runtimeCalls[0]?.prompt ?? "", /Return only JSON/);
     assert.match(runtimeCalls[0]?.prompt ?? "", /proposal-only learning session/);
+    assert.match(runtimeCalls[0]?.prompt ?? "", /Reason across evidence first/);
+    assert.match(runtimeCalls[0]?.prompt ?? "", /Prefer small triggerable rules/);
+    assert.match(runtimeCalls[0]?.prompt ?? "", /Reject one-off, weak, reflection-only, or uncited signals/);
     assert.match(runtimeCalls[0]?.prompt ?? "", /Do not propose source-code patches/);
   } finally {
     await fixture.cleanup();

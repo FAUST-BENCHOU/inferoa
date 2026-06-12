@@ -47,6 +47,13 @@ import {
   type GoalCompletionReport,
 } from "./goals/state.js";
 
+const TOOL_LOOP_CONTINUATION_PROMPT = [
+  "Continue from the tool evidence.",
+  "Failed tool results are diagnostic evidence: adjust arguments, choose another path, or record the blocker; do not repeat the exact same failed call unless an input changed.",
+  "Keep calling tools while independent inspection, edits, tests, web evidence, or verification can materially improve the result.",
+  "Finish only when the objective can be answered with evidence or a concrete blocker is clear.",
+].join(" ");
+
 export interface RuntimeRunOptions {
   prompt: string;
   session_id?: string;
@@ -495,8 +502,7 @@ export class Runtime {
         if (shouldYieldAfterToolCalls) {
           break;
         }
-        currentPrompt =
-          "Continue the task using the tool results. Failed tool results are evidence, not a reason to stop; use corrected arguments or another available tool when useful. Do not repeat the exact same failed call unless the arguments change. If independent reads, searches, edits, tests, or web fetches remain, keep calling tools; otherwise finish with a concise evidence-based summary.";
+        currentPrompt = TOOL_LOOP_CONTINUATION_PROMPT;
       }
       const finalSessionNow = this.requiredSession(session.session_id);
       const finalPromptContext = this.promptBuilder.build(finalSessionNow, currentPrompt, availableTools, discoveredSkills, runId, enabledSkillNames);

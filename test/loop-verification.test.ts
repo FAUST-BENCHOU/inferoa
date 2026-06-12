@@ -162,6 +162,9 @@ test("goal verifier roles shape prompt and parse explicit role flags", () => {
   const prompt = buildGoalVerificationPrompt(state.goal, parsed);
   assert.match(prompt, /Reviewer role: tests/);
   assert.match(prompt, /test and verification reviewer/);
+  assert.match(prompt, /Try to falsify completion before passing/);
+  assert.match(prompt, /do not pass on assistant narrative alone/);
+  assert.match(prompt, /Inspect only enough to verify the bounded task/);
   assert.match(prompt, /Rubric: Require npm test/);
   const suite = parseGoalVerifierArgs(["--roles", "tests,security,tests", "Require", "evidence"]);
   assert.equal(suite.role, "tests");
