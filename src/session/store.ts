@@ -616,6 +616,10 @@ export class SessionStore {
     return Number(result.lastInsertRowid);
   }
 
+  updateEventData(eventId: number, data: JsonObject): void {
+    this.db.prepare("UPDATE events SET data_json = ? WHERE id = ?").run(JSON.stringify(data), eventId);
+  }
+
   private eventStatus(type: string): string | undefined {
     if (type === "session.locked" || type === "session.unlocked" || type === "session.renamed" || type === "resource.created") return undefined;
     if (type.startsWith("goal.")) return undefined;

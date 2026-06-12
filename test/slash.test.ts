@@ -11,6 +11,13 @@ test("slash parser uses clear as the fresh-session command", () => {
   assert.equal(parsed.error, undefined);
 });
 
+test("slash parser exposes manual context compaction with optional instructions", () => {
+  const compact = parseSlashCommand("/compact focus on test failures and file edits");
+  assert.equal(compact.command?.name, "compact");
+  assert.equal(compact.args, "focus on test failures and file edits");
+  assert.equal(compact.error, undefined);
+});
+
 test("slash parser supports loop chat commands and removes goal", () => {
   const legacyGoal = parseSlashCommand("/goal ship the feature");
   assert.equal(legacyGoal.command, undefined);
@@ -59,6 +66,11 @@ test("slash parser exposes tokenmaxxing without old savings aliases", () => {
   assert.equal(tokenmaxxingSignals.command?.name, "tokenmaxxing");
   assert.equal(tokenmaxxingSignals.args, "signals");
   assert.equal(tokenmaxxingSignals.error, undefined);
+
+  const tokenmaxxingTrend = parseSlashCommand("/tokenmaxxing trend");
+  assert.equal(tokenmaxxingTrend.command?.name, "tokenmaxxing");
+  assert.equal(tokenmaxxingTrend.args, "trend");
+  assert.equal(tokenmaxxingTrend.error, undefined);
 
   for (const legacy of ["activity", "cache", "rtk", "evidence", "history"]) {
     const parsed = parseSlashCommand(`/${legacy}`);
@@ -110,7 +122,7 @@ test("unknown slash command notice is short and neutral", () => {
 test("slash registry exposes chat subcommands for completion", () => {
   assert.deepEqual(
     suggestedSlashCommands().map((item) => item.name),
-    ["setup", "model", "system", "access", "skills", "loop", "inbox", "self-improve", "plan", "tokenmaxxing", "context", "tools", "sessions", "worktree", "doctor", "help", "clear", "resume", "exit"],
+    ["setup", "model", "system", "access", "skills", "loop", "inbox", "self-improve", "plan", "tokenmaxxing", "context", "compact", "tools", "sessions", "worktree", "doctor", "help", "clear", "resume", "exit"],
   );
   assert.equal(slashCommandWithSubcommands("/tools"), "tools");
   assert.equal(slashCommandWithSubcommands("/daemon"), "daemon");

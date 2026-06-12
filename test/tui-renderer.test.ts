@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { SessionStore } from "../src/session/store.js";
 import { renderToolCards, toolTraceAction } from "../src/tui/tool-renderer.js";
-import { stripAnsi } from "../src/tui/ansi.js";
+import { stripAnsi, terminalWidth, visibleWidth } from "../src/tui/ansi.js";
 import type { SessionEvent, WorkspaceIdentity } from "../src/types.js";
 
 test("TUI tool renderer formats shell, diff, and todo cards", async () => {
@@ -132,6 +132,65 @@ test("TUI tool action labels cover built-in tools with concrete wording", () => 
     assert.doesNotMatch(toolTraceAction(tool), /Used tool|Updated skills|Used Omni/);
   }
   assert.equal(toolTraceAction("run_command", false, "card"), "Command failed");
+});
+
+test("TUI tool renderer bounds long command output lines", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-tui-command-output-"));
+  const store = await SessionStore.open(dir);
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_tui_command_output", root: dir, alias: "command-output" };
+    const session = store.createSession(workspace, "command-output");
+    const longJson = JSON.stringify({
+      latestReviews: Array.from({ length: 50 }, (_, index) => ({
+        id: index,
+        body: `review body ${index} ${"x".repeat(80)}`,
+      })),
+    });
+    const events: SessionEvent[] = [
+      {
+        session_id: session.session_id,
+        run_id: "run",
+        type: "tool.call",
+        data: { tool_call_id: "cmd", tool_name: "run_command", arguments: { command: "gh pr view 2170 --json latestReviews" } },
+      },
+      {
+        session_id: session.session_id,
+        run_id: "run",
+        type: "tool.result",
+        data: {
+          tool_call_id: "cmd",
+          tool_name: "run_command",
+          result: {
+            ok: true,
+            summary: "Command exited 0",
+            data: {
+              command: "gh pr view 2170 --json latestReviews",
+              cwd: ".",
+              code: 0,
+              timed_out: false,
+              output: longJson,
+              output_chars: longJson.length,
+              output_truncated: true,
+              output_resource_uri: "resource://session/command-output",
+            },
+            resource_uri: "resource://session/command-output",
+          },
+        },
+      },
+    ];
+
+    const rendered = renderToolCards(events, store, { collapseCompact: false });
+    const plain = stripAnsi(rendered.join("\n"));
+
+    assert.match(plain, /Ran command .*gh pr view 2170/);
+    assert.match(plain, /out \{"latestReviews"/);
+    assert.match(plain, /output truncated/);
+    assert.match(plain, /resource:\/\/session\/command-output/);
+    assert.ok(rendered.every((line) => visibleWidth(line) <= terminalWidth()), rendered.join("\n"));
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("TUI tool renderer labels skill ops without update wording", async () => {

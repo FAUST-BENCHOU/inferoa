@@ -168,6 +168,137 @@ test("model calls within an epoch append new tail messages without rewriting the
     assert.equal(requests.length, 2);
     assert.equal(requests[1]?.data.prompt_epoch_id, requests[0]?.data.prompt_epoch_id);
     assert.equal(requests[1]?.data.tool_schema_hash, requests[0]?.data.tool_schema_hash);
+    assert.equal(requests[0]?.data.prefix_cache_status, "new_epoch");
+    assert.equal(requests[1]?.data.prefix_cache_status, "safe");
+    assert.equal(requests[1]?.data.prefix_cache_parent_prompt_hash, requests[0]?.data.prompt_hash);
+    assert.equal(requests[1]?.data.prefix_cache_checked_messages, requests[0]?.data.prompt_message_count);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+    await server.stop();
+  }
+});
+
+test("tool-loop continuation prompts are persisted so multi-round requests stay prefix-safe", async () => {
+  let calls = 0;
+  const server = captureModelServer((res) => {
+    calls += 1;
+    if (calls <= 2) {
+      writeSse(res, {
+        id: `resp_prefix_tool_${calls}`,
+        model: "prefix-cache-test",
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  id: `call_prefix_read_${calls}`,
+                  type: "function",
+                  function: { name: "read_file", arguments: JSON.stringify({ path: `missing-prefix-file-${calls}.txt` }) },
+                },
+              ],
+            },
+          },
+        ],
+      });
+      writeSse(res, { choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 20 + calls, completion_tokens: 2 } });
+      return;
+    }
+    writeSse(res, { id: "resp_prefix_done", model: "prefix-cache-test", choices: [{ delta: { content: "prefix stable" } }] });
+    writeSse(res, { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 30, completion_tokens: 3 } });
+  });
+  await server.start();
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-prefix-multiround-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_prefix_multiround", root: dir, alias: "prefix-multiround" };
+    const runtime = new Runtime(config(server.baseUrl), workspace, store);
+
+    const result = await runtime.run({ prompt: "read two missing files then finish" });
+
+    assert.equal(result.content, "prefix stable");
+    assert.equal(server.requests.length, 3);
+    const firstMessages = messages(server.requests[0]!).map((message) => JSON.stringify(message));
+    const secondMessages = messages(server.requests[1]!).map((message) => JSON.stringify(message));
+    const thirdMessages = messages(server.requests[2]!).map((message) => JSON.stringify(message));
+    assert.deepEqual(secondMessages.slice(0, firstMessages.length), firstMessages);
+    assert.deepEqual(thirdMessages.slice(0, secondMessages.length), secondMessages);
+    assert.match(JSON.stringify(server.requests[1]), /Continue from the tool evidence/);
+    assert.match(JSON.stringify(server.requests[2]), /Continue from the tool evidence/);
+
+    const requests = modelRequests(store, result.session.session_id);
+    assert.equal(requests.length, 3);
+    assert.equal(requests[1]?.data.prefix_cache_status, "safe");
+    assert.equal(requests[2]?.data.prefix_cache_status, "safe");
+    assert.equal(store.listEvents(result.session.session_id).filter((event) => event.type === "user.prompt" && event.data.synthetic === "tool-loop-continuation").length, 2);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+    await server.stop();
+  }
+});
+
+test("cross-run prompts preserve tool-loop prefix history and skip hidden reflection branches", async () => {
+  let calls = 0;
+  const server = captureModelServer((res) => {
+    calls += 1;
+    if (calls === 1) {
+      writeSse(res, {
+        id: "resp_cross_run_tool",
+        model: "prefix-cache-test",
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  id: "call_cross_run_read",
+                  type: "function",
+                  function: { name: "read_file", arguments: JSON.stringify({ path: "missing-cross-run-file.txt" }) },
+                },
+              ],
+            },
+          },
+        ],
+      });
+      writeSse(res, { choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 20, completion_tokens: 2 } });
+      return;
+    }
+    writeSse(res, { id: `resp_cross_run_done_${calls}`, model: "prefix-cache-test", choices: [{ delta: { content: `done ${calls}` } }] });
+    writeSse(res, { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 30 + calls, completion_tokens: 3 } });
+  });
+  await server.start();
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-prefix-cross-run-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_prefix_cross_run", root: dir, alias: "prefix-cross-run" };
+    const runtime = new Runtime(config(server.baseUrl), workspace, store);
+
+    const first = await runtime.run({ prompt: "read a missing file before finishing" });
+    await runtime.run({
+      session_id: first.session.session_id,
+      prompt: "run a hidden reflection pass",
+      request_class: "reflection",
+      visibility: "internal",
+    });
+    await runtime.run({ session_id: first.session.session_id, prompt: "continue normal work" });
+
+    assert.equal(server.requests.length, 4);
+    const toolLoopMessages = messages(server.requests[1]!).map((message) => JSON.stringify(message));
+    const reflectionMessages = messages(server.requests[2]!).map((message) => JSON.stringify(message));
+    const interactiveMessages = messages(server.requests[3]!).map((message) => JSON.stringify(message));
+    assert.deepEqual(reflectionMessages.slice(0, toolLoopMessages.length), toolLoopMessages);
+    assert.deepEqual(interactiveMessages.slice(0, toolLoopMessages.length), toolLoopMessages);
+
+    const requests = modelRequests(store, first.session.session_id);
+    assert.equal(requests.length, 4);
+    assert.equal(requests[0]?.data.prefix_cache_status, "new_epoch");
+    assert.equal(requests[1]?.data.prefix_cache_status, "safe");
+    assert.equal(requests[2]?.data.prefix_cache_status, "safe");
+    assert.equal(requests[3]?.data.prefix_cache_status, "safe");
+    assert.equal(requests[2]?.data.prefix_cache_parent_prompt_hash, requests[1]?.data.prompt_hash);
+    assert.equal(requests[3]?.data.prefix_cache_parent_prompt_hash, requests[1]?.data.prompt_hash);
+    assert.equal(requests[3]?.data.prefix_cache_reason, "prior_prompt_is_prefix");
+    assert.equal(requests[3]?.data.prefix_cache_skipped_requests, 1);
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });

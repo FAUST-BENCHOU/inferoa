@@ -395,13 +395,13 @@ const DEFINITIONS = [
   },
   {
     name: "read_process",
-    description: "Read recent output from a background process.",
+    description: "Read bounded output from a background process started by run_command with background=true. Poll with since_seq/next_seq; keep max_bytes small unless the user asks for full logs.",
     permission: "read",
     parameters: objectSchema(
       {
         process_id: string("Session-scoped process id."),
         since_seq: number("Read output after this sequence."),
-        max_bytes: number("Maximum bytes."),
+        max_bytes: number("Maximum bytes to return. Prefer 12000 or less for readable output."),
       },
       ["process_id"],
     ),
@@ -434,15 +434,15 @@ const DEFINITIONS = [
   },
   {
     name: "run_command",
-    description: "Run a bounded shell command, optionally as a background process.",
+    description: "Run a bounded shell command. Use background=false or omit it for short synchronous commands that should finish quickly. Use background=true for long-running, polling, watch, dev-server, test-suite, or command-log jobs; it returns a stable process_id immediately so the session is not blocked, then read output with read_process and stop it with stop_process. Command output is bounded; full large output is stored as a managed resource.",
     permission: "shell",
     parameters: objectSchema(
       {
         command: string("Shell command to run."),
         cwd: string("Optional workspace-relative cwd."),
-        timeout_ms: number("Timeout in milliseconds."),
+        timeout_ms: number("Timeout in milliseconds for synchronous commands. Prefer short timeouts for foreground calls; use background=true instead of very long timeouts."),
         env: jsonObject("Additional environment variables."),
-        background: boolean("Run in background and return process_id."),
+        background: boolean("Run asynchronously in background and return process_id immediately. Use for commands likely to take more than a short foreground turn."),
       },
       ["command"],
     ),

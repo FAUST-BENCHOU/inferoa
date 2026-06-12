@@ -204,7 +204,7 @@ function renderToolBody(group: ToolEventGroup, store: SessionStore): string[] {
     lines.push(`${fg256(39, "resource")} ${result.resource_uri}`);
   }
   if (result?.error) {
-    lines.push(fg256(244, `${result.error.code}: ${result.error.message}`));
+    lines.push(fg256(244, truncateToWidth(`${result.error.code}: ${result.error.message}`, Math.max(20, terminalWidth() - 6))));
   }
   if (group.name === "run_command" && !lines.length) {
     return [];
@@ -355,7 +355,12 @@ function renderCommand(data: JsonObject): string[] {
   const lines: string[] = [];
   const output = stringField(data.output);
   if (output) {
-    lines.push(...renderIndentedPreview(output, 10, "out"));
+    lines.push(...renderIndentedPreview(output, 6, "out"));
+  }
+  if (booleanField(data.output_truncated)) {
+    const chars = numberField(data.output_chars);
+    const resource = stringField(data.output_resource_uri);
+    lines.push(`${fg256(39, "output")} truncated${chars === undefined ? "" : ` · ${chars} chars`}${resource ? ` · ${resource}` : ""}`);
   }
   return lines;
 }
@@ -380,7 +385,7 @@ function renderProcess(data: JsonObject): string[] {
   ];
   const output = stringField(data.output);
   if (output) {
-    lines.push(...renderIndentedPreview(output, 10, "out"));
+    lines.push(...renderIndentedPreview(output, 6, "out"));
   }
   return lines;
 }
@@ -1060,9 +1065,9 @@ function fgLine(code: number, text: string): string {
   return `${open}${text.replaceAll(ansi.reset, `${ansi.reset}${open}`)}${ansi.reset}`;
 }
 
-function renderTextPreview(text: string, maxLines = 12): string[] {
+function renderTextPreview(text: string, maxLines = 12, width = Math.max(20, terminalWidth() - 8)): string[] {
   const lines = text.split(/\r?\n/);
-  const preview = lines.slice(0, maxLines);
+  const preview = lines.slice(0, maxLines).map((line) => truncateToWidth(line, width));
   if (lines.length > preview.length) {
     preview.push(fg256(243, `... ${lines.length - preview.length} more lines`));
   }
@@ -1070,7 +1075,9 @@ function renderTextPreview(text: string, maxLines = 12): string[] {
 }
 
 function renderIndentedPreview(text: string, maxLines: number, label: string): string[] {
-  return renderTextPreview(text, maxLines).map((line, index) => (index === 0 ? `${fg256(39, label)} ${line}` : `    ${line}`));
+  const labelPrefix = `${label} `;
+  const width = Math.max(20, terminalWidth() - Math.max(4, visibleWidth(labelPrefix)) - 4);
+  return renderTextPreview(text, maxLines, width).map((line, index) => (index === 0 ? `${fg256(39, label)} ${line}` : `    ${line}`));
 }
 
 function simplePatch(file: string, oldText: string, newText: string): string {

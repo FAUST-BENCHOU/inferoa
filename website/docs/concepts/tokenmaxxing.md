@@ -40,12 +40,20 @@ Open the tokenmaxxing view from the TUI:
 
 ```text
 /tokenmaxxing
+/tokenmaxxing trend
+/tokenmaxxing signals
 ```
 
 The view reports recent token usage, cache evidence when the endpoint exposes
 it, RTK savings, context pressure, and model-selection pressure. Cache fields
 are shown only when the provider returns enough usage detail to make them
-meaningful. Use `/tokenmaxxing signals` for raw lifecycle and evidence rows.
+meaningful. Compact boundaries show the reason, observed token deltas, archived
+events, and message count changes. Compact model-call rows show cache read for
+the summary request itself. Automatic compact failures, breaker pauses, skipped
+auto-compacts, and manual compacts appear as lifecycle signals. Use
+`/tokenmaxxing trend` for pageable metric panels with sparkline trends across
+cache, prefix, context, RTK, and compact events. Use `/tokenmaxxing signals` for
+raw lifecycle and evidence rows.
 See [Slash commands](../reference/slash-commands.md) for the full registry.
 
 ## Interpreting The View
@@ -55,7 +63,7 @@ The tokenmaxxing view groups signals into four areas:
 | Area | What It Shows | What To Watch For |
 | --- | --- | --- |
 | Token usage | Recent prompt and completion tokens per turn | Sudden spikes may mean context is not being compressed or a large file was read without bounding |
-| Cache evidence | Cached prompt tokens when the endpoint reports them | A low cache ratio across turns suggests the prompt epoch is changing too often |
+| Cache evidence | Cached prompt tokens, cache-gap calculations, and per-turn `new/safe/break/?` markers | `safe` means the previous request remains an exact prefix of the current request in the same epoch; `break` means the pre-turn context changed; `new` marks a new prompt epoch |
 | RTK savings | Tokens saved by RTK context optimization | Zero savings may mean RTK is disabled or the workspace has not been indexed |
 | Model selection | Which model handled recent turns | Unexpected model switches may indicate routing pressure or endpoint fallback |
 

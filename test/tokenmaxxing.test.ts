@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { stripAnsi, visibleWidth } from "../src/tui/ansi.js";
-import { renderTokenmaxxingLines, renderTokenmaxxingRows, renderTokenmaxxingScreen } from "../src/tui/tokenmaxxing-view.js";
+import {
+  renderTokenmaxxingLines,
+  renderTokenmaxxingRows,
+  renderTokenmaxxingScreen,
+  renderTokenmaxxingTrendScreen,
+  tokenmaxxingTrendPageCount,
+} from "../src/tui/tokenmaxxing-view.js";
 import type { JsonObject, SessionEvent } from "../src/types.js";
 
 test("tokenmaxxing view combines prefix cache, RTK, and recent turn signal", () => {
@@ -58,15 +64,15 @@ test("tokenmaxxing view combines prefix cache, RTK, and recent turn signal", () 
   assert.doesNotMatch(plain, /model 0|model selection/);
   assert.match(plain, /prefix cache 94\.0% .*994\/1058 .*1\/1 turns/);
   assert.match(plain, /rtk 2 cmds .*io 300->60 .*saved 240 .*tool 80\.0%/);
-  assert.match(plain, /turn 2 .*tokens 200\/440 .*actual\/oracle cache 94\.0%\/95\.2% .*cache gap 1\.2% .*tools 3 .*rtk 240/);
+  assert.match(plain, /turn 2 .*tokens 200\/440 .*94\.0%\/95\.2% .*1\.2% .*legacy .*tools 3 .*rtk 240/);
   assert.match(lines.join("\n"), /\x1b\[38;5;48m94\.0%\x1b\[0m\/\x1b\[38;5;48m95\.2%\x1b\[0m/);
   assert.match(lines.join("\n"), /\x1b\[38;5;48m1\.2%\x1b\[0m/);
-  assert.match(plain, /turn 1 .*tokens 100\/100 .*warm cache 5\.8% .*tools 1/);
+  assert.match(plain, /turn 1 .*tokens 100\/100 .*warm 5\.8% .*legacy .*tools 1/);
   assert.doesNotMatch(plain, /run_2|[{}"]/);
   assert.ok(lines.every((line) => visibleWidth(line) <= 140));
 });
 
-test("tokenmaxxing fullscreen uses a quiet surface without zebra striping", () => {
+test("tokenmaxxing fullscreen highlights headers and boundaries without zebra striping turns", () => {
   const events: SessionEvent[] = [
     event("user.prompt", { prompt: "long task" }, "run_1"),
     event("model.response.settled", {
@@ -99,7 +105,7 @@ test("tokenmaxxing fullscreen uses a quiet surface without zebra striping", () =
   const plain = stripAnsi(screen.join("\n"));
   const signalPlain = stripAnsi(signalRows.map((row) => row.text).join("\n"));
 
-  assert.doesNotMatch(screen.join("\n"), /\x1b\[48;5;23[56]m/);
+  assert.match(screen.join("\n"), /\x1b\[48;5;235m/);
   assert.doesNotMatch(plain, /Recent signals/);
   assert.doesNotMatch(plain, /model 0|model selection/);
   assert.match(signalPlain, /Recent signals/);
@@ -135,7 +141,7 @@ test("tokenmaxxing wide summary uses left and right columns", () => {
 test("tokenmaxxing screen keeps summary sticky while paging details", () => {
   const body = [
     { kind: "summary" as const, text: "saved 10 · cache 5 · rtk 1 · tokens 100/106" },
-    { kind: "turn-header" as const, text: "turn tokens cache gap tools rtk" },
+    { kind: "turn-header" as const, text: "turn event tokens cache gap tools rtk" },
     ...Array.from({ length: 12 }, (_, index) => ({ kind: "turn" as const, text: `turn ${index + 1}` })),
   ];
 
@@ -198,15 +204,15 @@ test("tokenmaxxing view exposes model-call cache and RTK inside a long run", () 
   const plain = stripAnsi(lines.join("\n"));
 
   assert.match(plain, /saved 1090 .*cache 990 .*rtk 100 .*tokens 1230\/2320/);
-  assert.match(plain, /turn 1\.2 .*tokens 130\/130 .*actual\/oracle cache 90\.0%\/90\.9% .*cache gap 0\.9% .*tools 0/);
-  assert.match(plain, /turn 1\.1 user .*tokens 1100\/1200 .*warm cache 0\.0% .*tools 1 .*rtk 100/);
+  assert.match(plain, /turn 1\.2 .*tool-loop .*tokens 130\/130 .*90\.0%\/90\.9% .*0\.9% .*legacy .*tools 0/);
+  assert.match(plain, /turn 1\.1 .*user .*tokens 1100\/1200 .*warm 0\.0% .*legacy .*tools 1 .*rtk 100/);
   assert.doesNotMatch(plain, /turn 1 .*tokens 1230\/1330/);
   assert.ok(lines.slice(0, 6).every((line) => stripAnsi(line).trim().length > 0));
 
-  const centeredTurn = renderTokenmaxxingRows(events, [], 160, { detailLimit: Number.POSITIVE_INFINITY })
+  const leftAlignedTurn = renderTokenmaxxingRows(events, [], 160, { detailLimit: Number.POSITIVE_INFINITY })
     .map((row) => stripAnsi(row.text))
     .find((line) => line.includes("turn 1.2"));
-  assert.match(centeredTurn ?? "", /^\s{2,}turn 1\.2\s{2,}tokens 130\/130/);
+  assert.match(leftAlignedTurn ?? "", /^turn 1\.2\s+tool-loop\s+tokens 130\/130/);
 });
 
 test("tokenmaxxing fullscreen renderer uses page-only horizontal navigation", () => {
@@ -246,8 +252,8 @@ test("tokenmaxxing oracle cache falls back to session previous prompt on a new e
 
   const plain = stripAnsi(renderTokenmaxxingLines(events, evidence, 160).join("\n"));
 
-  assert.match(plain, /turn 4 .*actual\/oracle cache 89\.2%\/92\.3% .*cache gap 3\.1% .*tools 0/);
-  assert.match(plain, /turn 3 .*warm actual\/oracle cache 0\.0%\/100\.0% .*warm gap 100\.0% .*tools 0/);
+  assert.match(plain, /turn 4 .*89\.2%\/92\.3% .*3\.1% .*legacy .*tools 0/);
+  assert.match(plain, /turn 3 .*warm 0\.0%\/100\.0% .*100\.0% .*legacy .*tools 0/);
   assert.doesNotMatch(plain, /turn 3 .*cache warmup/);
   assert.match(plain, /prefix cache 89\.7% .*1570\/1750 .*2\/2 turns .*warmup 2/);
   assert.doesNotMatch(plain, /tool compress .*no rewritten commands/);
@@ -279,6 +285,12 @@ test("tokenmaxxing shows compact boundaries as epoch rows and signals", () => {
       summary_strategy: "prefix_query",
       archive_resource_uri: "resource://session/archive-1",
       archived_events: 12,
+      estimated_tokens_before: 10000,
+      estimated_tokens_after: 1800,
+      compressed_tokens: 8200,
+      prompt_messages_before: 87,
+      prompt_messages_after: 4,
+      compressed_messages: 83,
       protected_tail_events: 3,
       preserved_tail_events: 7,
       preserved_rounds: 2,
@@ -296,6 +308,12 @@ test("tokenmaxxing shows compact boundaries as epoch rows and signals", () => {
       preserved_run_anchor_count: 3,
       estimated_tokens: 1200,
       threshold_tokens: 1000,
+      estimated_tokens_before: 10000,
+      estimated_tokens_after: 1800,
+      compressed_tokens: 8200,
+      prompt_messages_before: 87,
+      prompt_messages_after: 4,
+      compressed_messages: 83,
     }, "run_2"),
     event("prompt.epoch.created", { prompt_epoch_id: "pe_2", reason: "session-or-layout", tool_schema_hash: "tools_1" }),
     event("user.prompt", { prompt: "after compact" }, "run_2"),
@@ -318,15 +336,195 @@ test("tokenmaxxing shows compact boundaries as epoch rows and signals", () => {
     },
   ];
 
-  const plain = stripAnsi(renderTokenmaxxingLines(events, evidence, 170, { detailLimit: Number.POSITIVE_INFINITY }).join("\n"));
-  const signalPlain = stripAnsi(renderTokenmaxxingRows(events, evidence, 190, { activityOnly: true }).map((row) => row.text).join("\n"));
+  const plain = stripAnsi(renderTokenmaxxingLines(events, evidence, 260, { detailLimit: Number.POSITIVE_INFINITY }).join("\n"));
+  const screen = renderTokenmaxxingScreen(renderTokenmaxxingRows(events, evidence, 180, { detailLimit: Number.POSITIVE_INFINITY }), 180, 12, 0);
+  const screenPlain = stripAnsi(screen.join("\n"));
+  const signalPlain = stripAnsi(renderTokenmaxxingRows(events, evidence, 280, { activityOnly: true }).map((row) => row.text).join("\n"));
 
-  assert.match(plain, /epoch pe_2 .*compact threshold\/prefix_query .*prefix - .*archived 12 .*protected 3 .*preserved 7 .*rounds 2 .*anchors 3/);
-  assert.match(plain, /turn 3\.1 user .*warm actual\/oracle cache 50\.0%\/100\.0% .*warm gap 50\.0%/);
-  assert.match(plain, /epoch pe_1 .*session-created .*prefix 90\.9% 1000\/1100/);
-  assert.match(plain, /compact .*tokens 1140\/1140 .*actual\/oracle cache 90\.9%\/90\.9% .*cache gap 0\.0% .*tools 0/);
-  assert.match(signalPlain, /compact memory .*threshold .*strategy prefix_query .*archived 12 .*protected 3 .*preserved 7 .*rounds 2 .*anchors 3/);
-  assert.match(signalPlain, /compact .*est 1200\/1000 .*epoch pe_2 .*threshold .*strategy prefix_query .*preserved 7 .*rounds 2 .*anchors 3/);
+  assert.match(plain, /compact .*threshold .*1,100 -> 600 .*saved 500 .*archived 12/);
+  assert.doesNotMatch(plain, /epoch pe_2|prefix -|protected 3|preserved 7|rounds 2|anchors 3/);
+  assert.match(screen.join("\n"), /\x1b\[48;5;24m/);
+  assert.match(screenPlain, /^\s+compact .*threshold .*1,100 -> 600 .*archived 12\s*$/m);
+  assert.match(plain, /turn 3\.1 .*user .*warm 50\.0%\/100\.0% .*50\.0%/);
+  assert.match(plain, /new epoch .*session start/);
+  assert.match(plain, /compact .*compact .*tokens 1140\/1140 .*90\.9%\/90\.9% .*0\.0% .*legacy .*tools 0/);
+  assert.match(signalPlain, /compact memory .*threshold .*strategy prefix_query .*messages 87->4 saved 83 .*archived 12 .*protected 3 .*preserved 7 .*rounds 2 .*anchors 3/);
+  assert.match(signalPlain, /compact .*est 1200\/1000 .*epoch pe_2 .*threshold .*strategy prefix_query .*messages 87->4 saved 83 .*preserved 7 .*rounds 2 .*anchors 3/);
+});
+
+test("tokenmaxxing marks each turn with prefix safety", () => {
+  const events: SessionEvent[] = [
+    event("user.prompt", { prompt: "warmup" }, "run_1"),
+    event("model.request.started", { step_id: "step_1", step_index: 1, prompt_epoch_id: "pe_1", prefix_cache_status: "new_epoch" }, "run_1"),
+    event("model.response.settled", {
+      step_id: "step_1",
+      step_index: 1,
+      prompt_epoch_id: "pe_1",
+      usage: { prompt_tokens: 1000, cached_prompt_tokens: 0, completion_tokens: 10, total_tokens: 1010 },
+      tool_calls: [],
+    }, "run_1"),
+    event("user.prompt", { prompt: "stable prefix" }, "run_2"),
+    event("model.request.started", { step_id: "step_1", step_index: 1, prompt_epoch_id: "pe_1", prefix_cache_status: "safe" }, "run_2"),
+    event("model.response.settled", {
+      step_id: "step_1",
+      step_index: 1,
+      prompt_epoch_id: "pe_1",
+      usage: { prompt_tokens: 1100, cached_prompt_tokens: 1000, completion_tokens: 10, total_tokens: 1110 },
+      tool_calls: [],
+    }, "run_2"),
+    event("user.prompt", { prompt: "provider cache gap" }, "run_3"),
+    event("model.request.started", { step_id: "step_1", step_index: 1, prompt_epoch_id: "pe_1", prefix_cache_status: "changed" }, "run_3"),
+    event("model.response.settled", {
+      step_id: "step_1",
+      step_index: 1,
+      prompt_epoch_id: "pe_1",
+      usage: { prompt_tokens: 1200, cached_prompt_tokens: 400, completion_tokens: 10, total_tokens: 1210 },
+      tool_calls: [],
+    }, "run_3"),
+  ];
+
+  const plain = stripAnsi(renderTokenmaxxingLines(events, [], 190, { detailLimit: Number.POSITIVE_INFINITY }).join("\n"));
+
+  assert.match(plain, /turn 1\.1 .*user .*new/);
+  assert.match(plain, /turn 2\.1 .*user .*0\.0% .*safe/);
+  assert.match(plain, /turn 3\.1 .*user .*58\.3% .*break/);
+});
+
+test("tokenmaxxing labels hidden reflection turns distinctly from user turns", () => {
+  const events: SessionEvent[] = [
+    event("user.prompt", { prompt: "reflect", request_class: "reflection", visibility: "internal" }, "run_reflect"),
+    event("model.request.started", {
+      step_id: "step_reflect",
+      step_index: 1,
+      request_class: "reflection",
+      visibility: "internal",
+      prompt_epoch_id: "pe_1",
+      prefix_cache_status: "safe",
+    }, "run_reflect"),
+    event("model.response.settled", {
+      step_id: "step_reflect",
+      step_index: 1,
+      request_class: "reflection",
+      visibility: "internal",
+      prompt_epoch_id: "pe_1",
+      usage: { prompt_tokens: 1000, cached_prompt_tokens: 900, completion_tokens: 10, total_tokens: 1010 },
+      tool_calls: [],
+    }, "run_reflect"),
+  ];
+
+  const plain = stripAnsi(renderTokenmaxxingLines(events, [], 160, { detailLimit: Number.POSITIVE_INFINITY }).join("\n"));
+
+  assert.match(plain, /turn 1\.1 .*reflect .*safe/);
+  assert.doesNotMatch(plain, /turn 1\.1 .*user/);
+});
+
+test("tokenmaxxing shows compact failure and breaker lifecycle signals", () => {
+  const events: SessionEvent[] = [
+    event("context.compaction.failed", {
+      trigger: "auto",
+      reason: "threshold",
+      prompt_epoch_id: "pe_1",
+      soft: true,
+      consecutive_failures: 1,
+      failure_limit: 2,
+      attempted_summary_strategies: ["prefix_query", "standalone_payload", "trimmed_standalone"],
+      failed_summary_strategies: ["prefix_query", "standalone_payload", "trimmed_standalone"],
+      model_summary_failed: true,
+    }, "run_1"),
+    event("context.compaction.auto_paused", {
+      reason: "auto-failure-circuit-breaker",
+      consecutive_failures: 2,
+      failure_limit: 2,
+      manual_compact_allowed: true,
+    }, "run_2"),
+    event("context.compaction.skipped", {
+      skipped_reason: "auto-failure-circuit-breaker",
+      reason: "threshold",
+      prompt_epoch_id: "pe_2",
+      estimated_tokens: 99_000,
+      threshold_tokens: 80_000,
+    }, "run_3"),
+  ];
+
+  const plain = stripAnsi(renderTokenmaxxingRows(events, [], 220, { activityOnly: true }).map((row) => row.text).join("\n"));
+
+  assert.match(plain, /compact fail .*epoch pe_1 .*threshold .*model fallback .*1\/2 .*failed prefix_query->standalone_payload->trimmed_standalone/);
+  assert.match(plain, /compact paused .*breaker .*failures 2\/2 .*manual \/compact allowed/);
+  assert.match(plain, /compact skipped .*est 99000\/80000 .*epoch pe_2 .*auto-fail.*threshold/);
+});
+
+test("tokenmaxxing trend renders pageable metric panels", () => {
+  const events: SessionEvent[] = [
+    event("prompt.epoch.created", { prompt_epoch_id: "pe_1", reason: "session-created" }),
+    event("user.prompt", { prompt: "warmup" }, "run_1"),
+    event("model.request.started", { step_id: "step_1", step_index: 1, prompt_epoch_id: "pe_1", prefix_cache_status: "new_epoch" }, "run_1"),
+    event("model.response.settled", {
+      step_id: "step_1",
+      step_index: 1,
+      prompt_epoch_id: "pe_1",
+      usage: { prompt_tokens: 1000, cached_prompt_tokens: 0, completion_tokens: 10, total_tokens: 1010 },
+      tool_calls: [{ id: "tool_1", name: "run_command", arguments: {} }],
+    }, "run_1"),
+    event("rtk.tool_savings", {
+      step_id: "step_1",
+      step_index: 1,
+      rtk_commands: 1,
+      input_tokens: 200,
+      output_tokens: 50,
+      saved_tokens: 150,
+      status: "ok",
+    }, "run_1"),
+    event("model.request.started", { step_id: "step_2", step_index: 2, prompt_epoch_id: "pe_1", prefix_cache_status: "safe" }, "run_1"),
+    event("model.response.settled", {
+      step_id: "step_2",
+      step_index: 2,
+      prompt_epoch_id: "pe_1",
+      usage: { prompt_tokens: 1200, cached_prompt_tokens: 900, completion_tokens: 20, total_tokens: 1220 },
+      tool_calls: [],
+    }, "run_1"),
+    event("context.compacted", { reason: "manual", summary_strategy: "prefix_query" }),
+    event("evidence.context_compression", {
+      reason: "manual",
+      epoch_id: "pe_2",
+      summary_strategy: "prefix_query",
+      archived_events: 10,
+      prompt_messages_before: 12,
+      prompt_messages_after: 4,
+      compressed_messages: 8,
+    }, "run_2"),
+    event("prompt.epoch.created", { prompt_epoch_id: "pe_2", reason: "session-or-layout" }),
+    event("model.request.started", { step_id: "step_1", step_index: 1, prompt_epoch_id: "pe_2", prefix_cache_status: "new_epoch" }, "run_2"),
+    event("model.response.settled", {
+      step_id: "step_1",
+      step_index: 1,
+      prompt_epoch_id: "pe_2",
+      usage: { prompt_tokens: 700, cached_prompt_tokens: 500, completion_tokens: 10, total_tokens: 710 },
+      tool_calls: [],
+    }, "run_2"),
+  ];
+  const evidence: JsonObject[] = [
+    {
+      run_id: "run_compact",
+      request_class: "compaction",
+      prompt_epoch_id: "pe_1",
+      usage: { prompt_tokens: 1500, cached_prompt_tokens: 1000, total_tokens: 1510 },
+    },
+  ];
+
+  assert.equal(tokenmaxxingTrendPageCount(), 6);
+  const overview = stripAnsi(renderTokenmaxxingTrendScreen(events, evidence, 140, 16, 0).join("\n"));
+  const prefix = stripAnsi(renderTokenmaxxingTrendScreen(events, evidence, 140, 16, 2).join("\n"));
+  const compact = stripAnsi(renderTokenmaxxingTrendScreen(events, evidence, 140, 16, 5).join("\n"));
+
+  assert.match(overview, /Tokenmaxxing trend .*overview/);
+  assert.match(overview, /calls 4/);
+  assert.match(overview, /prompt tokens/);
+  assert.match(prefix, /Tokenmaxxing trend .*prefix/);
+  assert.match(prefix, /safe 1 .*break 0 .*new 2/);
+  assert.match(prefix, /sequence/);
+  assert.match(compact, /Tokenmaxxing trend .*compact/);
+  assert.match(compact, /1,500->700/);
+  assert.match(compact, /12->4 saved 8/);
 });
 
 test("tokenmaxxing cache gap marks large provider cache gaps in red", () => {
@@ -344,7 +542,7 @@ test("tokenmaxxing cache gap marks large provider cache gaps in red", () => {
   const lines = renderTokenmaxxingLines(events, evidence, 160);
   const plain = stripAnsi(lines.join("\n"));
 
-  assert.match(plain, /cache gap 45\.5%/);
+  assert.match(plain, /45\.5%/);
   assert.match(lines.join("\n"), /\x1b\[38;5;203m45\.5%\x1b\[0m\/\x1b\[38;5;48m90\.9%\x1b\[0m/);
   assert.match(lines.join("\n"), /\x1b\[38;5;203m45\.5%\x1b\[0m/);
 });

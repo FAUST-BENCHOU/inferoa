@@ -42,8 +42,12 @@ permissions:
   mode: full_access
 
 context:
-  compression_threshold: 0.8
-  context_window: 32768
+  compression_threshold: 0.75
+  context_window: 256000
+  auto_compact_failure_limit: 3
+  compact_recent_file_limit: 5
+  compact_recent_file_token_limit: 5000
+  compact_recent_total_token_limit: 25000
   protected_recent_loops: 3
   engine:
     provider: auto

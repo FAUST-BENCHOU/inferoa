@@ -24,6 +24,10 @@ export const DEFAULT_CONFIG: VllmAgentConfig = {
   context: {
     compression_threshold: 0.75,
     context_window: 256_000,
+    auto_compact_failure_limit: 3,
+    compact_recent_file_limit: 5,
+    compact_recent_file_token_limit: 5_000,
+    compact_recent_total_token_limit: 25_000,
     protected_recent_loops: 3,
     engine: {
       provider: "auto",

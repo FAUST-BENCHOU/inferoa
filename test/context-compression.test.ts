@@ -42,6 +42,44 @@ test("context compression ignores history length at very low token pressure", as
   }
 });
 
+test("context compression uses effective window and preserves threshold override", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-compress-effective-window-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const config = structuredClone(DEFAULT_CONFIG);
+    config.context.force_compression = false;
+    config.context.context_window = 100_000;
+    config.model_setup.context_window = 100_000;
+    const workspace: WorkspaceIdentity = { id: "w_effective_window", root: dir, alias: "effective-window" };
+    const compressor = new ContextCompressor(config, store, workspace, undefined as never);
+
+    const defaultDecision = await compressor.assess({ estimated_tokens: 81_249 } as PromptContext);
+    assert.equal(defaultDecision.should_compact, false);
+    assert.equal(defaultDecision.threshold_source, "effective_window_buffer");
+    assert.equal(defaultDecision.output_reserve_tokens, 12_500);
+    assert.equal(defaultDecision.compact_buffer_tokens, 6_250);
+    assert.equal(defaultDecision.effective_window_tokens, 87_500);
+    assert.equal(defaultDecision.threshold_tokens, 81_250);
+
+    config.context.output_reserve_tokens = 10_000;
+    config.context.compact_buffer_tokens = 5_000;
+    const configuredDecision = await compressor.assess({ estimated_tokens: 85_000 } as PromptContext);
+    assert.equal(configuredDecision.should_compact, true);
+    assert.equal(configuredDecision.threshold_tokens, 85_000);
+    assert.equal(configuredDecision.output_reserve_tokens, 10_000);
+    assert.equal(configuredDecision.compact_buffer_tokens, 5_000);
+
+    config.context.compression_threshold = 0.8;
+    const overrideDecision = await compressor.assess({ estimated_tokens: 79_999 } as PromptContext);
+    assert.equal(overrideDecision.should_compact, false);
+    assert.equal(overrideDecision.threshold_source, "compression_threshold_override");
+    assert.equal(overrideDecision.threshold_tokens, 80_000);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("runtime surfaces context compression and continues after compacting", async () => {
   const serverCalls: { request_class?: string; body: unknown }[] = [];
   const server = createServer((req, res) => {
@@ -160,6 +198,19 @@ test("runtime surfaces context compression and continues after compacting", asyn
     assert.equal(compacted?.data.archived_events, compressionEnd.archived_events);
     assert.equal(compacted?.data.protected_tail_events, compressionEnd.protected_tail_events);
     assert.equal(compacted?.data.protected_prompt_count, compressionEnd.protected_user_prompts?.length ?? 0);
+    assert.equal(typeof compacted?.data.estimated_tokens_after, "number");
+    assert.equal(typeof compacted?.data.compressed_tokens, "number");
+    assert.equal(typeof compacted?.data.prompt_messages_before, "number");
+    assert.equal(typeof compacted?.data.prompt_messages_after, "number");
+    assert.equal(typeof compacted?.data.compressed_messages, "number");
+    assert.equal(
+      compacted?.data.compressed_tokens,
+      Math.max(0, Number(compacted?.data.estimated_tokens_before ?? 0) - Number(compacted?.data.estimated_tokens_after ?? 0)),
+    );
+    assert.equal(
+      compacted?.data.compressed_messages,
+      Math.max(0, Number(compacted?.data.prompt_messages_before ?? 0) - Number(compacted?.data.prompt_messages_after ?? 0)),
+    );
     assert.ok(events.slice(compactedIndex + 1).some((event) => event.type === "model.request.started"));
     assert.ok(events.some((event) => event.type === "evidence.context_compression"));
     const compressionEvidenceEvent = events.find((event) => event.type === "evidence.context_compression");
@@ -167,6 +218,11 @@ test("runtime surfaces context compression and continues after compacting", asyn
     assert.equal(compressionEvidenceEvent.data.archived_events, compressionEnd.archived_events);
     assert.equal(compressionEvidenceEvent.data.protected_tail_events, compressionEnd.protected_tail_events);
     assert.equal(compressionEvidenceEvent.data.protected_prompt_count, compressionEnd.protected_user_prompts?.length ?? 0);
+    assert.equal(compressionEvidenceEvent.data.estimated_tokens_after, compacted?.data.estimated_tokens_after);
+    assert.equal(compressionEvidenceEvent.data.compressed_tokens, compacted?.data.compressed_tokens);
+    assert.equal(compressionEvidenceEvent.data.prompt_messages_before, compacted?.data.prompt_messages_before);
+    assert.equal(compressionEvidenceEvent.data.prompt_messages_after, compacted?.data.prompt_messages_after);
+    assert.equal(compressionEvidenceEvent.data.compressed_messages, compacted?.data.compressed_messages);
     const interactiveStarted = events.slice(compactedIndex + 1).find((event) => event.type === "model.request.started");
     const interactiveEvidence = events.find((event) => event.type === "endpoint.evidence.recorded" && event.data.request_id === "req_2");
     assert.equal(interactiveEvidence?.data.request_class, "interactive");
@@ -189,6 +245,324 @@ test("runtime surfaces context compression and continues after compacting", asyn
     store.close();
     await rm(dir, { recursive: true, force: true });
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("runtime retries compact payloads from prefix to standalone to trimmed standalone", async () => {
+  const serverCalls: { request_class?: string; body: unknown }[] = [];
+  let compactionAttempts = 0;
+  const server = createServer((req, res) => {
+    if (req.method === "GET" && req.url === "/v1/models") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "compression-test" }] }));
+      return;
+    }
+    if (req.method === "GET" && req.url === "/load") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ waiting: 0, running: 0 }));
+      return;
+    }
+    if (req.method === "GET" && req.url === "/metrics") {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("");
+      return;
+    }
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      const requestClass = typeof req.headers["x-inferoa-request-class"] === "string" ? req.headers["x-inferoa-request-class"] : undefined;
+      serverCalls.push({ request_class: requestClass, body: JSON.parse(body) as unknown });
+      if (requestClass === "compaction") {
+        compactionAttempts += 1;
+        if (compactionAttempts < 3) {
+          res.writeHead(400, { "content-type": "application/json", "x-request-id": `req_compact_fail_${compactionAttempts}` });
+          res.end(JSON.stringify({ error: { code: "context_length_exceeded", message: "compact request is too large" } }));
+          return;
+        }
+      }
+      const content =
+        requestClass === "compaction"
+          ? "<analysis>covered retry fallback</analysis><summary>\nGoal\n- Trimmed compact payload succeeded."
+          : "continued after trimmed compact";
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", "x-request-id": `req_${serverCalls.length}` });
+      writeSse(res, { id: `resp_${serverCalls.length}`, model: "compression-test", choices: [{ delta: { content } }] });
+      writeSse(res, {
+        choices: [{ delta: {}, finish_reason: "stop" }],
+        usage: { prompt_tokens: 300, cached_prompt_tokens: requestClass === "compaction" ? 240 : 260, completion_tokens: 8, total_tokens: 308 },
+      });
+      res.end("data: [DONE]\n\n");
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address() as AddressInfo;
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-compact-retry-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const config = compressionConfig(`http://127.0.0.1:${address.port}/v1`);
+    const workspace: WorkspaceIdentity = { id: "w_compact_retry", root: dir, alias: "compact-retry" };
+    const session = store.createSession(workspace, "compact retry");
+    for (let index = 0; index < 16; index += 1) {
+      store.appendEvent({
+        session_id: session.session_id,
+        run_id: "seed",
+        type: "tool.result",
+        data: {
+          tool_name: "read_file",
+          tool_call_id: `seed_${index}`,
+          result: { ok: true, summary: `Read seed ${index}`, data: { path: `seed-${index}.ts`, content: "x".repeat(2000) } },
+        },
+      });
+    }
+
+    const runtime = new Runtime(config, workspace, store);
+    const result = await runtime.run({ session_id: session.session_id, prompt: "continue after compact retry", max_tool_rounds: 0 });
+
+    assert.equal(result.content, "continued after trimmed compact");
+    assert.deepEqual(serverCalls.map((call) => call.request_class), ["compaction", "compaction", "compaction", "interactive"]);
+    const compactionPrompts = serverCalls.filter((call) => call.request_class === "compaction").map((call) => compactionRequestContent(call.body));
+    assert.doesNotMatch(compactionPrompts[0] ?? "", /"trimmed":true/);
+    assert.doesNotMatch(compactionPrompts[1] ?? "", /"trimmed":true/);
+    assert.match(compactionPrompts[2] ?? "", /"trimmed":true/);
+    const compacted = store.listEvents(session.session_id).find((event) => event.type === "context.compacted");
+    assert.equal(compacted?.data.summary, "Goal\n- Trimmed compact payload succeeded.");
+    assert.equal(compacted?.data.summary_strategy, "trimmed_standalone");
+    assert.deepEqual(compacted?.data.attempted_summary_strategies, ["prefix_query", "standalone_payload", "trimmed_standalone"]);
+    assert.deepEqual(compacted?.data.failed_summary_strategies, ["prefix_query", "standalone_payload"]);
+    assert.equal(compacted?.data.model_summary_failed, false);
+    const evidence = store.listEvents(session.session_id).find((event) => event.type === "evidence.context_compression");
+    assert.equal(evidence?.data.trigger, "auto");
+    assert.equal(evidence?.data.summary_strategy, "trimmed_standalone");
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("runtime pauses automatic compact after repeated model-summary failures", async () => {
+  const serverCalls: { request_class?: string; body: unknown }[] = [];
+  const server = createServer((req, res) => {
+    if (req.method === "GET" && req.url === "/v1/models") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "compression-test" }] }));
+      return;
+    }
+    if (req.method === "GET" && req.url === "/load") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ waiting: 0, running: 0 }));
+      return;
+    }
+    if (req.method === "GET" && req.url === "/metrics") {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("");
+      return;
+    }
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      const requestClass = typeof req.headers["x-inferoa-request-class"] === "string" ? req.headers["x-inferoa-request-class"] : undefined;
+      serverCalls.push({ request_class: requestClass, body: JSON.parse(body) as unknown });
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", "x-request-id": `req_${serverCalls.length}` });
+      if (requestClass !== "compaction") {
+        writeSse(res, { id: `resp_${serverCalls.length}`, model: "compression-test", choices: [{ delta: { content: `interactive ${serverCalls.length}` } }] });
+      }
+      writeSse(res, {
+        choices: [{ delta: {}, finish_reason: "stop" }],
+        usage: { prompt_tokens: 200, cached_prompt_tokens: 100, completion_tokens: 8, total_tokens: 208 },
+      });
+      res.end("data: [DONE]\n\n");
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address() as AddressInfo;
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-compact-breaker-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const config = compressionConfig(`http://127.0.0.1:${address.port}/v1`);
+    config.context.auto_compact_failure_limit = 2;
+    const workspace: WorkspaceIdentity = { id: "w_compact_breaker", root: dir, alias: "compact-breaker" };
+    const session = store.createSession(workspace, "compact breaker");
+    for (let index = 0; index < 5; index += 1) {
+      store.appendEvent({
+        session_id: session.session_id,
+        run_id: "seed",
+        type: "tool.result",
+        data: {
+          tool_name: "read_file",
+          tool_call_id: `seed_${index}`,
+          result: { ok: true, summary: `Read seed ${index}`, data: { path: `seed-${index}.ts`, content: "seed" } },
+        },
+      });
+    }
+
+    const runtime = new Runtime(config, workspace, store);
+    await runtime.run({ session_id: session.session_id, prompt: "first auto compact", max_tool_rounds: 0 });
+    await runtime.run({ session_id: session.session_id, prompt: "second auto compact", max_tool_rounds: 0 });
+    await runtime.run({ session_id: session.session_id, prompt: "third skips auto compact", max_tool_rounds: 0 });
+
+    assert.equal(serverCalls.filter((call) => call.request_class === "compaction").length, 6);
+    assert.equal(serverCalls.filter((call) => call.request_class === "interactive").length, 3);
+    const events = store.listEvents(session.session_id);
+    const failures = events.filter((event) => event.type === "context.compaction.failed");
+    assert.equal(failures.length, 2);
+    assert.equal(failures[0]?.data.soft, true);
+    assert.equal(failures[0]?.data.consecutive_failures, 1);
+    assert.equal(failures[1]?.data.consecutive_failures, 2);
+    assert.ok(events.some((event) => event.type === "context.compaction.auto_paused" && event.data.failure_limit === 2));
+    assert.ok(events.some((event) => event.type === "context.compaction.skipped" && event.data.skipped_reason === "auto-failure-circuit-breaker"));
+    assert.equal(events.filter((event) => event.type === "evidence.context_compression" && event.data.model_summary_failed === true).length, 2);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("runtime supports manual context compaction with custom summary instructions", async () => {
+  const serverCalls: { request_class?: string; body: unknown }[] = [];
+  const server = createServer((req, res) => {
+    if (req.method === "GET" && req.url === "/v1/models") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "compression-test" }] }));
+      return;
+    }
+    if (req.method === "GET" && req.url === "/load") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ waiting: 0, running: 0 }));
+      return;
+    }
+    if (req.method === "GET" && req.url === "/metrics") {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("vllm:prefix_cache_queries_total 2\nvllm:prefix_cache_hits_total 1\n");
+      return;
+    }
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      const requestClass = typeof req.headers["x-inferoa-request-class"] === "string" ? req.headers["x-inferoa-request-class"] : undefined;
+      serverCalls.push({ request_class: requestClass, body: JSON.parse(body) as unknown });
+      const content = "<analysis>drafting notes that must not be persisted</analysis>\n<summary>\nGoal\n- Manual compact preserved the handoff.\n</summary>";
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        "x-request-id": `req_${serverCalls.length}`,
+      });
+      writeSse(res, {
+        id: `resp_${serverCalls.length}`,
+        model: "compression-test",
+        choices: [{ delta: { content } }],
+      });
+      writeSse(res, {
+        choices: [{ delta: {}, finish_reason: "stop" }],
+        usage: { prompt_tokens: 256, completion_tokens: 8, total_tokens: 264, prompt_tokens_details: { cached_tokens: 128 } },
+      });
+      res.end("data: [DONE]\n\n");
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address() as AddressInfo;
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-manual-compact-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const config = compressionConfig(`http://127.0.0.1:${address.port}/v1`);
+    config.context.force_compression = false;
+    config.context.context_window = 1_024_000;
+    config.model_setup.context_window = 1_024_000;
+    const workspace: WorkspaceIdentity = { id: "w_manual_compact", root: dir, alias: "manual-compact" };
+    const session = store.createSession(workspace, "manual compact");
+    store.appendEvent({
+      session_id: session.session_id,
+      run_id: "run_seed",
+      type: "user.prompt",
+      data: { prompt: "original task: implement manual compact" },
+    });
+    store.appendEvent({
+      session_id: session.session_id,
+      run_id: "run_seed",
+      type: "model.response.settled",
+      data: { content: "started implementation", tool_calls: [] },
+    });
+
+    const statuses: RuntimeStatusEvent[] = [];
+    const runtime = new Runtime(config, workspace, store);
+    const result = await runtime.compactSession({
+      session_id: session.session_id,
+      instructions: "focus on failing tests and exact files changed",
+      onStatus: (event) => statuses.push(event),
+    });
+
+    assert.equal(result.summary, "Goal\n- Manual compact preserved the handoff.");
+    assert.deepEqual(serverCalls.map((call) => call.request_class), ["compaction"]);
+    assert.ok(statuses.some((event) => event.type === "compression_start" && event.reason === "manual"));
+    const compressionEnd = statuses.find((event) => event.type === "compression_end");
+    assert.equal(compressionEnd?.summary, result.summary);
+    assert.equal(compressionEnd?.epoch_id, result.epoch_id);
+    const compactionPrompt = compactionRequestContent(serverCalls[0]?.body);
+    assert.match(compactionPrompt, /focus on failing tests and exact files changed/);
+    assert.match(compactionPrompt, /<analysis>[\s\S]*<summary>/);
+    assert.match(compactionPrompt, /All user messages/);
+    assert.match(compactionPrompt, /Optional Next Step/);
+    const events = store.listEvents(session.session_id);
+    assert.ok(events.some((event) => event.type === "context.compacted" && event.data.reason === "manual"));
+    const compactedIndex = events.findIndex((event) => event.type === "context.compacted" && event.data.reason === "manual");
+    assert.ok(events.some((event, index) => index > compactedIndex && event.type === "prompt.epoch.created" && event.data.prompt_epoch_id === result.epoch_id));
+    assert.doesNotMatch(String(events.find((event) => event.type === "context.compacted")?.data.summary ?? ""), /drafting notes/);
+    assert.ok(events.some((event) => event.type === "evidence.context_compression" && event.data.reason === "manual"));
+    assert.equal(events.some((event) => event.type === "model.request.started" && event.data.request_class === "interactive"), false);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("runtime supports manual context compaction with an empty scoped tool surface", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-manual-compact-empty-tools-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const config = structuredClone(DEFAULT_CONFIG);
+    config.model_setup.base_url = undefined;
+    config.context.force_compression = false;
+    config.context.context_window = 1_024_000;
+    config.model_setup.context_window = 1_024_000;
+    const workspace: WorkspaceIdentity = { id: "w_manual_compact_empty_tools", root: dir, alias: "manual-compact-empty-tools" };
+    const session = store.createSession(workspace, "manual compact empty tools");
+    store.appendEvent({
+      session_id: session.session_id,
+      run_id: "run_seed",
+      type: "user.prompt",
+      data: { prompt: "compact without tools" },
+    });
+    store.appendEvent({
+      session_id: session.session_id,
+      run_id: "run_seed",
+      type: "model.response.settled",
+      data: { content: "seed response", tool_calls: [] },
+    });
+
+    const runtime = new Runtime(config, workspace, store);
+    const result = await runtime.compactSession({
+      session_id: session.session_id,
+      tool_names: [],
+    });
+
+    assert.match(result.epoch_id, /^pe_/);
+    assert.ok(store.listEvents(session.session_id).some((event) => event.type === "prompt.epoch.created" && event.data.prompt_epoch_id === result.epoch_id));
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
@@ -837,9 +1211,10 @@ test("context compression uses the model summary and protects recent user loop p
     );
     const system = String(rebuilt.messages[0]?.content ?? "");
     assert.match(system, /Model-authored compacted memory/);
+    assert.match(system, new RegExp(escapeRegExp(activeResource.uri)));
+    assert.match(system, /active resource body/);
     assert.doesNotMatch(system, /Protected recent loops:/);
     assert.doesNotMatch(system, /tool read_file ok: Read run_active\.ts/);
-    assert.doesNotMatch(system, new RegExp(escapeRegExp(activeResource.uri)));
     assert.doesNotMatch(system, /run failed: provider timeout/);
     assert.doesNotMatch(system, /tool read_file ok: Read run_recent\.ts/);
     assert.doesNotMatch(system, /Read run_old\.ts/);

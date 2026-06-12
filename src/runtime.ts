@@ -9,6 +9,7 @@ import type {
   ModelResponse,
   PermissionMode,
   RtkSavingsSummary,
+  SessionEvent,
   SessionRecord,
   ToolCall,
   ToolDefinition,
@@ -17,7 +18,7 @@ import type {
   WorkspaceIdentity,
 } from "./types.js";
 import { SessionStore } from "./session/store.js";
-import { randomId } from "./util/hash.js";
+import { hashJson, randomId } from "./util/hash.js";
 import {
   createPromptSessionSnapshot,
   currentTurnContextMessagesForSession,
@@ -83,10 +84,16 @@ export type RuntimeStatusEvent =
   | {
       type: "compression_end";
       reason: string;
+      epoch_id: string;
       estimated_tokens: number;
       threshold_tokens: number;
       archive_resource_uri: string;
       archived_events: number;
+      estimated_tokens_after?: number;
+      compressed_tokens?: number;
+      prompt_messages_before?: number;
+      prompt_messages_after?: number;
+      compressed_messages?: number;
       protected_tail_events: number;
       preserved_tail_events?: number;
       preserved_rounds?: number;
@@ -120,6 +127,39 @@ export interface RuntimeRunResult {
   goal_report?: string;
 }
 
+export interface RuntimeCompactOptions {
+  session_id: string;
+  client_id?: string;
+  instructions?: string;
+  onStatus?: (event: RuntimeStatusEvent) => void;
+  signal?: AbortSignal;
+  tool_names?: string[];
+}
+
+export interface RuntimeCompactResult {
+  session: SessionRecord;
+  run_id: string;
+  epoch_id: string;
+  summary: string;
+  summary_strategy: string;
+  archive_resource_uri: string;
+  archived_events: number;
+  estimated_tokens_before: number;
+  estimated_tokens_after: number;
+  compressed_tokens: number;
+  prompt_messages_before: number;
+  prompt_messages_after: number;
+  compressed_messages: number;
+  protected_tail_events: number;
+  preserved_tail_events: number;
+  preserved_rounds: number;
+  preserved_run_anchor_count: number;
+  protected_user_prompts: string[];
+  attempted_summary_strategies?: string[];
+  failed_summary_strategies?: string[];
+  model_summary_failed?: boolean;
+}
+
 export class Runtime {
   private readonly gateway: ModelGateway;
   private readonly endpointSignals: EndpointSignals;
@@ -147,6 +187,128 @@ export class Runtime {
     return this.store.createSession(this.workspace, title);
   }
 
+  async compactSession(options: RuntimeCompactOptions): Promise<RuntimeCompactResult> {
+    const session = this.requiredSession(options.session_id);
+    const clientId = options.client_id ?? randomId("c");
+    const runId = randomId("run");
+    this.store.acquireLock(session.session_id, clientId, "cli");
+    const heartbeat = setInterval(() => {
+      this.store.heartbeatLock(session.session_id, clientId);
+    }, 15_000);
+    heartbeat.unref();
+    try {
+      throwIfAborted(options.signal);
+      const liveDiscoveredSkills = await this.skills.discover();
+      const liveEnabledSkillNames = this.skills.enabledSkillIds(liveDiscoveredSkills);
+      const liveTools = selectRuntimeTools(this.tools.list(), options.tool_names);
+      const promptSnapshot = this.ensurePromptSessionSnapshot(
+        session.session_id,
+        runId,
+        liveTools,
+        liveDiscoveredSkills,
+        liveEnabledSkillNames,
+      );
+      const discoveredSkills = promptSnapshot.skills;
+      const enabledSkillNames = promptSnapshot.enabledSkillNames;
+      const availableTools = promptSnapshot.tools;
+      const sessionNow = this.requiredSession(session.session_id);
+      const promptContext = this.promptBuilder.build(sessionNow, "", availableTools, discoveredSkills, undefined, enabledSkillNames);
+      const pressure = await this.compressor.assess(promptContext);
+      const reason = "manual";
+      options.onStatus?.({
+        type: "compression_start",
+        reason,
+        estimated_tokens: pressure.estimated_tokens,
+        threshold_tokens: pressure.threshold_tokens,
+      });
+      const compacted = await this.compressor.compact(sessionNow, promptContext, availableTools, reason, {
+        skills: discoveredSkills,
+        enabledSkillNames,
+        customInstructions: options.instructions,
+      });
+      this.store.appendEvent({
+        session_id: session.session_id,
+        run_id: runId,
+        type: "evidence.context_compression",
+        data: {
+          trigger: "manual",
+          reason,
+          estimated_tokens: pressure.estimated_tokens,
+          threshold_tokens: pressure.threshold_tokens,
+          epoch_id: compacted.epoch_id,
+          archive_resource_uri: compacted.resource_uri,
+          archived_events: compacted.archived_events,
+          estimated_tokens_before: compacted.estimated_tokens_before,
+          estimated_tokens_after: compacted.estimated_tokens_after,
+          compressed_tokens: compacted.compressed_tokens,
+          prompt_messages_before: compacted.prompt_messages_before,
+          prompt_messages_after: compacted.prompt_messages_after,
+          compressed_messages: compacted.compressed_messages,
+          protected_tail_events: compacted.protected_tail_events,
+          preserved_tail_events: compacted.preserved_tail_events,
+          preserved_rounds: compacted.preserved_rounds,
+          preserved_run_anchor_count: compacted.preserved_run_anchor_count,
+          protected_prompt_count: compacted.protected_user_prompts.length,
+          protected_user_prompts: compacted.protected_user_prompts,
+          summary_strategy: compacted.summary_strategy,
+          attempted_summary_strategies: compacted.attempted_summary_strategies,
+          failed_summary_strategies: compacted.failed_summary_strategies,
+          model_summary_failed: compacted.model_summary_failed,
+          threshold_source: pressure.threshold_source,
+          effective_window_tokens: pressure.effective_window_tokens,
+          output_reserve_tokens: pressure.output_reserve_tokens,
+          compact_buffer_tokens: pressure.compact_buffer_tokens,
+        },
+      });
+      options.onStatus?.({
+        type: "compression_end",
+        reason,
+        epoch_id: compacted.epoch_id,
+        estimated_tokens: pressure.estimated_tokens,
+        threshold_tokens: pressure.threshold_tokens,
+        archive_resource_uri: compacted.resource_uri,
+        archived_events: compacted.archived_events,
+        estimated_tokens_after: compacted.estimated_tokens_after,
+        compressed_tokens: compacted.compressed_tokens,
+        prompt_messages_before: compacted.prompt_messages_before,
+        prompt_messages_after: compacted.prompt_messages_after,
+        compressed_messages: compacted.compressed_messages,
+        protected_tail_events: compacted.protected_tail_events,
+        preserved_tail_events: compacted.preserved_tail_events,
+        preserved_rounds: compacted.preserved_rounds,
+        preserved_run_anchor_count: compacted.preserved_run_anchor_count,
+        summary: compacted.summary,
+        protected_user_prompts: compacted.protected_user_prompts,
+      });
+      return {
+        session: this.requiredSession(session.session_id),
+        run_id: runId,
+        epoch_id: compacted.epoch_id,
+        summary: compacted.summary,
+        summary_strategy: compacted.summary_strategy,
+        archive_resource_uri: compacted.resource_uri,
+        archived_events: compacted.archived_events,
+        estimated_tokens_before: compacted.estimated_tokens_before,
+        estimated_tokens_after: compacted.estimated_tokens_after,
+        compressed_tokens: compacted.compressed_tokens,
+        prompt_messages_before: compacted.prompt_messages_before,
+        prompt_messages_after: compacted.prompt_messages_after,
+        compressed_messages: compacted.compressed_messages,
+        protected_tail_events: compacted.protected_tail_events,
+        preserved_tail_events: compacted.preserved_tail_events,
+        preserved_rounds: compacted.preserved_rounds,
+        preserved_run_anchor_count: compacted.preserved_run_anchor_count,
+        protected_user_prompts: compacted.protected_user_prompts,
+        attempted_summary_strategies: compacted.attempted_summary_strategies,
+        failed_summary_strategies: compacted.failed_summary_strategies,
+        model_summary_failed: compacted.model_summary_failed,
+      };
+    } finally {
+      clearInterval(heartbeat);
+      this.store.releaseLock(session.session_id, clientId);
+    }
+  }
+
   private ensurePromptSessionSnapshot(
     sessionId: string,
     runId: string,
@@ -171,6 +333,78 @@ export class Runtime {
       data: promptSessionSnapshotToJson(snapshot),
     });
     return snapshot;
+  }
+
+  private prefixCacheCheck(sessionId: string, request: ModelRequest): JsonObject {
+    const previousRequests = this.store
+      .listEvents(sessionId)
+      .filter((event) => event.type === "model.request.started");
+    if (!previousRequests.length) {
+      return { prefix_cache_status: "new_epoch", prefix_cache_reason: "first_model_request" };
+    }
+    const requestToolSchemaHash = request.tool_schema_hash ?? "";
+    const previous = previousRequests.at(-1)!;
+    const sameEpoch = previousRequests.filter((event) => stringField(event.data.prompt_epoch_id) === request.prompt_epoch_id);
+    if (!sameEpoch.length) {
+      return {
+        prefix_cache_status: "new_epoch",
+        prefix_cache_reason: "prompt_epoch_changed",
+        prefix_cache_previous_epoch_id: stringField(previous.data.prompt_epoch_id),
+      };
+    }
+    const sameSchema = sameEpoch.filter((event) => stringField(event.data.tool_schema_hash) === requestToolSchemaHash);
+    if (!sameSchema.length) {
+      return {
+        prefix_cache_status: "changed",
+        prefix_cache_reason: "tool_schema_changed",
+        prefix_cache_parent_prompt_hash: stringField(sameEpoch.at(-1)?.data.prompt_hash),
+      };
+    }
+    let fallback: SessionEvent | undefined;
+    for (let index = sameSchema.length - 1; index >= 0; index -= 1) {
+      const candidate = sameSchema[index]!;
+      const promptHash = stringField(candidate.data.prompt_hash);
+      const messageCount = typeof candidate.data.prompt_message_count === "number" ? Math.trunc(candidate.data.prompt_message_count) : undefined;
+      if (!promptHash || messageCount === undefined || messageCount < 0) {
+        continue;
+      }
+      fallback ??= candidate;
+      if (messageCount > request.messages.length) {
+        continue;
+      }
+      const currentPrefixHash = prefixHashForMessages(request.messages, requestToolSchemaHash, messageCount);
+      if (currentPrefixHash !== promptHash) {
+        continue;
+      }
+      return {
+        prefix_cache_status: "safe",
+        prefix_cache_reason: candidate === previous ? "previous_prompt_is_prefix" : "prior_prompt_is_prefix",
+        prefix_cache_parent_prompt_hash: promptHash,
+        prefix_cache_parent_run_id: candidate.run_id,
+        prefix_cache_parent_step_index: optionalNumberField(candidate.data.step_index),
+        prefix_cache_checked_messages: messageCount,
+        prefix_cache_current_prefix_hash: currentPrefixHash,
+        prefix_cache_skipped_requests: sameSchema.length - 1 - index,
+      };
+    }
+    if (!fallback) {
+      return {
+        prefix_cache_status: "unknown",
+        prefix_cache_reason: "previous_request_missing_prefix_metadata",
+      };
+    }
+    const fallbackMessageCount = Math.max(0, Math.trunc(numberField(fallback.data.prompt_message_count) ?? 0));
+    const checkedMessages = Math.min(fallbackMessageCount, request.messages.length);
+    const currentPrefixHash = prefixHashForMessages(request.messages, requestToolSchemaHash, checkedMessages);
+    return {
+      prefix_cache_status: "changed",
+      prefix_cache_reason: "previous_prompt_not_prefix",
+      prefix_cache_parent_prompt_hash: stringField(fallback.data.prompt_hash),
+      prefix_cache_parent_run_id: fallback.run_id,
+      prefix_cache_parent_step_index: optionalNumberField(fallback.data.step_index),
+      prefix_cache_checked_messages: checkedMessages,
+      prefix_cache_current_prefix_hash: currentPrefixHash,
+    };
   }
 
   async run(options: RuntimeRunOptions): Promise<RuntimeRunResult> {
@@ -269,34 +503,94 @@ export class Runtime {
       let compressedThisRun = false;
       while (true) {
         throwIfAborted(options.signal);
+        if (currentPrompt === TOOL_LOOP_CONTINUATION_PROMPT) {
+          const continuationContext = currentTurnContextMessagesForSession(this.store, this.requiredSession(session.session_id));
+          if (continuationContext.length) {
+            this.store.appendEvent({
+              session_id: session.session_id,
+              run_id: runId,
+              type: "prompt.context",
+              data: {
+                request_class: requestClass,
+                visibility: "internal",
+                synthetic: "tool-loop-continuation",
+                messages: continuationContext as unknown as JsonObject[],
+              },
+            });
+          }
+          this.store.appendEvent({
+            session_id: session.session_id,
+            run_id: runId,
+            type: "user.prompt",
+            data: {
+              prompt: currentPrompt,
+              request_class: requestClass,
+              visibility: "internal",
+              synthetic: "tool-loop-continuation",
+            },
+          });
+        }
         const sessionNow = this.requiredSession(session.session_id);
         const promptContext = this.promptBuilder.build(sessionNow, currentPrompt, availableTools, discoveredSkills, runId, enabledSkillNames);
         const pressure = await this.compressor.assess(promptContext);
         if (pressure.should_compact && (pressure.reason !== "forced-by-config" || !compressedThisRun)) {
+          if (autoCompactPaused(this.store, session.session_id, this.config)) {
+            this.store.appendEvent({
+              session_id: session.session_id,
+              run_id: runId,
+              type: "context.compaction.skipped",
+              data: {
+                reason: pressure.reason,
+                skipped_reason: "auto-failure-circuit-breaker",
+                estimated_tokens: pressure.estimated_tokens,
+                threshold_tokens: pressure.threshold_tokens,
+                threshold_source: pressure.threshold_source,
+                prompt_epoch_id: promptContext.epoch.prompt_epoch_id,
+                request_class: requestClass,
+                visibility,
+              },
+            });
+          } else {
           options.onStatus?.({
             type: "compression_start",
             reason: pressure.reason,
             estimated_tokens: pressure.estimated_tokens,
             threshold_tokens: pressure.threshold_tokens,
           });
-          const compacted = await this.compressor.compact(sessionNow, promptContext, availableTools, pressure.reason, {
-            activeRunId: runId,
-            currentPrompt,
-            skills: discoveredSkills,
-            enabledSkillNames,
-          });
+          let compacted: Awaited<ReturnType<ContextCompressor["compact"]>>;
+          try {
+            compacted = await this.compressor.compact(sessionNow, promptContext, availableTools, pressure.reason, {
+              activeRunId: runId,
+              currentPrompt,
+              skills: discoveredSkills,
+              enabledSkillNames,
+            });
+          } catch (error) {
+            recordAutoCompactFailure(this.store, session.session_id, runId, pressure.reason, promptContext.epoch.prompt_epoch_id, error, false, this.config);
+            throw error;
+          }
+          if (compacted.model_summary_failed) {
+            recordAutoCompactFailure(this.store, session.session_id, runId, pressure.reason, promptContext.epoch.prompt_epoch_id, undefined, true, this.config, compacted);
+          }
           compressedThisRun = true;
           this.store.appendEvent({
             session_id: session.session_id,
             run_id: runId,
             type: "evidence.context_compression",
             data: {
+              trigger: "auto",
               reason: pressure.reason,
               estimated_tokens: pressure.estimated_tokens,
               threshold_tokens: pressure.threshold_tokens,
               epoch_id: compacted.epoch_id,
               archive_resource_uri: compacted.resource_uri,
               archived_events: compacted.archived_events,
+              estimated_tokens_before: compacted.estimated_tokens_before,
+              estimated_tokens_after: compacted.estimated_tokens_after,
+              compressed_tokens: compacted.compressed_tokens,
+              prompt_messages_before: compacted.prompt_messages_before,
+              prompt_messages_after: compacted.prompt_messages_after,
+              compressed_messages: compacted.compressed_messages,
               protected_tail_events: compacted.protected_tail_events,
               preserved_tail_events: compacted.preserved_tail_events,
               preserved_rounds: compacted.preserved_rounds,
@@ -304,15 +598,28 @@ export class Runtime {
               protected_prompt_count: compacted.protected_user_prompts.length,
               protected_user_prompts: compacted.protected_user_prompts,
               summary_strategy: compacted.summary_strategy,
+              attempted_summary_strategies: compacted.attempted_summary_strategies,
+              failed_summary_strategies: compacted.failed_summary_strategies,
+              model_summary_failed: compacted.model_summary_failed,
+              threshold_source: pressure.threshold_source,
+              effective_window_tokens: pressure.effective_window_tokens,
+              output_reserve_tokens: pressure.output_reserve_tokens,
+              compact_buffer_tokens: pressure.compact_buffer_tokens,
             },
           });
           options.onStatus?.({
             type: "compression_end",
             reason: pressure.reason,
+            epoch_id: compacted.epoch_id,
             estimated_tokens: pressure.estimated_tokens,
             threshold_tokens: pressure.threshold_tokens,
             archive_resource_uri: compacted.resource_uri,
             archived_events: compacted.archived_events,
+            estimated_tokens_after: compacted.estimated_tokens_after,
+            compressed_tokens: compacted.compressed_tokens,
+            prompt_messages_before: compacted.prompt_messages_before,
+            prompt_messages_after: compacted.prompt_messages_after,
+            compressed_messages: compacted.compressed_messages,
             protected_tail_events: compacted.protected_tail_events,
             preserved_tail_events: compacted.preserved_tail_events,
             preserved_rounds: compacted.preserved_rounds,
@@ -320,6 +627,7 @@ export class Runtime {
             summary: compacted.summary,
             protected_user_prompts: compacted.protected_user_prompts,
           });
+          }
         }
         throwIfAborted(options.signal);
         stepIndex += 1;
@@ -348,6 +656,7 @@ export class Runtime {
           prompt_epoch_id: rebuilt.epoch.prompt_epoch_id,
           cache_salt: rebuilt.epoch.cache_salt,
         };
+        const prefixCache = this.prefixCacheCheck(session.session_id, request);
         this.store.appendEvent({
           session_id: session.session_id,
           run_id: runId,
@@ -364,6 +673,8 @@ export class Runtime {
             estimated_tokens: rebuilt.estimated_tokens,
             prompt_epoch_id: request.prompt_epoch_id,
             visibility,
+            prompt_message_count: request.messages.length,
+            ...prefixCache,
           },
         });
         options.onStatus?.({ type: "model_start", model: request.model });
@@ -372,24 +683,53 @@ export class Runtime {
         } catch (error) {
           if (isContextLengthExceededError(error) && !compressedThisRun) {
             const reason = "provider-context-limit";
+            if (autoCompactPaused(this.store, session.session_id, this.config)) {
+              this.store.appendEvent({
+                session_id: session.session_id,
+                run_id: runId,
+                type: "context.compaction.skipped",
+                data: {
+                  reason,
+                  skipped_reason: "auto-failure-circuit-breaker",
+                  estimated_tokens: rebuilt.estimated_tokens,
+                  threshold_tokens: rebuilt.estimated_tokens,
+                  prompt_epoch_id: rebuilt.epoch.prompt_epoch_id,
+                  provider_error: errorMessage(error),
+                  provider_diagnostics: modelErrorDiagnostics(error) as never,
+                  request_class: requestClass,
+                  visibility,
+                },
+              });
+              throw error;
+            }
             options.onStatus?.({
               type: "compression_start",
               reason,
               estimated_tokens: rebuilt.estimated_tokens,
               threshold_tokens: rebuilt.estimated_tokens,
             });
-            const compacted = await this.compressor.compact(sessionNow, rebuilt, availableTools, reason, {
-              activeRunId: runId,
-              currentPrompt,
-              skills: discoveredSkills,
-              enabledSkillNames,
-            });
+            let compacted: Awaited<ReturnType<ContextCompressor["compact"]>>;
+            try {
+              compacted = await this.compressor.compact(sessionNow, rebuilt, availableTools, reason, {
+                activeRunId: runId,
+                currentPrompt,
+                skills: discoveredSkills,
+                enabledSkillNames,
+              });
+            } catch (compactError) {
+              recordAutoCompactFailure(this.store, session.session_id, runId, reason, rebuilt.epoch.prompt_epoch_id, compactError, false, this.config);
+              throw compactError;
+            }
+            if (compacted.model_summary_failed) {
+              recordAutoCompactFailure(this.store, session.session_id, runId, reason, rebuilt.epoch.prompt_epoch_id, undefined, true, this.config, compacted);
+            }
             compressedThisRun = true;
             this.store.appendEvent({
               session_id: session.session_id,
               run_id: runId,
               type: "evidence.context_compression",
               data: {
+                trigger: "auto",
                 reason,
                 estimated_tokens: rebuilt.estimated_tokens,
                 threshold_tokens: rebuilt.estimated_tokens,
@@ -398,6 +738,12 @@ export class Runtime {
                 epoch_id: compacted.epoch_id,
                 archive_resource_uri: compacted.resource_uri,
                 archived_events: compacted.archived_events,
+                estimated_tokens_before: compacted.estimated_tokens_before,
+                estimated_tokens_after: compacted.estimated_tokens_after,
+                compressed_tokens: compacted.compressed_tokens,
+                prompt_messages_before: compacted.prompt_messages_before,
+                prompt_messages_after: compacted.prompt_messages_after,
+                compressed_messages: compacted.compressed_messages,
                 protected_tail_events: compacted.protected_tail_events,
                 preserved_tail_events: compacted.preserved_tail_events,
                 preserved_rounds: compacted.preserved_rounds,
@@ -405,15 +751,24 @@ export class Runtime {
                 protected_prompt_count: compacted.protected_user_prompts.length,
                 protected_user_prompts: compacted.protected_user_prompts,
                 summary_strategy: compacted.summary_strategy,
+                attempted_summary_strategies: compacted.attempted_summary_strategies,
+                failed_summary_strategies: compacted.failed_summary_strategies,
+                model_summary_failed: compacted.model_summary_failed,
               },
             });
             options.onStatus?.({
               type: "compression_end",
               reason,
+              epoch_id: compacted.epoch_id,
               estimated_tokens: rebuilt.estimated_tokens,
               threshold_tokens: rebuilt.estimated_tokens,
               archive_resource_uri: compacted.resource_uri,
               archived_events: compacted.archived_events,
+              estimated_tokens_after: compacted.estimated_tokens_after,
+              compressed_tokens: compacted.compressed_tokens,
+              prompt_messages_before: compacted.prompt_messages_before,
+              prompt_messages_after: compacted.prompt_messages_after,
+              compressed_messages: compacted.compressed_messages,
               protected_tail_events: compacted.protected_tail_events,
               preserved_tail_events: compacted.preserved_tail_events,
               preserved_rounds: compacted.preserved_rounds,
@@ -508,30 +863,63 @@ export class Runtime {
       const finalPromptContext = this.promptBuilder.build(finalSessionNow, currentPrompt, availableTools, discoveredSkills, runId, enabledSkillNames);
       const finalPressure = await this.compressor.assess(finalPromptContext);
       if (finalPressure.should_compact && (finalPressure.reason !== "forced-by-config" || !compressedThisRun)) {
+        if (autoCompactPaused(this.store, session.session_id, this.config)) {
+          this.store.appendEvent({
+            session_id: session.session_id,
+            run_id: runId,
+            type: "context.compaction.skipped",
+            data: {
+              reason: `post-run:${finalPressure.reason}`,
+              skipped_reason: "auto-failure-circuit-breaker",
+              estimated_tokens: finalPressure.estimated_tokens,
+              threshold_tokens: finalPressure.threshold_tokens,
+              threshold_source: finalPressure.threshold_source,
+              prompt_epoch_id: finalPromptContext.epoch.prompt_epoch_id,
+              request_class: requestClass,
+              visibility,
+            },
+          });
+        } else {
         options.onStatus?.({
           type: "compression_start",
           reason: `post-run:${finalPressure.reason}`,
           estimated_tokens: finalPressure.estimated_tokens,
           threshold_tokens: finalPressure.threshold_tokens,
         });
-        const compacted = await this.compressor.compact(finalSessionNow, finalPromptContext, availableTools, `post-run:${finalPressure.reason}`, {
-          activeRunId: runId,
-          currentPrompt,
-          skills: discoveredSkills,
-          enabledSkillNames,
-        });
+        let compacted: Awaited<ReturnType<ContextCompressor["compact"]>>;
+        try {
+          compacted = await this.compressor.compact(finalSessionNow, finalPromptContext, availableTools, `post-run:${finalPressure.reason}`, {
+            activeRunId: runId,
+            currentPrompt,
+            skills: discoveredSkills,
+            enabledSkillNames,
+          });
+        } catch (error) {
+          recordAutoCompactFailure(this.store, session.session_id, runId, `post-run:${finalPressure.reason}`, finalPromptContext.epoch.prompt_epoch_id, error, false, this.config);
+          throw error;
+        }
+        if (compacted.model_summary_failed) {
+          recordAutoCompactFailure(this.store, session.session_id, runId, `post-run:${finalPressure.reason}`, finalPromptContext.epoch.prompt_epoch_id, undefined, true, this.config, compacted);
+        }
         compressedThisRun = true;
         this.store.appendEvent({
           session_id: session.session_id,
           run_id: runId,
           type: "evidence.context_compression",
           data: {
+            trigger: "auto",
             reason: `post-run:${finalPressure.reason}`,
             estimated_tokens: finalPressure.estimated_tokens,
             threshold_tokens: finalPressure.threshold_tokens,
             epoch_id: compacted.epoch_id,
             archive_resource_uri: compacted.resource_uri,
             archived_events: compacted.archived_events,
+            estimated_tokens_before: compacted.estimated_tokens_before,
+            estimated_tokens_after: compacted.estimated_tokens_after,
+            compressed_tokens: compacted.compressed_tokens,
+            prompt_messages_before: compacted.prompt_messages_before,
+            prompt_messages_after: compacted.prompt_messages_after,
+            compressed_messages: compacted.compressed_messages,
             protected_tail_events: compacted.protected_tail_events,
             preserved_tail_events: compacted.preserved_tail_events,
             preserved_rounds: compacted.preserved_rounds,
@@ -539,15 +927,28 @@ export class Runtime {
             protected_prompt_count: compacted.protected_user_prompts.length,
             protected_user_prompts: compacted.protected_user_prompts,
             summary_strategy: compacted.summary_strategy,
+            attempted_summary_strategies: compacted.attempted_summary_strategies,
+            failed_summary_strategies: compacted.failed_summary_strategies,
+            model_summary_failed: compacted.model_summary_failed,
+            threshold_source: finalPressure.threshold_source,
+            effective_window_tokens: finalPressure.effective_window_tokens,
+            output_reserve_tokens: finalPressure.output_reserve_tokens,
+            compact_buffer_tokens: finalPressure.compact_buffer_tokens,
           },
         });
         options.onStatus?.({
           type: "compression_end",
           reason: `post-run:${finalPressure.reason}`,
+          epoch_id: compacted.epoch_id,
           estimated_tokens: finalPressure.estimated_tokens,
           threshold_tokens: finalPressure.threshold_tokens,
           archive_resource_uri: compacted.resource_uri,
           archived_events: compacted.archived_events,
+          estimated_tokens_after: compacted.estimated_tokens_after,
+          compressed_tokens: compacted.compressed_tokens,
+          prompt_messages_before: compacted.prompt_messages_before,
+          prompt_messages_after: compacted.prompt_messages_after,
+          compressed_messages: compacted.compressed_messages,
           protected_tail_events: compacted.protected_tail_events,
           preserved_tail_events: compacted.preserved_tail_events,
           preserved_rounds: compacted.preserved_rounds,
@@ -555,6 +956,7 @@ export class Runtime {
           summary: compacted.summary,
           protected_user_prompts: compacted.protected_user_prompts,
         });
+        }
       }
       const metrics = runMetrics(startedAt, goalTokenUsage, toolRounds, toolCalls);
       const rtk = rtkSavingsForRun(this.store, session.session_id, runId, goalTokenUsage, toolCalls, this.config);
@@ -971,6 +1373,86 @@ function runMetrics(startedAt: number, tokens: number, toolRounds: number, toolC
     tool_calls: toolCalls,
     duration_ms: durationMs,
   };
+}
+
+function autoCompactPaused(store: SessionStore, sessionId: string, config: VllmAgentConfig): boolean {
+  const limit = autoCompactFailureLimit(config);
+  if (limit <= 0) {
+    return false;
+  }
+  return consecutiveAutoCompactFailures(store.listEvents(sessionId)) >= limit;
+}
+
+function consecutiveAutoCompactFailures(events: SessionEvent[]): number {
+  let failures = 0;
+  for (const event of events.slice().reverse()) {
+    if (event.type === "evidence.context_compression" && event.data.trigger !== "manual") {
+      if (event.data.model_summary_failed === true) {
+        continue;
+      }
+      return failures;
+    }
+    if (event.type === "context.compaction.failed" && event.data.trigger !== "manual") {
+      failures += 1;
+      continue;
+    }
+    if (event.type === "context.compaction.skipped" && event.data.skipped_reason === "auto-failure-circuit-breaker") {
+      continue;
+    }
+  }
+  return failures;
+}
+
+function recordAutoCompactFailure(
+  store: SessionStore,
+  sessionId: string,
+  runId: string,
+  reason: string,
+  promptEpochId: string | undefined,
+  error: unknown,
+  soft: boolean,
+  config: VllmAgentConfig,
+  compacted?: Awaited<ReturnType<ContextCompressor["compact"]>>,
+): void {
+  const priorFailures = consecutiveAutoCompactFailures(store.listEvents(sessionId));
+  const failures = priorFailures + 1;
+  const limit = autoCompactFailureLimit(config);
+  store.appendEvent({
+    session_id: sessionId,
+    run_id: runId,
+    type: "context.compaction.failed",
+    data: {
+      trigger: "auto",
+      reason,
+      prompt_epoch_id: promptEpochId,
+      soft,
+      consecutive_failures: failures,
+      failure_limit: limit,
+      error: error === undefined ? undefined : errorMessage(error),
+      summary_strategy: compacted?.summary_strategy,
+      attempted_summary_strategies: compacted?.attempted_summary_strategies,
+      failed_summary_strategies: compacted?.failed_summary_strategies,
+      model_summary_failed: compacted?.model_summary_failed,
+    },
+  });
+  if (limit > 0 && failures >= limit) {
+    store.appendEvent({
+      session_id: sessionId,
+      run_id: runId,
+      type: "context.compaction.auto_paused",
+      data: {
+        reason: "auto-failure-circuit-breaker",
+        consecutive_failures: failures,
+        failure_limit: limit,
+        manual_compact_allowed: true,
+      },
+    });
+  }
+}
+
+function autoCompactFailureLimit(config: VllmAgentConfig): number {
+  const value = config.context.auto_compact_failure_limit;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 3;
 }
 
 function rtkSavingsForRun(
@@ -1430,6 +1912,17 @@ function stringField(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function optionalNumberField(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 function numberField(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function prefixHashForMessages(messages: ModelMessage[], toolSchemaHash: string, count: number): string {
+  return hashJson({
+    messages: messages.slice(0, Math.max(0, Math.trunc(count))),
+    tool_schema_hash: toolSchemaHash,
+  });
 }

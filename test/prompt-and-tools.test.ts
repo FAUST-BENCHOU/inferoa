@@ -12,6 +12,7 @@ import { ToolRegistry } from "../src/tools/registry.js";
 import { PermissionPolicy } from "../src/tools/permissions.js";
 import { readLoopInbox } from "../src/loop/inbox.js";
 import { SkillRegistry, type SkillDescriptor } from "../src/skills/registry.js";
+import { hashJson } from "../src/util/hash.js";
 import type { VllmAgentConfig, WorkspaceIdentity } from "../src/types.js";
 
 function config(): VllmAgentConfig {
@@ -115,7 +116,6 @@ test("PromptBuilder fails closed when an existing prompt snapshot is invalid", a
       type: PROMPT_SESSION_SNAPSHOT_EVENT,
       data: {
         tools: [],
-        permission_mode: "full_access",
       },
     });
 
@@ -123,6 +123,30 @@ test("PromptBuilder fails closed when an existing prompt snapshot is invalid", a
       () => new PromptBuilder(config(), store, workspace).build(session, "hello", CORE_TOOL_DEFINITIONS),
       /Invalid prompt session snapshot/,
     );
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("PromptBuilder accepts a frozen prompt snapshot with no tools", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-empty-tool-prompt-snapshot-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_empty_tool_prompt_snapshot", root: dir, alias: "empty-tool-prompt-snapshot" };
+    const session = store.createSession(workspace, "empty-tool-prompt-snapshot");
+    store.appendEvent({
+      session_id: session.session_id,
+      type: PROMPT_SESSION_SNAPSHOT_EVENT,
+      data: {
+        tools: [],
+        permission_mode: "full_access",
+      },
+    });
+
+    const prompt = new PromptBuilder(config(), store, workspace).build(session, "hello", CORE_TOOL_DEFINITIONS);
+
+    assert.equal(prompt.tool_schema_hash, hashJson([]));
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });
@@ -1071,6 +1095,48 @@ test("PermissionPolicy allows read-only external inspection commands in unattend
     );
     assert.equal(prChecks.status, "allow");
   } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("run_command schema advertises synchronous and background process modes", () => {
+  const runCommand = CORE_TOOL_DEFINITIONS.find((tool) => tool.name === "run_command");
+  const readProcess = CORE_TOOL_DEFINITIONS.find((tool) => tool.name === "read_process");
+
+  assert.ok(runCommand);
+  assert.ok(readProcess);
+  assert.match(runCommand.description, /short synchronous commands/);
+  assert.match(runCommand.description, /background=true/);
+  assert.match(runCommand.description, /read_process/);
+  const properties = runCommand.parameters.properties as Record<string, { description?: string }> | undefined;
+  assert.match(String(properties?.background?.description ?? ""), /asynchronously/);
+  assert.match(readProcess.description, /background process started by run_command/);
+});
+
+test("ToolRegistry stores large command output as a resource and returns a bounded excerpt", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-command-large-output-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_command_large_output", root: dir, alias: "command-large-output" };
+    const session = store.createSession(workspace, "command-large-output");
+    const registry = new ToolRegistry(config(), workspace, store);
+    const script = "process.stdout.write(JSON.stringify({items:Array.from({length:900},(_,i)=>({i,text:'x'.repeat(20)}))}))";
+    const result = await registry.call(
+      { id: "large_json", name: "run_command", arguments: { command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`, timeout_ms: 5000 } },
+      { session_id: session.session_id, run_id: "run_large_json" },
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.data?.output_truncated, true);
+    assert.equal(typeof result.data?.output_chars, "number");
+    assert.equal(result.data?.output_resource_uri, result.resource_uri);
+    assert.match(String(result.data?.output ?? ""), /\[truncated \d+ chars\]/);
+    assert.ok(String(result.data?.output ?? "").length < 13_000);
+    const resource = store.readResource(String(result.resource_uri));
+    assert.equal(resource?.kind, "command.output");
+    assert.match(resource?.content ?? "", /"items"/);
+  } finally {
+    store.close();
     await rm(dir, { recursive: true, force: true });
   }
 });

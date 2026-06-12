@@ -22,6 +22,7 @@ subcommands.
 | [`/plan`](../workflows/plan-mode.md) | Start or manage plan mode |
 | `/tokenmaxxing` | Show token, cache, RTK, and routing savings |
 | `/context` | Show context usage, compression state, and code intelligence |
+| `/compact` | Compact conversation history into recoverable memory; optional instructions may follow |
 | `/tools` | Show fixed tool schemas and renderer status |
 | `/sessions` | Manage chat sessions |
 | `/daemon` | Manage background daemon runs |
@@ -64,6 +65,11 @@ subcommands.
 /plan approve                Approve the current plan for execution
 /plan drop                   Drop the current plan
 
+# Tokenmaxxing
+/tokenmaxxing                 Show token, cache, RTK, and routing savings
+/tokenmaxxing trend           Show pageable metric trend panels
+/tokenmaxxing signals         Show raw lifecycle and endpoint evidence rows
+
 # Skills
 /skills list                 Show discovered skills
 /skills manage               Enable or disable skills
@@ -78,6 +84,7 @@ subcommands.
 # Context
 /context                     Show context and code intelligence state
 /context reindex             Rebuild the context index
+/compact [instructions]      Compact conversation history now
 
 # Tools
 /tools                       Show fixed tool schemas

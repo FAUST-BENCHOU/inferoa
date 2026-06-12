@@ -16,6 +16,8 @@ interface LiveProcess {
 }
 
 const liveProcesses = new Map<string, LiveProcess>();
+const COMMAND_OUTPUT_INLINE_LIMIT = 12_000;
+const COMMAND_ERROR_INLINE_LIMIT = 4_000;
 
 function key(sessionId: string, processId: string): string {
   return `${sessionId}:${processId}`;
@@ -96,9 +98,9 @@ export async function runCommand(args: JsonObject, context: ToolExecutionContext
     timeout_ms: timeoutMs,
   });
   const combined = [result.stdout, result.stderr].filter(Boolean).join("\n");
-  const truncated = truncateText(combined);
+  const truncated = truncateText(combined, COMMAND_OUTPUT_INLINE_LIMIT);
   const resource =
-    truncated.truncated || combined.length > 24_000
+    truncated.truncated || combined.length > COMMAND_OUTPUT_INLINE_LIMIT
       ? context.store.putResource(context.session_id, "command.output", combined, {
           command,
           cwd,
@@ -119,6 +121,8 @@ export async function runCommand(args: JsonObject, context: ToolExecutionContext
       code: result.code,
       timed_out: result.timed_out,
       resource_uri: resource,
+      output_chars: combined.length,
+      output_truncated: truncated.truncated,
     },
   });
   const goal = readGoalState(context.store, context.session_id)?.goal;
@@ -143,9 +147,17 @@ export async function runCommand(args: JsonObject, context: ToolExecutionContext
       code: result.code,
       timed_out: result.timed_out,
       output: truncated.text,
+      output_chars: combined.length,
+      output_truncated: truncated.truncated,
+      output_resource_uri: resource,
     },
     resource_uri: resource,
-    error: result.code === 0 && !result.timed_out ? undefined : { code: result.timed_out ? "command_timeout" : "command_failed", message: result.stderr || result.stdout },
+    error: result.code === 0 && !result.timed_out
+      ? undefined
+      : {
+          code: result.timed_out ? "command_timeout" : "command_failed",
+          message: truncateText(result.stderr || result.stdout, COMMAND_ERROR_INLINE_LIMIT).text,
+        },
   };
 }
 

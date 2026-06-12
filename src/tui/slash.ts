@@ -13,6 +13,7 @@ export type SlashCommandName =
   | "plan"
   | "tokenmaxxing"
   | "context"
+  | "compact"
   | "tools"
   | "sessions"
   | "daemon"
@@ -51,6 +52,7 @@ export const SLASH_COMMANDS: SlashCommandSpec[] = [
   { name: "plan", description: "Start or manage plan mode" },
   { name: "tokenmaxxing", description: "Show token, cache, RTK, and routing savings" },
   { name: "context", description: "Show context usage and compression state" },
+  { name: "compact", description: "Compact conversation history into recoverable memory" },
   { name: "tools", description: "Show fixed tool schemas and renderer status" },
   { name: "sessions", description: "Manage chat sessions" },
   { name: "daemon", description: "Manage background daemon runs", suggested: false },
@@ -94,6 +96,7 @@ export const SLASH_SUBCOMMANDS: SlashSubcommandSpec[] = [
   { command: "plan", name: "approve", value: "/plan approve", description: "Approve the current plan for execution" },
   { command: "plan", name: "drop", value: "/plan drop", description: "Drop the current plan" },
   { command: "tokenmaxxing", name: "signals", value: "/tokenmaxxing signals", description: "Show raw tokenmaxxing evidence and lifecycle signals" },
+  { command: "tokenmaxxing", name: "trend", value: "/tokenmaxxing trend", description: "Show pageable metric trend panels" },
   { command: "access", name: "status", value: "/access status", description: "Show this workspace's access mode" },
   { command: "access", name: "full", value: "/access full", description: "Allow full local file and tool access for this workspace" },
   { command: "access", name: "auto", value: "/access auto", description: "Auto-approve routine tools for this workspace" },

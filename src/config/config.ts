@@ -251,7 +251,19 @@ function pruneConfig(config: VllmAgentConfig): void {
   for (const policy of Object.values(config.permissions?.workspaces ?? {})) {
     pruneKeys(policy, ["mode", "custom"]);
   }
-  pruneKeys(config.context, ["compression_threshold", "context_window", "protected_recent_loops", "force_compression", "engine"]);
+  pruneKeys(config.context, [
+    "compression_threshold",
+    "context_window",
+    "output_reserve_tokens",
+    "compact_buffer_tokens",
+    "auto_compact_failure_limit",
+    "compact_recent_file_limit",
+    "compact_recent_file_token_limit",
+    "compact_recent_total_token_limit",
+    "protected_recent_loops",
+    "force_compression",
+    "engine",
+  ]);
   pruneKeys(config.context?.engine, ["provider", "startup", "require_ready_before_chat", "watch"]);
   pruneKeys(config.skills, ["enabled", "managed_installs"]);
   pruneKeys(config.web_search, ["provider", "base_url", "api_key_ref", "api_key"]);

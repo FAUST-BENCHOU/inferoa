@@ -95,6 +95,12 @@ export interface VllmAgentConfig {
   context: {
     compression_threshold: number;
     context_window: number;
+    output_reserve_tokens?: number;
+    compact_buffer_tokens?: number;
+    auto_compact_failure_limit?: number;
+    compact_recent_file_limit?: number;
+    compact_recent_file_token_limit?: number;
+    compact_recent_total_token_limit?: number;
     protected_recent_loops?: number;
     force_compression?: boolean;
     engine?: {

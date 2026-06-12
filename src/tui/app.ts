@@ -133,7 +133,14 @@ import { cacheFooterSummaryForRun, formatDuration, renderCacheFooter, type Cache
 import { renderCompactEventLine, renderSessionActivityLines } from "./event-view.js";
 import { renderModeMetadataRight } from "./mode-footer.js";
 import { renderPlanDocumentSurface } from "./plan-view.js";
-import { renderTokenmaxxingRows, renderTokenmaxxingScreen, tokenmaxxingScreenPageCount, type TokenmaxxingScreenRow } from "./tokenmaxxing-view.js";
+import {
+  renderTokenmaxxingRows,
+  renderTokenmaxxingScreen,
+  renderTokenmaxxingTrendScreen,
+  tokenmaxxingScreenPageCount,
+  tokenmaxxingTrendPageCount,
+  type TokenmaxxingScreenRow,
+} from "./tokenmaxxing-view.js";
 import { composerEraseRowsForResize } from "./resize.js";
 import { RESUME_SESSION_PAGE_SIZE, resumeSessionPage } from "./session-picker.js";
 import { filterProviderPickerOptions, providerPickerPage } from "./provider-picker.js";
@@ -1510,6 +1517,9 @@ export class TuiApp {
         case "context":
           await this.renderContextView(args);
           return;
+        case "compact":
+          await this.renderManualCompactView(args);
+          return;
         case "tools":
           this.renderToolsView(args);
           return;
@@ -2725,11 +2735,101 @@ export class TuiApp {
       this.renderPanel("Tokenmaxxing", ["No active session yet. Run a prompt or /self-improve learn first."]);
       return;
     }
-    if (action && action !== "signals" && action !== "signal" && !wantsSelfImprove) {
-      this.renderPanel("Tokenmaxxing", [`Unknown tokenmaxxing view '${action}'.`, fg256(244, "Use /tokenmaxxing, /tokenmaxxing signals, or /tokenmaxxing self-improve.")]);
+    if (action && action !== "signals" && action !== "signal" && action !== "trend" && !wantsSelfImprove) {
+      this.renderPanel("Tokenmaxxing", [`Unknown tokenmaxxing view '${action}'.`, fg256(244, "Use /tokenmaxxing, /tokenmaxxing trend, /tokenmaxxing signals, or /tokenmaxxing self-improve.")]);
+      return;
+    }
+    if (action === "trend") {
+      await this.renderTokenmaxxingTrendFullscreen(session);
       return;
     }
     await this.renderTokenmaxxingFullscreen(session, { signals: action === "signals" || action === "signal" });
+  }
+
+  private async renderTokenmaxxingTrendFullscreen(session: SessionRecord): Promise<void> {
+    this.#rl?.pause();
+    this.suspendTranscriptOutput();
+    let pageIndex = 0;
+    let renderedLines: string[] = [];
+    let renderedWidth = 0;
+    let renderedCursorLine = 0;
+    let closed = false;
+    const clampPage = () => {
+      const pageCount = tokenmaxxingTrendPageCount();
+      pageIndex = Math.max(0, Math.min(pageIndex, pageCount - 1));
+    };
+    const render = () => {
+      const width = safeTerminalWidth();
+      const height = terminalHeight();
+      const events = this.app.store.listEvents(session.session_id);
+      const evidence = this.app.store.listEndpointEvidence(session.session_id);
+      clampPage();
+      const screen = renderTokenmaxxingTrendScreen(events, evidence, width, height, pageIndex);
+      const sameFrame = renderedWidth === width && renderedLines.length === screen.length && renderedLines.every((line, index) => line === screen[index]);
+      if (sameFrame) {
+        return;
+      }
+      const canPatch = renderedLines.length > 0 && renderedWidth === width && renderedLines.length === screen.length;
+      if (canPatch) {
+        stdout.write(
+          terminalBlockPatchSequence(
+            { lines: renderedLines, cursorLine: renderedCursorLine, cursorColumn: 0, width: renderedWidth },
+            { lines: screen, cursorLine: screen.length - 1, cursorColumn: 0 },
+          ),
+        );
+      } else {
+        stdout.write(`${ansi.clear}${ansi.hideCursor}${screen.join("\n")}`);
+      }
+      renderedLines = screen;
+      renderedWidth = width;
+      renderedCursorLine = screen.length - 1;
+    };
+
+    render();
+    const interval = setInterval(render, 1000);
+    (interval as { unref?: () => void }).unref?.();
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        if (closed) {
+          return;
+        }
+        closed = true;
+        clearInterval(interval);
+        stdin.off("data", onData);
+        if (stdin.isTTY) {
+          stdin.setRawMode(false);
+        }
+        const deferredTranscript = this.resumeTranscriptOutput();
+        stdout.write(ansi.showCursor);
+        this.resumeReadline();
+        this.redrawVisibleSessionSurface();
+        if (deferredTranscript) {
+          this.writeTranscript(deferredTranscript);
+        }
+        resolve();
+      };
+      const page = (delta: number) => {
+        pageIndex += delta;
+        clampPage();
+        render();
+      };
+      const onData = (chunk: Buffer) => {
+        for (const key of terminalInputTokens(chunk.toString("utf8"))) {
+          if (key === "\u0003" || key === "\u001b") {
+            done();
+            return;
+          }
+          if (key === "\u001b[D") {
+            page(-1);
+          } else if (key === "\u001b[C") {
+            page(1);
+          }
+        }
+      };
+      stdin.setRawMode(true);
+      stdin.resume();
+      stdin.on("data", onData);
+    });
   }
 
   private async renderTokenmaxxingFullscreen(session: SessionRecord, options: { signals?: boolean } = {}): Promise<void> {
@@ -2886,6 +2986,48 @@ export class TuiApp {
       fg256(39, "Compression events"),
       ...(recent.length ? recent : ["  none"]),
     ]);
+  }
+
+  private async renderManualCompactView(args = ""): Promise<void> {
+    const session = this.optionalSession();
+    if (!session) {
+      this.renderPanel("Compact", ["No active session yet."]);
+      return;
+    }
+    const activity = this.startActivityIndicator(formatCompressionStartActivity({
+      type: "compression_start",
+      reason: "manual",
+      estimated_tokens: 0,
+      threshold_tokens: 0,
+    }));
+    try {
+      const result = await this.app.runtime.compactSession({
+        session_id: session.session_id,
+        client_id: randomId("tui"),
+        instructions: args.trim() || undefined,
+        onStatus: (event) => {
+          if (event.type === "compression_start") {
+            activity.status(formatCompressionStartActivity(event));
+          }
+          if (event.type === "compression_end") {
+            activity.record(formatCompressionActivityLine(event));
+          }
+        },
+      });
+      activity.stop({ redraw: false });
+      this.#sessionId = result.session.session_id;
+      const summaryLines = result.summary.split(/\r?\n/).filter(Boolean).slice(0, 8);
+      this.renderPanel("Compact", [
+        `${fg256(48, "done")} ${result.archived_events} events archived`,
+        `${fg256(39, "strategy")} ${result.summary_strategy}`,
+        `${fg256(39, "archive")} ${result.archive_resource_uri}`,
+        `${fg256(39, "preserved")} ${result.preserved_tail_events} tail events · ${result.preserved_rounds} rounds`,
+        ...(summaryLines.length ? ["", fg256(39, "Summary"), ...summaryLines.map((line) => `  ${truncateToWidth(line, Math.max(20, terminalWidth() - 8))}`)] : []),
+      ]);
+    } catch (error) {
+      activity.stop({ redraw: false });
+      this.renderNotice(error instanceof Error ? error.message : String(error));
+    }
   }
 
   private renderToolsView(args = ""): void {
@@ -4445,7 +4587,7 @@ export class TuiApp {
     this.resetVisibleSessionSurface();
     stdout.write(ansi.clear);
     this.writeHomeFrame();
-    const transcript = renderSessionTranscript(this.app.store.listEvents(session.session_id), safeTerminalWidth());
+    const transcript = renderSessionTranscript(this.app.store.listEvents(session.session_id), safeTerminalWidth(), this.app.store);
     if (transcript) {
       stdout.write(transcript);
     } else {
@@ -4466,7 +4608,7 @@ export class TuiApp {
       return;
     }
     this.writeHomeFrame();
-    const transcript = renderSessionTranscript(this.app.store.listEvents(session.session_id), safeTerminalWidth());
+    const transcript = renderSessionTranscript(this.app.store.listEvents(session.session_id), safeTerminalWidth(), this.app.store);
     if (transcript) {
       stdout.write(transcript);
     } else {
