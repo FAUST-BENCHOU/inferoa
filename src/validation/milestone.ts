@@ -79,7 +79,7 @@ const checks: Record<Milestone, () => Promise<Check[]>> = {
   ],
   T6: async () => [
     await file("src/context/compressor.ts"),
-    { name: "80% compression threshold configured", pass: DEFAULT_CONFIG.context.compression_threshold === 0.8 },
+    { name: "75% compression threshold configured", pass: DEFAULT_CONFIG.context.compression_threshold === 0.75 },
     await containsCheck("src/runtime.ts", "compression_start", "runtime compression start event"),
     await containsCheck("src/runtime.ts", "compression_end", "runtime compression end event"),
     await containsCheck("src/tui/app.ts", "renderContextView", "TUI context/compression view"),

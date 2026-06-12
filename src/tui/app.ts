@@ -7322,7 +7322,7 @@ export function normalizeContextWindowInput(input: string, fallback: number): nu
   const raw = trimmed || String(fallback);
   const match = raw.match(/^(\d+(?:\.\d+)?)(k|m)?$/);
   if (!match?.[1]) {
-    throw new Error("Context window must be a token count such as 32768, 128k, or 1m.");
+    throw new Error("Context window must be a token count such as 256000, 256k, or 1m.");
   }
   const value = Number(match[1]);
   const suffix = match[2];

@@ -6,7 +6,7 @@ import os from "node:os";
 import { DEFAULT_CONFIG } from "../src/config/defaults.js";
 import { PromptBuilder } from "../src/context/prompt.js";
 import { readAutoresearchState, setAutoresearchMode } from "../src/autoresearch/state.js";
-import { buildGoalReflectionPrompt } from "../src/goals/supervisor-prompts.js";
+import { buildGoalReflectionPrompt, buildGoalWorkPrompt } from "../src/goals/supervisor-prompts.js";
 import {
   applyGoalUsage,
   cloneGoalState,
@@ -75,6 +75,10 @@ test("goal reflection prompt treats completed plans as a hypothesis, not a bound
   assert.match(prompt, /best-effort/i);
   assert.match(prompt, /as complete, polished, and semantically faithful/i);
   assert.match(prompt, /Generate competing next-step hypotheses/i);
+  assert.match(prompt, /durable frontier/i);
+  assert.match(prompt, /work surface/i);
+  assert.match(prompt, /local convergence/i);
+  assert.match(prompt, /deferred scope/i);
   assert.match(prompt, /substantive impact on the original objective/i);
   assert.match(prompt, /otherwise choose decision=done/i);
   assert.doesNotMatch(prompt, /read-only/i);
@@ -86,6 +90,20 @@ test("goal reflection prompt treats completed plans as a hypothesis, not a bound
   assert.match(prompt, /Do not call goal op=decompose/i);
   assert.match(prompt, /goal op=reflect exactly once/i);
   assert.doesNotMatch(prompt, /decision=continue/i);
+});
+
+test("goal work prompt seeds a general frontier during orientation", () => {
+  const prompt = buildGoalWorkPrompt("Improve a project end to end");
+
+  assert.match(prompt, /loop task 0 orientation/i);
+  assert.match(prompt, /map the relevant work surfaces/i);
+  assert.match(prompt, /rank the high-value frontier by impact, uncertainty, and risk/i);
+  assert.match(prompt, /durable task topology/i);
+  assert.match(prompt, /code areas, user paths, APIs, documents, tests, design options, data flows, verification gaps/i);
+  assert.match(prompt, /local progress with global completion/i);
+  assert.match(prompt, /candidate ledger/i);
+  assert.doesNotMatch(prompt, /bug hunting/i);
+  assert.doesNotMatch(prompt, /audit/i);
 });
 
 test("goal creation starts with a visible Loop task 0 orientation and no frontier fields", () => {

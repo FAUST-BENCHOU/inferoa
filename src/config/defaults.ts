@@ -5,7 +5,7 @@ export const DEFAULT_CONFIG: VllmAgentConfig = {
     mode: "direct",
     provider: "vllm",
     base_url: "http://localhost:8000/v1",
-    context_window: 32_768,
+    context_window: 256_000,
   },
   model_retry: {
     initial_delay_ms: 1000,
@@ -22,8 +22,8 @@ export const DEFAULT_CONFIG: VllmAgentConfig = {
     mode: "full_access",
   },
   context: {
-    compression_threshold: 0.8,
-    context_window: 32_768,
+    compression_threshold: 0.75,
+    context_window: 256_000,
     protected_recent_loops: 3,
     engine: {
       provider: "auto",
