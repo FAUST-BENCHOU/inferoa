@@ -94,23 +94,28 @@ test("model-facing tool schemas use enums and omit legacy aliases", () => {
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   const prop = (toolName: string, propName: string): Record<string, unknown> | undefined =>
     ((byName.get(toolName)?.parameters.properties as Record<string, Record<string, unknown>> | undefined) ?? {})[propName];
-  const variants = (toolName: string): Array<Record<string, unknown>> =>
-    ((byName.get(toolName)?.parameters.oneOf as Array<Record<string, unknown>> | undefined) ?? []);
-  const opValue = (variant: Record<string, unknown>): unknown =>
-    ((variant.properties as Record<string, Record<string, unknown[]>> | undefined)?.op ?? {}).enum?.[0];
+
+  for (const tool of tools) {
+    assert.equal(tool.parameters.type, "object", tool.name);
+    for (const forbidden of ["oneOf", "anyOf", "allOf", "enum", "const", "not"]) {
+      assert.equal(tool.parameters[forbidden], undefined, `${tool.name}.${forbidden}`);
+    }
+  }
 
   assert.equal(byName.has("web_fetch"), false);
   assert.equal(byName.has("web_open"), true);
   assert.deepEqual(prop("web_open", "format")?.enum, ["text", "html"]);
 
   assert.equal(byName.get("git")?.parameters.type, "object");
-  assert.deepEqual(variants("git").map(opValue), ["status", "diff", "show"]);
-  assert.deepEqual((variants("git")[2]?.required as unknown[] | undefined) ?? [], ["op", "rev"]);
+  assert.equal(byName.get("git")?.parameters.oneOf, undefined);
+  assert.deepEqual(prop("git", "op")?.enum, ["status", "diff", "show"]);
+  assert.match(String(prop("git", "rev")?.description ?? ""), /op=show/);
 
   assert.equal(byName.get("skill")?.parameters.type, "object");
-  assert.deepEqual(variants("skill").map(opValue), ["list", "read", "enable", "disable"]);
-  assert.deepEqual((variants("skill")[1]?.required as unknown[] | undefined) ?? [], ["op", "id"]);
-  assert.deepEqual((variants("skill")[2]?.required as unknown[] | undefined) ?? [], ["op", "ids"]);
+  assert.equal(byName.get("skill")?.parameters.oneOf, undefined);
+  assert.deepEqual(prop("skill", "op")?.enum, ["list", "read", "enable", "disable"]);
+  assert.match(String(prop("skill", "id")?.description ?? ""), /op=read/);
+  assert.match(String((prop("skill", "ids")?.items as { description?: string } | undefined)?.description ?? ""), /Required/);
 
   assert.deepEqual(prop("goal", "op")?.enum, ["get", "decompose", "update_plan", "update_step", "set_strategy", "set_owner", "clear_owner", "set_review_owner", "clear_review_owner", "set_verifier_policy", "update_ledger", "reflect", "verify"]);
   assert.doesNotMatch(JSON.stringify(prop("goal", "op")?.enum), /create|review_decision|resume|complete|drop/);
@@ -159,23 +164,36 @@ test("ToolRegistry rejects arguments outside fixed tool schemas before execution
     assert.equal(result.error?.code, "invalid_tool_arguments");
     assert.match(result.error?.message ?? "", /arguments\.model/);
 
+    assert.equal(store.listEvents(session.session_id).some((event) => event.type === "permission.resolved"), false);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("merged tool handlers report op-specific missing arguments", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-merged-tool-missing-args-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_merged_tool_missing_args", root: dir, alias: "merged-tool-missing-args" };
+    const session = store.createSession(workspace, "merged-tool-missing-args");
+    const registry = new ToolRegistry(structuredClone(DEFAULT_CONFIG), workspace, store);
+
     const missingGitRev = await registry.call(
       { id: "bad_git_show", name: "git", arguments: { op: "show" } },
       { session_id: session.session_id, run_id: "run_bad_git_show" },
     );
     assert.equal(missingGitRev.ok, false);
-    assert.equal(missingGitRev.error?.code, "invalid_tool_arguments");
-    assert.match(missingGitRev.error?.message ?? "", /arguments\.rev/);
+    assert.equal(missingGitRev.error?.code, "git_rev_required");
+    assert.match(missingGitRev.error?.message ?? "", /op=show requires rev/);
 
     const missingSkillId = await registry.call(
       { id: "bad_skill_read", name: "skill", arguments: { op: "read" } },
       { session_id: session.session_id, run_id: "run_bad_skill_read" },
     );
     assert.equal(missingSkillId.ok, false);
-    assert.equal(missingSkillId.error?.code, "invalid_tool_arguments");
-    assert.match(missingSkillId.error?.message ?? "", /arguments\.id/);
-
-    assert.equal(store.listEvents(session.session_id).some((event) => event.type === "permission.resolved"), false);
+    assert.equal(missingSkillId.error?.code, "skill_id_required");
+    assert.match(missingSkillId.error?.message ?? "", /op=read requires id/);
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });

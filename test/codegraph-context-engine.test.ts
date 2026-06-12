@@ -25,14 +25,15 @@ test("ToolRegistry exposes CodeGraph native tools by default in a git workspace 
     const registry = new ToolRegistry(config(), workspace, store);
     const names = registry.list().map((tool) => tool.name);
     const codegraph = registry.list().find((tool) => tool.name === "codegraph");
-    const variants = (codegraph?.parameters.oneOf as Array<{ properties?: Record<string, { enum?: string[] }>; required?: string[] }> | undefined) ?? [];
+    const properties = codegraph?.parameters.properties as Record<string, { enum?: string[]; description?: string }> | undefined;
 
     assert.ok(names.includes("codegraph"));
     assert.equal(names.some((name) => name.startsWith("codegraph_")), false);
     assert.equal(codegraph?.parameters.type, "object");
-    assert.deepEqual(variants.map((variant) => variant.properties?.op?.enum?.[0]), ["explore", "search", "node", "callers", "callees", "impact", "files", "status"]);
-    assert.deepEqual(variants[0]?.required, ["op", "query"]);
-    assert.deepEqual(variants[2]?.required, ["op", "symbol"]);
+    assert.equal(codegraph?.parameters.oneOf, undefined);
+    assert.deepEqual(properties?.op?.enum, ["explore", "search", "node", "callers", "callees", "impact", "files", "status"]);
+    assert.match(properties?.query?.description ?? "", /op=explore/);
+    assert.match(properties?.symbol?.description ?? "", /op=node/);
     assert.ok(names.includes("lsp"));
     assert.ok(names.includes("ast_grep"));
     assert.ok(names.includes("ast_edit"));
@@ -98,6 +99,27 @@ test("CodeGraph projectPath is restricted to the active workspace", async () => 
     store.close();
     await rm(dir, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("CodeGraph merged tool reports op-specific missing arguments", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-codegraph-missing-args-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace = gitWorkspace("w_codegraph_missing_args", dir, "codegraph-missing-args");
+    const session = store.createSession(workspace, "missing-args");
+    const registry = new ToolRegistry(config(), workspace, store);
+    const result = await registry.call(
+      { id: "cg_missing_query", name: "codegraph", arguments: { op: "explore" } },
+      { session_id: session.session_id },
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.code, "codegraph_op_invalid");
+    assert.match(result.error?.message ?? "", /op=explore requires query/);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
   }
 });
 

@@ -411,101 +411,58 @@ export function normalizeContextEngineConfig(config: VllmAgentConfig): ContextEn
 const CODEGRAPH_TOOL_DEFINITIONS: ToolDefinition[] = ([
   {
     name: "codegraph",
-    description: "Repository-wide code intelligence. Pick exactly one op shape. Start with op=explore for architecture, bug investigation, call flows, and cross-file understanding; use targeted ops for follow-up.",
+    description: "Repository-wide code intelligence. Start with op=explore for architecture, bug investigation, call flows, and cross-file understanding; use targeted ops for follow-up.",
     permission: "read",
-    parameters: oneOfSchema([
-      objectSchema(
-        {
-          op: constStringSchema("explore", "Explore architecture, bug hypotheses, call flows, or cross-file behavior."),
-          query: stringSchema("Required natural-language question, symbol names, file names, or code terms."),
-          maxFiles: numberSchema("Maximum source files/code blocks to include. Defaults to 8."),
-          projectPath: projectPathSchema(),
-        },
-        ["op", "query"],
-      ),
-      objectSchema(
-        {
-          op: constStringSchema("search", "Search indexed symbols by name."),
-          query: stringSchema("Required symbol name or partial name."),
-          kind: { type: "string", description: "Optional node kind filter.", enum: ["function", "method", "class", "interface", "type", "variable", "route", "component"] },
-          path: stringSchema("Optional indexed file path, path prefix, or basename filter."),
-          limit: numberSchema("Maximum results. Defaults to 10."),
-          projectPath: projectPathSchema(),
-        },
-        ["op", "query"],
-      ),
-      objectSchema(
-        {
-          op: constStringSchema("node", "Read details for one symbol."),
-          symbol: stringSchema("Required symbol name."),
-          includeCode: { type: "boolean", description: "Include source code. Defaults to false." },
-          file: stringSchema("Optional file path or basename to disambiguate."),
-          line: numberSchema("Optional line number to disambiguate."),
-          projectPath: projectPathSchema(),
-        },
-        ["op", "symbol"],
-      ),
-      objectSchema(
-        {
-          op: constStringSchema("callers", "List functions that call a symbol."),
-          symbol: stringSchema("Required function, method, class, or symbol name."),
-          limit: numberSchema("Maximum callers. Defaults to 20."),
-          projectPath: projectPathSchema(),
-        },
-        ["op", "symbol"],
-      ),
-      objectSchema(
-        {
-          op: constStringSchema("callees", "List functions called by a symbol."),
-          symbol: stringSchema("Required function, method, class, or symbol name."),
-          limit: numberSchema("Maximum callees. Defaults to 20."),
-          projectPath: projectPathSchema(),
-        },
-        ["op", "symbol"],
-      ),
-      objectSchema(
-        {
-          op: constStringSchema("impact", "List symbols affected by changing a symbol. Use before refactors."),
-          symbol: stringSchema("Required symbol to analyze."),
-          depth: numberSchema("Traversal depth. Defaults to 2."),
-          projectPath: projectPathSchema(),
-        },
-        ["op", "symbol"],
-      ),
-      objectSchema(
-        {
-          op: constStringSchema("files", "Show indexed file tree with language and symbol counts."),
-          path: stringSchema("Optional file tree prefix."),
-          pattern: stringSchema("Optional wildcard pattern such as *.ts or **/*.test.ts."),
-          format: { type: "string", description: "Output format.", enum: ["tree", "flat", "grouped"] },
-          projectPath: projectPathSchema(),
-        },
-        ["op"],
-      ),
-      objectSchema(
-        {
-          op: constStringSchema("status", "Show context index health, graph size, language coverage, and watcher state."),
-          projectPath: projectPathSchema(),
-        },
-        ["op"],
-      ),
-    ]),
+    parameters: objectSchema({
+      op: { type: "string", description: "Codegraph operation. explore/search require query; node/callers/callees/impact require symbol; files/status require only op.", enum: ["explore", "search", "node", "callers", "callees", "impact", "files", "status"] },
+      query: stringSchema("Required for op=explore or op=search. Natural-language question, symbol names, file names, code terms, or partial symbol name."),
+      symbol: stringSchema("Required for op=node, op=callers, op=callees, or op=impact. Function, method, class, or symbol name."),
+      kind: { type: "string", description: "For op=search, optional node kind filter.", enum: ["function", "method", "class", "interface", "type", "variable", "route", "component"] },
+      path: stringSchema("For op=search/files, optional indexed file path, path prefix, basename, or file tree prefix."),
+      pattern: stringSchema("For op=files, optional wildcard pattern such as *.ts or **/*.test.ts."),
+      format: { type: "string", description: "For op=files, output format.", enum: ["tree", "flat", "grouped"] },
+      maxFiles: numberSchema("For op=explore, maximum source files/code blocks to include. Defaults to 8."),
+      limit: numberSchema("Maximum results for op=search, callers, or callees."),
+      depth: numberSchema("Traversal depth for op=impact. Defaults to 2."),
+      includeCode: { type: "boolean", description: "For op=node, include source code. Defaults to false." },
+      file: stringSchema("For op=node, optional file path or basename to disambiguate."),
+      line: numberSchema("For op=node, optional line number to disambiguate."),
+      projectPath: projectPathSchema(),
+    }, ["op"]),
   },
 ] satisfies ToolDefinition[]).sort((a, b) => a.name.localeCompare(b.name));
 
 function codegraphNativeToolName(args: JsonObject): { ok: true; name: string } | { ok: false; message: string } {
   switch (String(args.op ?? "")) {
     case "explore":
+      if (!nonEmptyString(args.query)) {
+        return { ok: false, message: "codegraph op=explore requires query." };
+      }
       return { ok: true, name: "codegraph_explore" };
     case "search":
+      if (!nonEmptyString(args.query)) {
+        return { ok: false, message: "codegraph op=search requires query." };
+      }
       return { ok: true, name: "codegraph_search" };
     case "node":
+      if (!nonEmptyString(args.symbol)) {
+        return { ok: false, message: "codegraph op=node requires symbol." };
+      }
       return { ok: true, name: "codegraph_node" };
     case "callers":
+      if (!nonEmptyString(args.symbol)) {
+        return { ok: false, message: "codegraph op=callers requires symbol." };
+      }
       return { ok: true, name: "codegraph_callers" };
     case "callees":
+      if (!nonEmptyString(args.symbol)) {
+        return { ok: false, message: "codegraph op=callees requires symbol." };
+      }
       return { ok: true, name: "codegraph_callees" };
     case "impact":
+      if (!nonEmptyString(args.symbol)) {
+        return { ok: false, message: "codegraph op=impact requires symbol." };
+      }
       return { ok: true, name: "codegraph_impact" };
     case "files":
       return { ok: true, name: "codegraph_files" };
@@ -516,16 +473,12 @@ function codegraphNativeToolName(args: JsonObject): { ok: true; name: string } |
   }
 }
 
+function nonEmptyString(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 function objectSchema(properties: Record<string, JsonObject>, required: string[] = []): JsonObject {
   return { type: "object", additionalProperties: false, properties, required };
-}
-
-function oneOfSchema(variants: JsonObject[]): JsonObject {
-  return { type: "object", oneOf: variants };
-}
-
-function constStringSchema(value: string, description: string): JsonObject {
-  return { type: "string", enum: [value], description };
 }
 
 function stringSchema(description: string): JsonObject {
