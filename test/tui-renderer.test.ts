@@ -743,11 +743,13 @@ test("TUI tool renderer formats goal, plan, and autoresearch tools as native mod
     assert.doesNotMatch(goalBlock, /loops 1 · tools 2/);
     assert.match(goalBlock, /report Loop achieved\. 1 tool loop · 2 tool calls · 3s · 34 tokens used\./);
     assert.match(goalBlock, /loop task 0/);
-    assert.match(goalBlock, /step .*inspect Inspect flow/);
+    assert.match(goalBlock, /step .*Inspect flow/);
+    assert.doesNotMatch(goalBlock, /step .*inspect Inspect flow/);
     assert.match(goalBlock, /loop task 1 .*Verification pass .*current/);
-    assert.match(goalBlock, /step .*\* verify Run verification/);
+    assert.match(goalBlock, /step .*\* Run verification/);
+    assert.doesNotMatch(goalBlock, /step .*\* verify Run verification/);
     assert.match(goalBlock, /task plan 1 completed · 1 in progress/);
-    assert.match(goalBlock, /active step \* verify Run verification/);
+    assert.match(goalBlock, /active step \* Run verification/);
     assert.match(goalBlock, /Set loop approach failed · focus/);
     assert.match(goalBlock, /argument error Invalid goal arguments: arguments\.approach must be one of "focus", "explore", "timebox"/);
     assert.doesNotMatch(goalBlock, /Set loop approach failed · surgical[\s\S]*No active loop\./);

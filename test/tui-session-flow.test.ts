@@ -1559,8 +1559,10 @@ test("goal show renders wrapped tree horizons without repeated command hints", a
     assert.match(plain, /candidates 0 open .*0 done .*0 dismissed/);
     assert.match(plain, /◇ Loop task 0 .*Initial audit and repair horizon/);
     assert.match(plain, /◆ Loop task 1 current .*Found a second horizon/);
-    assert.match(plain, /├─ x explore_and_audit/);
-    assert.match(plain, /└─ x verify_build_and_test_full_suite/);
+    assert.match(plain, /├─ x Explore codebase and identify concrete improvement areas/);
+    assert.match(plain, /└─ x Verify build and test full suite across all three projects before/);
+    assert.doesNotMatch(plain, /├─ x explore_and_audit/);
+    assert.doesNotMatch(plain, /└─ x verify_build_and_test_full_suite/);
     assert.match(plain, /decision expand .*Found a second horizon/);
     assert.match(plain, /decision done/);
     assert.doesNotMatch(plain, /\/loop plan/);
@@ -1676,6 +1678,47 @@ test("decode activity stays active without per-chunk resume redraws", async () =
       "stop",
     ]);
   } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("fullscreen transcript suspension buffers background output until chat redraw", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-fullscreen-buffer-"));
+  const originalStdoutWrite = process.stdout.write;
+  const store = await SessionStore.open(stateDir);
+  try {
+    const tui = new TuiApp(
+      {
+        config: structuredClone(DEFAULT_CONFIG),
+        configFiles: [],
+        workspace: { id: "w_fullscreen_buffer", root: stateDir, alias: "fullscreen-buffer" },
+        store,
+        runtime: {},
+      } as never,
+    );
+    const view = tui as unknown as {
+      suspendTranscriptOutput: () => void;
+      resumeTranscriptOutput: () => string;
+      writeTranscript: (text: string) => void;
+    };
+    const writes: string[] = [];
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      writes.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+      return true;
+    }) as typeof process.stdout.write;
+
+    view.suspendTranscriptOutput();
+    view.writeTranscript("tool trace while tokenmaxxing is open\n");
+
+    assert.equal(writes.join(""), "");
+    const buffered = view.resumeTranscriptOutput();
+    assert.equal(buffered, "tool trace while tokenmaxxing is open\n");
+
+    view.writeTranscript(buffered);
+    assert.equal(writes.join(""), "tool trace while tokenmaxxing is open\n");
+  } finally {
+    process.stdout.write = originalStdoutWrite;
+    store.close();
     await rm(stateDir, { recursive: true, force: true });
   }
 });

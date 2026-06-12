@@ -376,6 +376,8 @@ export class TuiApp {
   #welcomeCodeIntelligenceStop: (() => void) | undefined;
   #lastSelfImproveOptimizerSessionId: string | undefined;
   #shutdownStarted = false;
+  #transcriptOutputSuspended = false;
+  #deferredTranscriptOutput: string[] = [];
 
   constructor(
     private readonly app: LoadedApp,
@@ -2732,11 +2734,13 @@ export class TuiApp {
 
   private async renderTokenmaxxingFullscreen(session: SessionRecord, options: { signals?: boolean } = {}): Promise<void> {
     this.#rl?.pause();
+    this.suspendTranscriptOutput();
     let pageIndex = 0;
     let latestBody: TokenmaxxingScreenRow[] = [];
     let renderedLines: string[] = [];
     let renderedWidth = 0;
     let renderedCursorLine = 0;
+    let closed = false;
     const clampPage = () => {
       const pageCount = tokenmaxxingScreenPageCount(latestBody, terminalHeight());
       pageIndex = Math.max(0, Math.min(pageIndex, pageCount - 1));
@@ -2778,14 +2782,22 @@ export class TuiApp {
     (interval as { unref?: () => void }).unref?.();
     await new Promise<void>((resolve) => {
       const done = () => {
+        if (closed) {
+          return;
+        }
+        closed = true;
         clearInterval(interval);
         stdin.off("data", onData);
         if (stdin.isTTY) {
           stdin.setRawMode(false);
         }
+        const deferredTranscript = this.resumeTranscriptOutput();
         stdout.write(ansi.showCursor);
         this.resumeReadline();
         this.redrawVisibleSessionSurface();
+        if (deferredTranscript) {
+          this.writeTranscript(deferredTranscript);
+        }
         resolve();
       };
       const page = (delta: number) => {
@@ -3994,7 +4006,7 @@ export class TuiApp {
       lines.push(`${fg256(39, "task plan")} ${goalPlanningProgressSummary(goal.planning)}`);
       const active = goal.planning.active_step_id ? goal.planning.steps.find((step) => step.id === goal.planning?.active_step_id) : undefined;
       if (active) {
-        appendGoalPanelField(lines, "active step", `${goalStepPlainStatusMarker(active.status)} ${active.id} ${active.title}`, width);
+        appendGoalPanelField(lines, "active step", `${goalStepPlainStatusMarker(active.status)} ${active.title || active.id}`, width);
       }
       const horizons = loopView?.horizons ?? [];
       if (horizons.length) {
@@ -6141,6 +6153,9 @@ export class TuiApp {
       const width = safeTerminalWidth();
       this.#composerActivity = renderActivityLine(currentLabel, now - startedAt, frameIndex, width);
       frameIndex += 1;
+      if (this.#transcriptOutputSuspended) {
+        return;
+      }
       if (this.shouldRefreshGoalMetadata(now)) {
         this.#activeComposerRedraw?.();
         return;
@@ -6175,7 +6190,7 @@ export class TuiApp {
       if (this.#composerActivity) {
         this.#composerActivity = undefined;
       }
-      if (hadActivity && options.redraw !== false) {
+      if (hadActivity && options.redraw !== false && !this.#transcriptOutputSuspended) {
         this.#activeComposerRedraw?.();
       }
     };
@@ -6230,6 +6245,10 @@ export class TuiApp {
       return;
     }
     this.#hasTranscript = true;
+    if (this.#transcriptOutputSuspended) {
+      this.#deferredTranscriptOutput.push(text);
+      return;
+    }
     const erase = this.#activeComposerErase;
     const redraw = this.#activeComposerRedraw;
     if (!erase || !redraw) {
@@ -6242,6 +6261,17 @@ export class TuiApp {
       stdout.write("\n");
     }
     redraw();
+  }
+
+  private suspendTranscriptOutput(): void {
+    this.#transcriptOutputSuspended = true;
+  }
+
+  private resumeTranscriptOutput(): string {
+    this.#transcriptOutputSuspended = false;
+    const output = this.#deferredTranscriptOutput.join("");
+    this.#deferredTranscriptOutput = [];
+    return output;
   }
 
   private toolTraceForCallBlock(sessionId: string, runId: string, toolCallId: string, leadingGap = true): string | undefined {
@@ -7187,11 +7217,11 @@ function renderGoalPanelHorizonStep(step: GoalHorizonSnapshot["steps"][number], 
   const branch = isLast ? "└─" : "├─";
   const continuationBranch = isLast ? "   " : "│  ";
   const markerPlain = goalStepPlainStatusMarker(step.status);
-  const prefixPlain = `${branch} ${markerPlain} ${step.id} `;
-  const prefix = `${fg256(244, branch)} ${goalStepStatusMarker(step.status)} ${fg256(250, step.id)} `;
+  const prefixPlain = `${branch} ${markerPlain} `;
+  const prefix = `${fg256(244, branch)} ${goalStepStatusMarker(step.status)} `;
   const room = Math.max(12, width - visibleWidth(prefixPlain));
-  const chunks = wrapPlainText(oneLine(step.title), room);
-  const continuation = `${fg256(244, continuationBranch)}${" ".repeat(visibleWidth(`${markerPlain} ${step.id} `))}`;
+  const chunks = wrapPlainText(oneLine(step.title || step.id), room);
+  const continuation = `${fg256(244, continuationBranch)}${" ".repeat(visibleWidth(`${markerPlain} `))}`;
   return chunks.map((chunk, index) => (index === 0 ? `${prefix}${chunk}` : `${continuation}${chunk}`));
 }
 

@@ -747,9 +747,8 @@ function renderGoalHorizonsTool(horizons: JsonObject[]): string[] {
     const title = stringField(horizon.title) ?? stringField(horizon.summary);
     const heading = `${fg256(39, "loop task")} ${generation}${title ? ` · ${title}` : ""}${current}`;
     const stepLines = steps.map((step) => {
-      const id = stringField(step.id) ?? "step";
-      const title = stringField(step.title) ?? "";
-      return `${fg256(39, "step")} ${goalStepJsonMarker(stringField(step.status))} ${id} ${title}`;
+      const label = stringField(step.title) ?? stringField(step.id) ?? "step";
+      return `${fg256(39, "step")} ${goalStepJsonMarker(stringField(step.status))} ${label}`;
     });
     return stepLines.length ? [heading, ...stepLines] : [heading, `${fg256(39, "step")} ${fg256(244, "none")}`];
   });
@@ -762,8 +761,8 @@ function renderGoalPlanningTool(planning: JsonObject): string[] {
   const lines = [`${fg256(39, "task plan")} ${summary}`];
   const activeStep = activeStepId ? steps.find((step) => stringField(step.id) === activeStepId) : undefined;
   if (activeStep) {
-    const id = stringField(activeStep.id) ?? "step";
-    lines.push(`${fg256(39, "active step")} ${goalStepJsonMarker(stringField(activeStep.status))} ${id} ${stringField(activeStep.title) ?? ""}`);
+    const label = stringField(activeStep.title) ?? stringField(activeStep.id) ?? "step";
+    lines.push(`${fg256(39, "active step")} ${goalStepJsonMarker(stringField(activeStep.status))} ${label}`);
   }
   return lines;
 }
