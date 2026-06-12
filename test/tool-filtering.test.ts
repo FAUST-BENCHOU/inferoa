@@ -96,17 +96,19 @@ test("model-facing tool schemas use enums and omit legacy aliases", () => {
     ((byName.get(toolName)?.parameters.properties as Record<string, Record<string, unknown>> | undefined) ?? {})[propName];
   const variants = (toolName: string): Array<Record<string, unknown>> =>
     ((byName.get(toolName)?.parameters.oneOf as Array<Record<string, unknown>> | undefined) ?? []);
-  const opConst = (variant: Record<string, unknown>): unknown =>
-    ((variant.properties as Record<string, Record<string, unknown>> | undefined)?.op ?? {}).const;
+  const opValue = (variant: Record<string, unknown>): unknown =>
+    ((variant.properties as Record<string, Record<string, unknown[]>> | undefined)?.op ?? {}).enum?.[0];
 
   assert.equal(byName.has("web_fetch"), false);
   assert.equal(byName.has("web_open"), true);
   assert.deepEqual(prop("web_open", "format")?.enum, ["text", "html"]);
 
-  assert.deepEqual(variants("git").map(opConst), ["status", "diff", "show"]);
+  assert.equal(byName.get("git")?.parameters.type, "object");
+  assert.deepEqual(variants("git").map(opValue), ["status", "diff", "show"]);
   assert.deepEqual((variants("git")[2]?.required as unknown[] | undefined) ?? [], ["op", "rev"]);
 
-  assert.deepEqual(variants("skill").map(opConst), ["list", "read", "enable", "disable"]);
+  assert.equal(byName.get("skill")?.parameters.type, "object");
+  assert.deepEqual(variants("skill").map(opValue), ["list", "read", "enable", "disable"]);
   assert.deepEqual((variants("skill")[1]?.required as unknown[] | undefined) ?? [], ["op", "id"]);
   assert.deepEqual((variants("skill")[2]?.required as unknown[] | undefined) ?? [], ["op", "ids"]);
 

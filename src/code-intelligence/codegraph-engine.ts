@@ -521,11 +521,11 @@ function objectSchema(properties: Record<string, JsonObject>, required: string[]
 }
 
 function oneOfSchema(variants: JsonObject[]): JsonObject {
-  return { oneOf: variants };
+  return { type: "object", oneOf: variants };
 }
 
 function constStringSchema(value: string, description: string): JsonObject {
-  return { type: "string", const: value, description };
+  return { type: "string", enum: [value], description };
 }
 
 function stringSchema(description: string): JsonObject {

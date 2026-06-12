@@ -10,11 +10,11 @@ function objectSchema(properties: Record<string, JsonObject>, required: string[]
 }
 
 function oneOfSchema(variants: JsonObject[]): JsonObject {
-  return { oneOf: variants };
+  return { type: "object", oneOf: variants };
 }
 
 const string = (description: string): JsonObject => ({ type: "string", description });
-const constString = (value: string, description: string): JsonObject => ({ type: "string", const: value, description });
+const constString = (value: string, description: string): JsonObject => ({ type: "string", enum: [value], description });
 const stringEnum = (description: string, values: string[]): JsonObject => ({ type: "string", description, enum: values });
 const number = (description: string): JsonObject => ({ type: "number", description });
 const boolean = (description: string): JsonObject => ({ type: "boolean", description });

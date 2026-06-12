@@ -111,7 +111,7 @@ function validateOneOf(variants: JsonObject[], value: JsonValue, path: string, i
       matches += 1;
     } else {
       failures.push(variantIssues);
-      if (variantMatchesOpConst(variant, value)) {
+      if (variantMatchesOp(variant, value)) {
         opMatchedFailures.push(variantIssues);
       }
     }
@@ -134,13 +134,19 @@ function validateOneOf(variants: JsonObject[], value: JsonValue, path: string, i
   issues.push({ path, message: "must match one supported argument shape" });
 }
 
-function variantMatchesOpConst(variant: JsonObject, value: JsonValue): boolean {
+function variantMatchesOp(variant: JsonObject, value: JsonValue): boolean {
   if (!isPlainObject(value) || typeof value.op !== "string") {
     return false;
   }
   const properties = isPlainObject(variant.properties) ? variant.properties : {};
   const opSchema = properties.op;
-  return isPlainObject(opSchema) && opSchema.const === value.op;
+  if (!isPlainObject(opSchema)) {
+    return false;
+  }
+  if (opSchema.const === value.op) {
+    return true;
+  }
+  return Array.isArray(opSchema.enum) && opSchema.enum.length === 1 && opSchema.enum[0] === value.op;
 }
 
 function validateEnum(schema: JsonObject, value: JsonValue, path: string, issues: ValidationIssue[]): void {
