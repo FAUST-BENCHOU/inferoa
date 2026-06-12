@@ -172,6 +172,14 @@ test("CodeIntelligenceHub builds a small CodeGraph index and serves native tool 
     assert.equal(files.ok, true, JSON.stringify(files));
     assert.match(String(files.data?.content ?? ""), /src\/sample\.ts/);
 
+    const missingPathSearch = await registry.call(
+      { id: "cg_search_missing_path", name: "codegraph", arguments: { op: "search", query: "greet", path: ".inferoa/tool-regression", limit: 10 } },
+      { session_id: session.session_id },
+    );
+    assert.equal(missingPathSearch.ok, true, JSON.stringify(missingPathSearch));
+    assert.match(String(missingPathSearch.data?.content ?? ""), /may be outside indexed files/);
+    assert.match(String(missingPathSearch.data?.content ?? ""), /file_search\/read_file/);
+
     const statusWithBlankProjectPath = await registry.call(
       { id: "cg_status_blank_project", name: "codegraph", arguments: { op: "status", projectPath: "" } },
       { session_id: session.session_id },

@@ -97,6 +97,15 @@ test("AST tools find and edit TypeScript functions", async () => {
     assert.equal(tsStatus?.available, true);
     assert.match(String(tsStatus?.fallback_adapter ?? ""), /TypeScript compiler API/);
 
+    await writeFile(path.join(dir, "src", "hover.ts"), "const label = 'hi';\nexport function useLabel() {\n  return label;\n}\n", "utf8");
+    const hover = await registry.call(
+      { id: "tc5_hover", name: "lsp", arguments: { action: "hover", path: "src/hover.ts", line: 3, character: 10 } },
+      { session_id: session.session_id },
+    );
+    assert.equal(hover.ok, true, JSON.stringify(hover));
+    assert.equal(hover.data?.symbol, "label");
+    assert.match(JSON.stringify(hover.data?.matches ?? []), /declared at src\/hover\.ts:1/);
+
     await writeFile(path.join(dir, "src", "rename.ts"), "export function greet() {\n  return greet.name;\n}\n", "utf8");
     const legacyRename = await registry.call(
       {

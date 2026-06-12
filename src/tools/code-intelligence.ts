@@ -335,18 +335,22 @@ async function symbols(file: string, rel: string): Promise<ToolResult> {
 
 async function textNavigation(action: string, file: string, rel: string, args: JsonObject): Promise<ToolResult> {
   const text = await fs.readFile(file, "utf8");
-  const symbol = String(args.symbol ?? args.query ?? "");
+  const requestedSymbol = String(args.symbol ?? args.query ?? "");
   const targetLine = typeof args.line === "number" ? args.line : undefined;
   const targetChar = typeof args.character === "number" ? args.character : undefined;
   const lines = text.split(/\r?\n/);
+  const position = targetLine && targetChar ? fallbackPositionMatch(lines, rel, targetLine, targetChar, requestedSymbol) : undefined;
+  const symbol = requestedSymbol || position?.symbol || "";
   const matches: JsonObject[] = [];
-  // When line/character are provided, try exact position first, then fall back to text search
-  if (symbol && targetLine && targetChar) {
-    const lineText = lines[targetLine - 1];
-    if (lineText !== undefined) {
-      matches.push({ path: rel, line: targetLine, character: targetChar, snippet: lineText });
-      return ok(`${action} fallback at specified position`, { action, symbol, line: targetLine, character: targetChar, matches: matches as never });
-    }
+  if (action === "hover" && position) {
+    const declarations = symbol ? fallbackDeclarations(text, file, rel, symbol) : [];
+    return ok(`hover fallback at ${symbol || "specified position"}`, {
+      action,
+      symbol,
+      line: targetLine,
+      character: targetChar,
+      matches: [{ ...position, hover: fallbackHoverText(symbol, declarations), declarations } as JsonObject] as never,
+    });
   }
   for (let i = 0; i < lines.length; i += 1) {
     const column = lines[i]?.indexOf(symbol) ?? -1;
@@ -354,7 +358,70 @@ async function textNavigation(action: string, file: string, rel: string, args: J
       matches.push({ path: rel, line: i + 1, character: column + 1, snippet: lines[i] });
     }
   }
+  if (!matches.length && position) {
+    matches.push(position);
+  }
   return ok(`${action} fallback found ${matches.length} text matches`, { action, symbol, matches: matches as never });
+}
+
+function fallbackPositionMatch(lines: string[], rel: string, line: number, character: number, requestedSymbol: string): JsonObject & { symbol?: string } | undefined {
+  const snippet = lines[line - 1];
+  if (snippet === undefined) {
+    return undefined;
+  }
+  const inferred = requestedSymbol || identifierAtCharacter(snippet, character)?.word || "";
+  return {
+    path: rel,
+    line,
+    character,
+    snippet,
+    symbol: inferred || undefined,
+  };
+}
+
+function fallbackDeclarations(text: string, file: string, rel: string, symbol: string): JsonObject[] {
+  const declarations = file.endsWith(".py")
+    ? [...pythonMatches(text, "text:", rel)].filter((match) => ["def", "async def", "class"].includes(String(match.kind)))
+    : tsSymbolMatches(text, rel, languageForFile(file));
+  return declarations.filter((match) => symbolList(String(match.name ?? "")).includes(symbol)).slice(0, 5);
+}
+
+function fallbackHoverText(symbol: string, declarations: JsonObject[]): string {
+  if (!symbol) {
+    return "No identifier found at this position.";
+  }
+  const declaration = declarations[0];
+  if (!declaration) {
+    return `Identifier ${symbol}`;
+  }
+  return `${symbol}: ${String(declaration.kind ?? "symbol")} declared at ${String(declaration.path ?? "")}:${String(declaration.line ?? declaration.start_line ?? "")}`;
+}
+
+function identifierAtCharacter(line: string, oneBasedCharacter: number): { word: string; character: number } | undefined {
+  let index = Math.max(0, Math.min(line.length, oneBasedCharacter - 1));
+  if (!isIdentifierChar(line[index] ?? "") && index > 0 && isIdentifierChar(line[index - 1] ?? "")) {
+    index -= 1;
+  }
+  if (!isIdentifierChar(line[index] ?? "")) {
+    return undefined;
+  }
+  let start = index;
+  while (start > 0 && isIdentifierChar(line[start - 1] ?? "")) {
+    start -= 1;
+  }
+  let end = index + 1;
+  while (end < line.length && isIdentifierChar(line[end] ?? "")) {
+    end += 1;
+  }
+  return { word: line.slice(start, end), character: start + 1 };
+}
+
+function isIdentifierChar(value: string): boolean {
+  return /^[A-Za-z0-9_$]$/.test(value);
+}
+
+function symbolList(value: string): string[] {
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 async function renameSymbol(

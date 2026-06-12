@@ -60,9 +60,9 @@ const clarifyChoice = objectSchema(
 const DEFINITIONS = [
   {
     name: "apply_patch",
-    description: "Apply a complete unified diff patch in the workspace. Prefer this for code edits. Include file headers and valid hunk headers/context; read the target file first when uncertain.",
+    description: "Apply a workspace patch. Accepts complete unified diff patches or the *** Begin Patch wrapper format. Prefer this for multi-line code edits; read the target file first when uncertain.",
     permission: "write",
-    parameters: objectSchema({ patch: string("Complete unified diff patch with file headers and valid hunks.") }, ["patch"]),
+    parameters: objectSchema({ patch: string("Complete unified diff patch with file headers and valid hunks, or a *** Begin Patch wrapper.") }, ["patch"]),
   },
   {
     name: "ast_edit",
@@ -174,15 +174,15 @@ const DEFINITIONS = [
   },
   {
     name: "git",
-    description: "Read bounded git state. Use op=status, op=diff, or op=show. op=show requires rev. Use run_command for unusual git commands.",
+    description: "Read bounded git state. Use op=status, op=diff, or op=show. op=show without path shows a commit/object; op=show with path reads that file at rev. Use run_command for unusual git commands.",
     permission: "read",
     parameters: objectSchema(
       {
         op: stringEnum("Git operation: status reads `git status --short --branch`; diff reads workspace or staged diff; show reads one revision and requires rev.", ["status", "diff", "show"]),
         cwd: string("Optional workspace-relative cwd."),
         staged: boolean("For op=diff, show staged diff instead of unstaged diff."),
-        path: string("For op=diff/show, optional path filter. Omit for the whole workspace or revision."),
-        rev: string("Required for op=show. Revision, commit, tag, or object, for example HEAD or HEAD~1."),
+        path: string("For op=diff, optional path filter. For op=show, optional file path to read at rev, equivalent to git show <rev>:<path>."),
+        rev: string("Required for op=show. Revision, commit, tag, object, or rev:path spec, for example HEAD, HEAD~1, or HEAD:package.json."),
       },
       ["op"],
     ),

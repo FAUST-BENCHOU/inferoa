@@ -527,7 +527,7 @@ function formatFiles(cg: CodeGraphInstance, args: JsonObject): string {
     .filter((file) => !pattern || indexPathMatchesPattern(pattern, file.path, prefix))
     .sort((a, b) => a.path.localeCompare(b.path));
   if (!files.length) {
-    return "No indexed files matched.";
+    return `No indexed files matched.${indexMissHint(prefix)}`;
   }
   if (format === "grouped") {
     const groups = new Map<string, CodeGraphFile[]>();
@@ -556,7 +556,7 @@ function formatSearch(cg: CodeGraphInstance, args: JsonObject): string {
     .filter((result) => !searchPath || indexPathMatchesSearchPath(result.node.filePath, searchPath))
     .slice(0, limit);
   if (!results.length) {
-    return `No results found for "${query}"${searchPath ? ` in ${searchPath}` : ""}.`;
+    return `No results found for "${query}"${searchPath ? ` in ${searchPath}` : ""}.${indexMissHint(searchPath)}`;
   }
   return [`# Search: ${query}${searchPath ? ` in ${searchPath}` : ""}`, "", ...results.map((result, index) => `${index + 1}. ${nodeLine(result.node)}${result.score !== undefined ? ` · score ${result.score.toFixed(3)}` : ""}`)].join("\n");
 }
@@ -696,6 +696,11 @@ function indexPathMatchesPattern(pattern: string, filePath: string, prefix: stri
   }
   const relative = normalized.slice(prefix.length).replace(/^\/+/, "");
   return wildcardMatch(pattern, relative);
+}
+
+function indexMissHint(searchPath: string | undefined): string {
+  const scoped = searchPath ? ` Path "${searchPath}" may be outside indexed files, ignored, or waiting for watcher sync.` : "";
+  return `${scoped} Use codegraph op=status to inspect index freshness; use file_search/read_file for newly-created or ignored files.`;
 }
 
 function stringArg(value: unknown, name: string): string {

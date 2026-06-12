@@ -288,6 +288,10 @@ export async function editFile(args: JsonObject, context: ToolExecutionContext):
 
 export async function applyPatchTool(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const patch = String(args.patch);
+  const beginPatchResult = await applyBeginPatchFormat(patch, context);
+  if (beginPatchResult) {
+    return beginPatchResult;
+  }
   return await new Promise((resolve) => {
     const child = spawn("git", ["apply", "--whitespace=nowarn"], {
       cwd: context.workspace.root,
@@ -316,9 +320,196 @@ export async function applyPatchTool(args: JsonObject, context: ToolExecutionCon
 function formatPatchFailure(message: string): string {
   const trimmed = message.trim();
   if (/corrupt patch|patch fragment without header|No valid patches|unrecognized input|does not exist in index/i.test(trimmed)) {
-    return `Patch is malformed or incomplete: ${trimmed}. Provide a complete unified diff with file headers and valid hunk line counts, or use edit_file for an exact single-file replacement.`;
+    return `Patch is malformed or incomplete: ${trimmed}. Provide a complete unified diff with file headers and valid hunk line counts, use the supported *** Begin Patch wrapper format, or use edit_file for an exact single-file replacement.`;
   }
   return trimmed || "git apply failed";
+}
+
+async function applyBeginPatchFormat(patch: string, context: ToolExecutionContext): Promise<ToolResult | undefined> {
+  const lines = patch.replace(/\r\n/g, "\n").split("\n");
+  if (lines[0]?.trim() !== "*** Begin Patch") {
+    return undefined;
+  }
+  try {
+    const changes = parseBeginPatch(lines);
+    const diffs: string[] = [];
+    const operations: BeginPatchOperation[] = [];
+    for (const change of changes) {
+      if (change.type === "add") {
+        const writable = resolveWritablePath(context.workspace.root, change.path, workspaceExternalPathsAllowed(context.config, context.workspace));
+        try {
+          await fs.access(writable.file);
+          return fail("patch_failed", `Patch add target already exists: ${writable.displayPath}`, { diff: patch });
+        } catch {
+          // Expected for add-file patches.
+        }
+        const content = joinPatchLines(change.lines, true);
+        operations.push({ type: "write", file: writable.file, text: content });
+        diffs.push(simpleUnifiedDiff(writable.displayPath, "", content, true));
+        continue;
+      }
+      if (change.type === "delete") {
+        const writable = resolveWritablePath(context.workspace.root, change.path, workspaceExternalPathsAllowed(context.config, context.workspace));
+        const previous = await fs.readFile(writable.file, "utf8");
+        operations.push({ type: "delete", file: writable.file });
+        diffs.push(simpleUnifiedDiff(writable.displayPath, previous, "", false));
+        continue;
+      }
+      const writable = resolveWritablePath(context.workspace.root, change.path, workspaceExternalPathsAllowed(context.config, context.workspace));
+      const previous = await fs.readFile(writable.file, "utf8");
+      const updated = applyBeginPatchHunks(previous, change.hunks, writable.displayPath);
+      if (!updated.ok) {
+        return fail("patch_failed", updated.message, { diff: patch });
+      }
+      if (change.moveTo) {
+        const moved = resolveWritablePath(context.workspace.root, change.moveTo, workspaceExternalPathsAllowed(context.config, context.workspace));
+        operations.push({ type: "write", file: moved.file, text: updated.text });
+        operations.push({ type: "delete", file: writable.file });
+        diffs.push(simpleUnifiedDiff(writable.displayPath, previous, "", false));
+        diffs.push(simpleUnifiedDiff(moved.displayPath, "", updated.text, true));
+      } else {
+        operations.push({ type: "write", file: writable.file, text: updated.text });
+        diffs.push(simpleUnifiedDiff(writable.displayPath, previous, updated.text, false));
+      }
+    }
+    for (const operation of operations) {
+      if (operation.type === "write") {
+        await fs.mkdir(path.dirname(operation.file), { recursive: true });
+        await fs.writeFile(operation.file, operation.text, "utf8");
+      } else {
+        await fs.rm(operation.file, { force: true });
+      }
+    }
+    return ok("Patch applied", { stdout: "", diff: diffs.join("\n") });
+  } catch (error) {
+    return fail("patch_failed", `Patch is malformed or incomplete: ${errorMessage(error)}. Use *** Begin Patch with Add File, Update File, or Delete File sections, or provide a complete unified diff.`, { diff: patch });
+  }
+}
+
+type BeginPatchChange =
+  | { type: "add"; path: string; lines: string[] }
+  | { type: "delete"; path: string }
+  | { type: "update"; path: string; moveTo?: string; hunks: string[][] };
+
+type BeginPatchOperation =
+  | { type: "write"; file: string; text: string }
+  | { type: "delete"; file: string };
+
+function parseBeginPatch(lines: string[]): BeginPatchChange[] {
+  const changes: BeginPatchChange[] = [];
+  let index = 1;
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    if (line.trim() === "*** End Patch") {
+      return changes;
+    }
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+    if (line.startsWith("*** Add File: ")) {
+      const filePath = line.slice("*** Add File: ".length).trim();
+      const fileLines: string[] = [];
+      index += 1;
+      while (index < lines.length && !isBeginPatchTopDirective(lines[index] ?? "")) {
+        const entry = lines[index] ?? "";
+        if (!entry.startsWith("+")) {
+          throw new Error(`Add File lines must start with '+': ${entry}`);
+        }
+        fileLines.push(entry.slice(1));
+        index += 1;
+      }
+      changes.push({ type: "add", path: filePath, lines: fileLines });
+      continue;
+    }
+    if (line.startsWith("*** Delete File: ")) {
+      changes.push({ type: "delete", path: line.slice("*** Delete File: ".length).trim() });
+      index += 1;
+      continue;
+    }
+    if (line.startsWith("*** Update File: ")) {
+      const filePath = line.slice("*** Update File: ".length).trim();
+      const hunks: string[][] = [];
+      let current: string[] = [];
+      let moveTo: string | undefined;
+      index += 1;
+      if ((lines[index] ?? "").startsWith("*** Move to: ")) {
+        moveTo = (lines[index] ?? "").slice("*** Move to: ".length).trim();
+        index += 1;
+      }
+      while (index < lines.length && !isBeginPatchTopDirective(lines[index] ?? "")) {
+        const entry = lines[index] ?? "";
+        index += 1;
+        if (entry.startsWith("@@")) {
+          if (current.length) {
+            hunks.push(current);
+            current = [];
+          }
+          continue;
+        }
+        if (entry === "*** End of File") {
+          continue;
+        }
+        if (!/^[ +-]/.test(entry)) {
+          throw new Error(`Update File lines must start with space, '+', or '-': ${entry}`);
+        }
+        current.push(entry);
+      }
+      if (current.length) {
+        hunks.push(current);
+      }
+      changes.push({ type: "update", path: filePath, moveTo, hunks });
+      continue;
+    }
+    throw new Error(`Unknown Begin Patch directive: ${line}`);
+  }
+  throw new Error("missing *** End Patch");
+}
+
+function isBeginPatchTopDirective(line: string): boolean {
+  return line.trim() === "*** End Patch" || line.startsWith("*** Add File: ") || line.startsWith("*** Update File: ") || line.startsWith("*** Delete File: ");
+}
+
+function applyBeginPatchHunks(text: string, hunks: string[][], displayPath: string): { ok: true; text: string } | { ok: false; message: string } {
+  const oldHadFinalNewline = text.endsWith("\n");
+  let lines = splitForDiff(text);
+  let cursor = 0;
+  for (const hunk of hunks) {
+    const oldLines = hunk.filter((line) => !line.startsWith("+")).map((line) => line.slice(1));
+    const newLines = hunk.filter((line) => !line.startsWith("-")).map((line) => line.slice(1));
+    const index = oldLines.length ? findLineSequence(lines, oldLines, cursor) : cursor;
+    if (index < 0) {
+      return { ok: false, message: `Patch hunk did not match ${displayPath}` };
+    }
+    lines = [...lines.slice(0, index), ...newLines, ...lines.slice(index + oldLines.length)];
+    cursor = index + newLines.length;
+  }
+  return { ok: true, text: joinPatchLines(lines, oldHadFinalNewline) };
+}
+
+function findLineSequence(lines: string[], sequence: string[], start: number): number {
+  const first = findLineSequenceFrom(lines, sequence, start);
+  return first >= 0 ? first : findLineSequenceFrom(lines, sequence, 0);
+}
+
+function findLineSequenceFrom(lines: string[], sequence: string[], start: number): number {
+  for (let index = Math.max(0, start); index <= lines.length - sequence.length; index += 1) {
+    let matched = true;
+    for (let offset = 0; offset < sequence.length; offset += 1) {
+      if (lines[index + offset] !== sequence[offset]) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function joinPatchLines(lines: string[], finalNewline: boolean): string {
+  return `${lines.join("\n")}${finalNewline && lines.length ? "\n" : ""}`;
 }
 
 export async function gitTool(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
@@ -376,7 +567,7 @@ async function gitShow(args: JsonObject, context: ToolExecutionContext): Promise
   }
   const rev = shellQuote(String(args.rev));
   const pathArg = optionalPathFilter(args.path);
-  const command = pathArg ? `git show --stat --patch ${rev} -- ${shellQuote(pathArg)}` : `git show --stat --patch ${rev}`;
+  const command = pathArg ? `git show ${shellQuote(`${String(args.rev)}:${pathArg}`)}` : `git show --stat --patch ${rev}`;
   const result = await runRtkAwareShellCommand({
     config: context.config,
     store: context.store,
