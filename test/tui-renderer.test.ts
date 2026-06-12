@@ -279,6 +279,114 @@ test("TUI tool renderer hides failed basic file read, write, and list cards", as
   }
 });
 
+test("TUI tool renderer mutes failed tool text while keeping the red failure marker", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-tui-renderer-muted-failures-"));
+  const store = await SessionStore.open(dir);
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_tui_renderer_muted_failures", root: dir, alias: "renderer" };
+    const session = store.createSession(workspace, "renderer");
+    const events: SessionEvent[] = [
+      {
+        session_id: session.session_id,
+        run_id: "run",
+        type: "tool.call",
+        data: {
+          tool_call_id: "goal_failed",
+          tool_name: "goal",
+          arguments: { op: "set_strategy", approach: "explore", rationale: "Probe first." },
+        },
+      },
+      {
+        session_id: session.session_id,
+        run_id: "run",
+        type: "tool.result",
+        data: {
+          tool_call_id: "goal_failed",
+          tool_name: "goal",
+          result: {
+            ok: false,
+            summary: "Goal strategy blocked",
+            data: { goal: { strategy: { mode: "explore", rationale: "Probe first." } } },
+            error: {
+              code: "goal_reflection_decision_required",
+              message: "Internal reflection cannot call goal op=set_strategy.",
+            },
+          },
+        },
+      },
+      {
+        session_id: session.session_id,
+        run_id: "run",
+        type: "tool.call",
+        data: {
+          tool_call_id: "command_failed",
+          tool_name: "run_command",
+          arguments: { command: "npm test" },
+        },
+      },
+      {
+        session_id: session.session_id,
+        run_id: "run",
+        type: "tool.result",
+        data: {
+          tool_call_id: "command_failed",
+          tool_name: "run_command",
+          result: {
+            ok: false,
+            summary: "Command exited 1",
+            data: { command: "npm test", code: 1, output: "1 failing" },
+            error: { code: "command_failed", message: "1 failing" },
+          },
+        },
+      },
+      {
+        session_id: session.session_id,
+        run_id: "run",
+        type: "tool.call",
+        data: {
+          tool_call_id: "web_failed",
+          tool_name: "web_fetch",
+          arguments: { url: "https://example.test/missing" },
+        },
+      },
+      {
+        session_id: session.session_id,
+        run_id: "run",
+        type: "tool.result",
+        data: {
+          tool_call_id: "web_failed",
+          tool_name: "web_fetch",
+          result: {
+            ok: false,
+            summary: "HTTP 500",
+            data: { final_url: "https://example.test/missing", status: 500 },
+            error: { code: "web_fetch_http_error", message: "HTTP 500" },
+          },
+        },
+      },
+    ];
+
+    const rendered = renderToolCards(events, store, { collapseCompact: false }).join("\n");
+    const plain = stripAnsi(rendered);
+    assert.match(plain, /× Set loop approach failed · explore/);
+    assert.match(plain, /goal_reflection_decision_required: Internal reflection cannot call goal op=set_strategy\./);
+    assert.match(plain, /× Command failed · npm test · exited 1/);
+    assert.match(plain, /command_failed: 1 failing/);
+    assert.match(plain, /× Fetched URL failed · https:\/\/example\.test\/missing/);
+    assert.match(plain, /web_fetch_http_error: HTTP 500/);
+    assert.match(rendered, /\x1b\[38;5;203m×\x1b\[0m/);
+    assert.doesNotMatch(rendered, /\x1b\[38;5;203m(?:\x1b\[1m)?Set loop approach failed/);
+    assert.doesNotMatch(rendered, /\x1b\[38;5;203mgoal_reflection_decision_required/);
+    assert.doesNotMatch(rendered, /\x1b\[38;5;203m(?:\x1b\[1m)?Command failed/);
+    assert.doesNotMatch(rendered, /\x1b\[38;5;203mcommand_failed/);
+    assert.doesNotMatch(rendered, /\x1b\[38;5;203m(?:\x1b\[1m)?Fetched URL failed/);
+    assert.doesNotMatch(rendered, /\x1b\[38;5;203mweb_fetch_http_error/);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("TUI tool renderer keeps consecutive compact tools tight", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-tui-renderer-tight-"));
   const store = await SessionStore.open(dir);

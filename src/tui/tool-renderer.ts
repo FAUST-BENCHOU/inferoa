@@ -75,13 +75,16 @@ function groupToolEvents(events: SessionEvent[]): ToolEventGroup[] {
 
 function renderToolGroup(group: ToolEventGroup, store: SessionStore): string[] {
   const result = group.result;
-  const marker = result?.ok === false ? fg256(203, "×") : result?.ok === true ? fg256(48, "•") : fg256(220, "◦");
+  const failed = result?.ok === false;
+  const marker = failed ? fg256(203, "×") : result?.ok === true ? fg256(48, "•") : fg256(220, "◦");
   const summary = result?.summary ?? "running";
   const width = terminalWidth();
   const action = toolGroupAction(group);
   const detail = toolGroupDetail(group, summary);
   const separator = detail ? ` ${fg256(244, "·")} ` : "";
-  const title = `  ${marker} ${fg256(result?.ok === false ? 203 : 255, ansi.bold + action + ansi.reset)}${separator}${fg256(result?.ok === false ? 203 : 250, truncateToWidth(detail, Math.max(20, width - visibleWidth(action) - 12)))}`;
+  const actionText = failed ? fg256(250, action) : fg256(255, ansi.bold + action + ansi.reset);
+  const detailText = fg256(failed ? 244 : 250, truncateToWidth(detail, Math.max(20, width - visibleWidth(action) - 12)));
+  const title = `  ${marker} ${actionText}${separator}${detailText}`;
   const body = renderToolBody(group, store);
   if (!shouldExpandToolGroup(group, body)) {
     return [title];
@@ -216,7 +219,7 @@ function renderToolBody(group: ToolEventGroup, store: SessionStore): string[] {
     lines.push(`${fg256(39, "resource")} ${result.resource_uri}`);
   }
   if (result?.error) {
-    lines.push(fg256(203, `${result.error.code}: ${result.error.message}`));
+    lines.push(fg256(244, `${result.error.code}: ${result.error.message}`));
   }
   if (group.name === "run_command" && !lines.length) {
     return [];
@@ -573,10 +576,10 @@ function renderGoalTool(data: JsonObject, args: JsonObject = {}, result?: ToolRe
       const code = stringField(error.code);
       const message = stringField(error.message) ?? result.summary;
       if (code === "invalid_tool_arguments") {
-        return [`${fg256(203, "argument error")} ${message}`];
+        return [`${fg256(244, "argument error")} ${message}`];
       }
       if (code || message) {
-        return [`${fg256(203, code ?? "error")} ${message ?? ""}`.trim()];
+        return [`${fg256(244, code ?? "error")} ${message ?? ""}`.trim()];
       }
     }
     return [fg256(243, "No active loop.")];
