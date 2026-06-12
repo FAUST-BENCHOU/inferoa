@@ -346,6 +346,8 @@ export class ModelGateway {
     if (request.request_class) {
       headers.set("x-inferoa-request-class", request.request_class);
     }
+    const promptCache = openAiResponsesPromptCacheControls(setup, request);
+    applyOpenAiResponsesProviderHeaders(headers, setup, request, promptCache.prompt_cache_key);
     const body = {
       model: request.model || setup.model,
       instructions: openAiResponsesInstructions(request.messages),
@@ -353,7 +355,7 @@ export class ModelGateway {
       store: false,
       tools: sortedTools(request.tools).map(toOpenAiResponseTool),
       stream: true,
-      ...openAiResponsesPromptCacheControls(setup, request),
+      ...promptCache,
     };
     const response = await fetch(`${base}/responses`, {
       method: "POST",
@@ -514,6 +516,47 @@ export class ModelGateway {
       router: response.route,
       response_diagnostics: response.diagnostics,
     };
+  }
+}
+
+function applyOpenAiResponsesProviderHeaders(
+  headers: Headers,
+  setup: ModelSetup,
+  request: ModelRequest,
+  promptCacheKey: string | undefined,
+): void {
+  if (setup.provider !== "external" || setup.provider_id !== "openai-codex") {
+    return;
+  }
+  const sessionKey = promptCacheKey ?? request.session_id;
+  headers.set("OpenAI-Beta", "responses=experimental");
+  headers.set("originator", "inferoa");
+  if (sessionKey) {
+    headers.set("conversation_id", sessionKey);
+    headers.set("session_id", sessionKey);
+    headers.set("x-client-request-id", sessionKey);
+  }
+  const accountId = codexAccountIdFromToken(endpointApiKey(setup));
+  if (accountId) {
+    headers.set("chatgpt-account-id", accountId);
+  }
+}
+
+function codexAccountIdFromToken(token: string | undefined): string | undefined {
+  const [, payload] = token?.split(".") ?? [];
+  if (!payload) {
+    return undefined;
+  }
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, unknown>;
+    const auth = decoded["https://api.openai.com/auth"];
+    if (!auth || typeof auth !== "object" || Array.isArray(auth)) {
+      return undefined;
+    }
+    const accountId = (auth as Record<string, unknown>).chatgpt_account_id;
+    return typeof accountId === "string" && accountId.trim() ? accountId.trim() : undefined;
+  } catch {
+    return undefined;
   }
 }
 

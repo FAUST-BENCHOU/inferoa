@@ -27,9 +27,11 @@ function anthropicConfig(baseUrl: string): VllmAgentConfig {
 
 test("Codex Responses requests send system prompt as instructions", async () => {
   let requestPath = "";
+  let requestHeaders: Record<string, string | string[] | undefined> = {};
   let requestBody: Record<string, unknown> | undefined;
   const server = createServer((req, res) => {
     requestPath = req.url ?? "";
+    requestHeaders = req.headers;
     let body = "";
     req.setEncoding("utf8");
     req.on("data", (chunk) => {
@@ -54,10 +56,11 @@ test("Codex Responses requests send system prompt as instructions", async () => 
   const address = server.address() as AddressInfo;
   try {
     const next = config(`http://127.0.0.1:${address!.port}/backend-api/codex`);
+    const codexToken = `h.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "acct_test" } })).toString("base64url")}.s`;
     next.model_setup.provider = "external";
     next.model_setup.provider_id = "openai-codex";
     next.model_setup.profile = "openai_responses";
-    next.model_setup.api_key = "codex-token";
+    next.model_setup.api_key = codexToken;
     next.model_setup.model = "gpt-5.4";
     const gateway = new ModelGateway(next);
     const response = await gateway.stream({
@@ -78,10 +81,17 @@ test("Codex Responses requests send system prompt as instructions", async () => 
     assert.equal(requestPath, "/backend-api/codex/responses");
     assert.equal(requestBody?.instructions, "Be concise.");
     assert.equal(requestBody?.store, false);
+    const promptCacheKey = buildCodexPromptCacheKey({ provider_id: "openai-codex", model: "gpt-5.4", session_id: "s" });
     assert.equal(
       requestBody?.prompt_cache_key,
-      buildCodexPromptCacheKey({ provider_id: "openai-codex", model: "gpt-5.4", session_id: "s" }),
+      promptCacheKey,
     );
+    assert.equal(requestHeaders["openai-beta"], "responses=experimental");
+    assert.equal(requestHeaders.originator, "inferoa");
+    assert.equal(requestHeaders.conversation_id, promptCacheKey);
+    assert.equal(requestHeaders.session_id, promptCacheKey);
+    assert.equal(requestHeaders["x-client-request-id"], promptCacheKey);
+    assert.equal(requestHeaders["chatgpt-account-id"], "acct_test");
     assert.equal(Object.hasOwn(requestBody ?? {}, "prompt_cache_retention"), false);
     assert.equal(Object.hasOwn(requestBody ?? {}, "temperature"), false);
     assert.equal(Object.hasOwn(requestBody ?? {}, "max_output_tokens"), false);
