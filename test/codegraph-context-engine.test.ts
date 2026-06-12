@@ -100,9 +100,15 @@ test("CodeIntelligenceHub builds a small CodeGraph index and serves native tool 
   const store = await SessionStore.open(path.join(dir, "state"));
   try {
     await mkdir(path.join(dir, "src"));
+    await mkdir(path.join(dir, "lib"));
     await writeFile(
       path.join(dir, "src", "sample.ts"),
       "export function greet(name: string) {\n  return `hello ${name}`;\n}\n\nexport function run() {\n  return greet('vllm');\n}\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(dir, "lib", "other.ts"),
+      "export function greetOther(name: string) {\n  return `hi ${name}`;\n}\n",
       "utf8",
     );
     const cfg = config();
@@ -122,6 +128,14 @@ test("CodeIntelligenceHub builds a small CodeGraph index and serves native tool 
     );
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.match(String(result.data?.content ?? ""), /greet/);
+
+    const pathFilteredSearch = await registry.call(
+      { id: "cg_search_path", name: "codegraph_search", arguments: { query: "greet", path: "src", limit: 10 } },
+      { session_id: session.session_id },
+    );
+    assert.equal(pathFilteredSearch.ok, true, JSON.stringify(pathFilteredSearch));
+    assert.match(String(pathFilteredSearch.data?.content ?? ""), /src\/sample\.ts/);
+    assert.doesNotMatch(String(pathFilteredSearch.data?.content ?? ""), /lib\/other\.ts/);
 
     const files = await registry.call(
       { id: "cg_files", name: "codegraph_files", arguments: { path: "src", pattern: "*.ts", format: "flat" } },

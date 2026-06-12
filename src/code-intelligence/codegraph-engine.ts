@@ -412,6 +412,7 @@ const CODEGRAPH_TOOL_DEFINITIONS: ToolDefinition[] = ([
     parameters: objectSchema({
       query: stringSchema("Symbol name or partial name."),
       kind: { type: "string", description: "Optional node kind filter.", enum: ["function", "method", "class", "interface", "type", "variable", "route", "component"] },
+      path: stringSchema("Optional indexed file path, path prefix, or basename to filter results."),
       limit: numberSchema("Maximum results. Defaults to 10."),
       projectPath: projectPathSchema(),
     }, ["query"]),
@@ -561,11 +562,16 @@ function formatSearch(cg: CodeGraphInstance, args: JsonObject): string {
   const query = stringArg(args.query, "query");
   const limit = limitArg(args.limit, 10, 100);
   const kind = typeof args.kind === "string" && args.kind ? args.kind : undefined;
-  const results = cg.searchNodes(query, { limit, kinds: kind ? [kind] : undefined });
+  const searchPath = typeof args.path === "string" && args.path ? normalizeIndexPath(args.path) : undefined;
+  const searchLimit = searchPath ? 100 : limit;
+  const results = cg
+    .searchNodes(query, { limit: searchLimit, kinds: kind ? [kind] : undefined })
+    .filter((result) => !searchPath || indexPathMatchesSearchPath(result.node.filePath, searchPath))
+    .slice(0, limit);
   if (!results.length) {
-    return `No results found for "${query}".`;
+    return `No results found for "${query}"${searchPath ? ` in ${searchPath}` : ""}.`;
   }
-  return [`# Search: ${query}`, "", ...results.map((result, index) => `${index + 1}. ${nodeLine(result.node)}${result.score !== undefined ? ` · score ${result.score.toFixed(3)}` : ""}`)].join("\n");
+  return [`# Search: ${query}${searchPath ? ` in ${searchPath}` : ""}`, "", ...results.map((result, index) => `${index + 1}. ${nodeLine(result.node)}${result.score !== undefined ? ` · score ${result.score.toFixed(3)}` : ""}`)].join("\n");
 }
 
 async function formatExplore(cg: CodeGraphInstance, args: JsonObject): Promise<string> {
@@ -686,6 +692,11 @@ function normalizeIndexPath(value: string): string {
 function indexPathMatchesPrefix(filePath: string, prefix: string): boolean {
   const normalized = normalizeIndexPath(filePath);
   return normalized === prefix || normalized.startsWith(`${prefix}/`);
+}
+
+function indexPathMatchesSearchPath(filePath: string, searchPath: string): boolean {
+  const normalized = normalizeIndexPath(filePath);
+  return indexPathMatchesPrefix(normalized, searchPath) || normalized.endsWith(`/${searchPath}`) || path.posix.basename(normalized) === path.posix.basename(searchPath);
 }
 
 function indexPathMatchesPattern(pattern: string, filePath: string, prefix: string | undefined): boolean {
