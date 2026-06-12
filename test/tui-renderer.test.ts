@@ -117,7 +117,6 @@ test("TUI tool action labels cover built-in tools with concrete wording", () => 
     ["lsp_rename", "Renamed symbol"],
     ["read_process", "Read process"],
     ["read_resource", "Read resource"],
-    ["session_note", "Recorded session note"],
     ["speech_generation", "Generated speech"],
     ["speech_voices", "Listed voices"],
     ["stop_process", "Stopped process"],
@@ -135,7 +134,7 @@ test("TUI tool action labels cover built-in tools with concrete wording", () => 
   assert.equal(toolTraceAction("run_command", false, "card"), "Command failed");
 });
 
-test("TUI tool renderer labels skill list and read without update wording", async () => {
+test("TUI tool renderer labels skill ops without update wording", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-tui-renderer-skills-"));
   const store = await SessionStore.open(dir);
   try {
@@ -148,7 +147,8 @@ test("TUI tool renderer labels skill list and read without update wording", asyn
         type: "tool.result",
         data: {
           tool_call_id: "skill-list-one",
-          tool_name: "skill_list",
+          tool_name: "skill",
+          arguments: { op: "list" },
           result: { ok: true, summary: "Listed 1 skill", data: { skills: [{ id: "workspace-learned-loop-policy" }] } },
         },
       },
@@ -158,7 +158,8 @@ test("TUI tool renderer labels skill list and read without update wording", asyn
         type: "tool.result",
         data: {
           tool_call_id: "skill-list-two",
-          tool_name: "skill_list",
+          tool_name: "skill",
+          arguments: { op: "list" },
           result: { ok: true, summary: "Listed 2 skills", data: { skills: [{ id: "workspace-learned-loop-policy" }, { id: "coding-workflow" }] } },
         },
       },
@@ -168,7 +169,8 @@ test("TUI tool renderer labels skill list and read without update wording", asyn
         type: "tool.result",
         data: {
           tool_call_id: "skill-read",
-          tool_name: "skill_read",
+          tool_name: "skill",
+          arguments: { op: "read", id: "coding-workflow" },
           result: { ok: true, summary: "Read skill coding-workflow", data: { id: "coding-workflow" } },
         },
       },
@@ -827,16 +829,6 @@ test("TUI tool renderer formats goal, plan, and autoresearch tools as native mod
           result: { ok: true, summary: "Question answered: Safe path", data: { question: "Pick path?", answer: "Use additive schema first.", choice_id: "safe", choice_label: "Safe path", freeform: false } },
         },
       },
-      {
-        session_id: session.session_id,
-        run_id: "run",
-        type: "tool.result",
-        data: {
-          tool_call_id: "evidence",
-          tool_name: "complete_step",
-          result: { ok: true, summary: "Completed verify", data: { step_id: "verify", evidence: { test: "npm test", ok: true, files: ["src/runtime.ts"] } } },
-        },
-      },
     ];
 
     const rendered = renderToolCards(events, store, { collapseCompact: false });
@@ -894,9 +886,6 @@ test("TUI tool renderer formats goal, plan, and autoresearch tools as native mod
     assert.match(plain, /Questions answered · Pick path\?/);
     assert.match(plain, /answer Use additive schema first/);
     assert.doesNotMatch(plain, /choice Safe path/);
-    assert.match(plain, /Recorded evidence · Completed verify/);
-    assert.match(plain, /evidence test npm test/);
-    assert.match(plain, /ok true/);
     assert.doesNotMatch(plain, /"objective"/);
     assert.doesNotMatch(plain, /"run_id"/);
     assert.doesNotMatch(plain, /"test"/);

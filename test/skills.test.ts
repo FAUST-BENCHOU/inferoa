@@ -49,11 +49,11 @@ test("SkillRegistry discovers native and imported skills and tools read details 
     const goal = createGoalState({ objective: "Use the demo skill" });
     writeGoalState(store, session.session_id, goal, "run_goal");
     const tools = new ToolRegistry(config, workspace, store);
-    const listed = await tools.call({ id: "tc1", name: "skill_list", arguments: { query: "demo" } }, { session_id: session.session_id });
+    const listed = await tools.call({ id: "tc1", name: "skill", arguments: { op: "list", query: "demo" } }, { session_id: session.session_id });
     assert.equal(listed.ok, true);
     assert.equal(listed.summary, "Listed 1 skill");
     assert.match(JSON.stringify(listed.data), /demo-skill/);
-    const read = await tools.call({ id: "tc2", name: "skill_read", arguments: { id: "demo-skill" } }, { session_id: session.session_id });
+    const read = await tools.call({ id: "tc2", name: "skill", arguments: { op: "read", id: "demo-skill" } }, { session_id: session.session_id });
     assert.equal(read.ok, true);
     assert.match(JSON.stringify(read.data), /progressive skill loading/);
     const loadedEvents = store.listEvents(session.session_id).filter((event) => event.type === "skill.body.loaded");
@@ -68,9 +68,9 @@ test("SkillRegistry discovers native and imported skills and tools read details 
     assert.equal(view.skill_body_loads[0]?.skill_id, "demo-skill");
     assert.equal(view.skill_body_loads[0]?.body_hash, loadedEvents[0]?.data.body_hash);
 
-    const readLoop = await tools.call({ id: "tc3", name: "skill_read", arguments: { id: "inferoa-loop-skill" } }, { session_id: session.session_id, run_id: "run_loop_skill" });
+    const readLoop = await tools.call({ id: "tc3", name: "skill", arguments: { op: "read", id: "inferoa-loop-skill" } }, { session_id: session.session_id, run_id: "run_loop_skill" });
     assert.equal(readLoop.ok, true);
-    const readWorkspace = await tools.call({ id: "tc4", name: "skill_read", arguments: { id: "inferoa-workspace-skill" } }, { session_id: session.session_id, run_id: "run_workspace_skill" });
+    const readWorkspace = await tools.call({ id: "tc4", name: "skill", arguments: { op: "read", id: "inferoa-workspace-skill" } }, { session_id: session.session_id, run_id: "run_workspace_skill" });
     assert.equal(readWorkspace.ok, true);
     const verify = await tools.call(
       {
@@ -131,21 +131,21 @@ test("missing learned skills are reported as not adopted without a failed tool c
     const session = store.createSession(workspace, "missing learned skills");
     const tools = new ToolRegistry(config, workspace, store);
     const read = await tools.call(
-      { id: "read_missing_loop_skill", name: "skill_read", arguments: { id: "inferoa-loop-skill" } },
+      { id: "read_missing_loop_skill", name: "skill", arguments: { op: "read", id: "inferoa-loop-skill" } },
       { session_id: session.session_id, run_id: "run_missing_loop_skill" },
     );
 
     assert.equal(read.ok, true, JSON.stringify(read));
     assert.equal((read.data as { status?: string } | undefined)?.status, "not_adopted");
     const readWorkspace = await tools.call(
-      { id: "read_missing_workspace_skill", name: "skill_read", arguments: { id: "inferoa-workspace-skill" } },
+      { id: "read_missing_workspace_skill", name: "skill", arguments: { op: "read", id: "inferoa-workspace-skill" } },
       { session_id: session.session_id, run_id: "run_missing_workspace_skill" },
     );
 
     assert.equal(readWorkspace.ok, true, JSON.stringify(readWorkspace));
     assert.equal((readWorkspace.data as { status?: string } | undefined)?.status, "not_adopted");
     const readAlias = await tools.call(
-      { id: "read_missing_loop_skill_alias", name: "skill_read", arguments: { id: "loop_skill" } },
+      { id: "read_missing_loop_skill_alias", name: "skill", arguments: { op: "read", id: "loop_skill" } },
       { session_id: session.session_id, run_id: "run_missing_loop_skill_alias" },
     );
 

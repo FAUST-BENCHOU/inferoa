@@ -243,11 +243,11 @@ test("git tools route through RTK while preserving result contract", async () =>
     const session = store.createSession(workspace, "rtk-git");
     const registry = new ToolRegistry(rtkConfig(fakeRtk), workspace, store);
 
-    const status = await registry.call({ id: "gs", name: "git_status", arguments: {} }, { session_id: session.session_id, run_id: "run_git" });
-    const diff = await registry.call({ id: "gd", name: "git_diff", arguments: { path: "." } }, { session_id: session.session_id, run_id: "run_git" });
-    const diffEmptyPath = await registry.call({ id: "gd_empty", name: "git_diff", arguments: { path: "" } }, { session_id: session.session_id, run_id: "run_git" });
-    const show = await registry.call({ id: "gsh", name: "git_show", arguments: { rev: "HEAD" } }, { session_id: session.session_id, run_id: "run_git" });
-    const showEmptyPath = await registry.call({ id: "gsh_empty", name: "git_show", arguments: { rev: "HEAD", path: "" } }, { session_id: session.session_id, run_id: "run_git" });
+    const status = await registry.call({ id: "gs", name: "git", arguments: { op: "status" } }, { session_id: session.session_id, run_id: "run_git" });
+    const diff = await registry.call({ id: "gd", name: "git", arguments: { op: "diff", path: "." } }, { session_id: session.session_id, run_id: "run_git" });
+    const diffEmptyPath = await registry.call({ id: "gd_empty", name: "git", arguments: { op: "diff", path: "" } }, { session_id: session.session_id, run_id: "run_git" });
+    const show = await registry.call({ id: "gsh", name: "git", arguments: { op: "show", rev: "HEAD" } }, { session_id: session.session_id, run_id: "run_git" });
+    const showEmptyPath = await registry.call({ id: "gsh_empty", name: "git", arguments: { op: "show", rev: "HEAD", path: "" } }, { session_id: session.session_id, run_id: "run_git" });
 
     assert.equal(status.ok, true);
     assert.equal(diff.ok, true);

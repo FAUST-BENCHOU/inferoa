@@ -48,7 +48,7 @@ export async function runFinalAcceptance(options: {
     const fixture = await ensureImageFixture(workspace.root);
     const taskPrompt = [
       "Run the Inferoa final acceptance coding task in this repository.",
-      "Use these built-in tools explicitly: todo_write, file_search, read_file, lsp, edit_file or write_file, run_command with one background process, read_process, stop_process, git_status, git_diff, complete_step.",
+      "Use these built-in tools explicitly: todo_write, file_search, read_file, lsp, edit_file or write_file, run_command with one background process, read_process, stop_process, and git with op=status and op=diff.",
       "Make a small real repository change by writing docs/evidence/final-acceptance/agent-run.md with session evidence.",
       "Force context compression is enabled; continue after compression.",
       `Then use vision_understanding on ${fixture}, image_generation for a small diagram-like acceptance image, and video_generation for a short acceptance clip.`,
@@ -57,7 +57,7 @@ export async function runFinalAcceptance(options: {
     const run = await runtime.run({ prompt: taskPrompt, title: "final-acceptance" });
     const resume = await runtime.run({
       prompt:
-        "Resume validation for the same final acceptance task. Read recent session evidence if needed, run git_status, and complete_step with resume evidence. Then finish concisely.",
+        "Resume validation for the same final acceptance task. Read recent session evidence if needed, run git op=status, and finish concisely.",
       session_id: run.session.session_id,
     });
     const events = store.listEvents(run.session.session_id);
@@ -91,10 +91,8 @@ export async function runFinalAcceptance(options: {
     requireTool(failures, toolCalls, "run_command");
     requireTool(failures, toolCalls, "read_process");
     requireTool(failures, toolCalls, "stop_process");
-    requireTool(failures, toolCalls, "git_status");
-    requireTool(failures, toolCalls, "git_diff");
+    requireTool(failures, toolCalls, "git");
     requireTool(failures, toolCalls, "todo_write");
-    requireTool(failures, toolCalls, "complete_step");
     requireAnyTool(failures, toolCalls, "code-intelligence tool", ["lsp", "ast_grep", "ast_edit"]);
     requireTool(failures, toolCalls, "vision_understanding");
     requireTool(failures, toolCalls, "image_generation");
@@ -197,7 +195,7 @@ async function validateDaemonAcceptance(
     sessionId,
     configPath,
     prompt:
-      "Daemon validation for the same final acceptance task: run git_status, start a short background process with run_command, read_process, stop_process, then complete_step with daemon evidence.",
+      "Daemon validation for the same final acceptance task: run git op=status, start a short background process with run_command, read_process, stop_process, then report daemon evidence.",
   });
   await waitForJobVisible(stateDir, job.job_id, 5_000);
   const detached = await detachDaemonJob(stateDir, job.job_id);

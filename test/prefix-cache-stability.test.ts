@@ -93,7 +93,7 @@ test("scoped runtime tools freeze per session and cannot widen on resume", async
 
     const first = await runtime.run({
       prompt: "freeze scoped self-improve tools",
-      tool_names: ["read_file", "skill_read"],
+      tool_names: ["read_file", "skill"],
     });
     await runtime.run({
       session_id: first.session.session_id,
@@ -102,8 +102,8 @@ test("scoped runtime tools freeze per session and cannot widen on resume", async
     });
 
     assert.equal(server.requests.length, 2);
-    assert.deepEqual(toolNames(server.requests[0]!), ["read_file", "skill_read"]);
-    assert.deepEqual(toolNames(server.requests[1]!), ["read_file", "skill_read"]);
+    assert.deepEqual(toolNames(server.requests[0]!), ["read_file", "skill"]);
+    assert.deepEqual(toolNames(server.requests[1]!), ["read_file", "skill"]);
     assert.equal(toolNames(server.requests[1]!).includes("edit_file"), false);
     assert.equal(toolNames(server.requests[1]!).includes("run_command"), false);
 

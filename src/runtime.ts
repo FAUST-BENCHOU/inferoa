@@ -1238,6 +1238,8 @@ function summarizeToolStart(name: string, args: JsonObject): string {
       return startSummary("Exporting", stringField(args.uri));
     case "glob":
       return startSummary("Scanning", stringField(args.pattern));
+    case "codegraph":
+      return summarizeCodegraphStart(args);
     case "goal":
       return summarizeGoalStart(args);
     case "plan":
@@ -1258,23 +1260,12 @@ function summarizeToolStart(name: string, args: JsonObject): string {
       return startSummary("Editing", stringField(args.path));
     case "apply_patch":
       return "Applying patch";
-    case "git_status":
-      return "Checking git status";
-    case "git_diff":
-      return startSummary("Reading diff", stringField(args.path));
-    case "git_show":
-      return startSummary("Reading revision", stringField(args.rev) ?? stringField(args.revision));
+    case "git":
+      return summarizeGitStart(args);
     case "todo_write":
       return "Updating todo list";
-    case "update_notes":
-      return "Updating autoresearch notes";
-    case "skill_list":
-      return "Listing skills";
-    case "skill_read":
-      return startSummary("Reading skill", stringField(args.skill) ?? stringField(args.id));
-    case "skill_enable":
-    case "skill_disable":
-      return startSummary("Updating skill", stringField(args.skill) ?? stringField(args.id));
+    case "skill":
+      return summarizeSkillStart(args);
     case "web_search":
       return startSummary("Searching web", stringField(args.query));
     case "web_fetch":
@@ -1334,6 +1325,53 @@ function summarizeGoalStart(args: JsonObject): string {
       return "Reading loop";
     default:
       return "Updating loop";
+  }
+}
+
+function summarizeCodegraphStart(args: JsonObject): string {
+  switch (stringField(args.op)) {
+    case "explore":
+      return startSummary("Exploring context", stringField(args.query));
+    case "search":
+      return startSummary("Searching context index", stringField(args.query));
+    case "node":
+      return startSummary("Reading context symbol", stringField(args.symbol));
+    case "callers":
+    case "callees":
+    case "impact":
+      return startSummary("Tracing context index", stringField(args.symbol));
+    case "files":
+    case "status":
+      return "Checking context index";
+    default:
+      return "Running codegraph";
+  }
+}
+
+function summarizeGitStart(args: JsonObject): string {
+  switch (stringField(args.op)) {
+    case "status":
+      return "Checking git status";
+    case "diff":
+      return startSummary("Reading diff", stringField(args.path));
+    case "show":
+      return startSummary("Reading revision", stringField(args.rev));
+    default:
+      return "Reading git data";
+  }
+}
+
+function summarizeSkillStart(args: JsonObject): string {
+  switch (stringField(args.op)) {
+    case "list":
+      return "Listing skills";
+    case "read":
+      return startSummary("Reading skill", stringField(args.id));
+    case "enable":
+    case "disable":
+      return "Updating skills";
+    default:
+      return "Updating skill";
   }
 }
 

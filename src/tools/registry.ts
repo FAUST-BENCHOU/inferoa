@@ -7,31 +7,27 @@ import { configuredToolDefinitions } from "./schemas.js";
 import type { ToolExecutionContext, ToolHandler } from "./context.js";
 import {
   applyPatchTool,
-  completeStep,
   editFile,
   exportResource,
   fileSearch,
-  gitDiff,
-  gitShow,
-  gitStatus,
+  gitTool,
   globPaths,
   listDir,
   readFile,
   readResource,
-  sessionNote,
   todoWrite,
   writeFile,
 } from "./workspace-tools.js";
 import { readProcess, runCommand, stopProcess, writeProcess } from "./process-tools.js";
 import { astEdit, astGrep, lspRenameTool, lspTool } from "./code-intelligence.js";
 import { webOpen, webSearch } from "./web-search.js";
-import { skillDisable, skillEnable, skillList, skillRead } from "./skill-tools.js";
+import { skillTool } from "./skill-tools.js";
 import { goalTool } from "./goal-tools.js";
 import { planTool } from "./plan-tools.js";
 import { clarifyTool } from "./clarify-tool.js";
 import { subagentTool } from "./subagent-tool.js";
 import { validateToolArguments } from "./schema-validation.js";
-import { initExperiment, logExperiment, runExperiment, updateExperiment, updateNotes } from "./autoresearch-tools.js";
+import { initExperiment, logExperiment, runExperiment, updateExperiment } from "./autoresearch-tools.js";
 import {
   audioGeneration,
   audioUnderstanding,
@@ -51,13 +47,10 @@ const HANDLERS: Record<string, ToolHandler> = {
   audio_generation: audioGeneration,
   audio_understanding: audioUnderstanding,
   clarify: clarifyTool,
-  complete_step: completeStep,
   edit_file: editFile,
   export_resource: exportResource,
   file_search: fileSearch,
-  git_diff: gitDiff,
-  git_show: gitShow,
-  git_status: gitStatus,
+  git: gitTool,
   glob: globPaths,
   goal: goalTool,
   image_edit: imageEdit,
@@ -73,17 +66,12 @@ const HANDLERS: Record<string, ToolHandler> = {
   read_resource: readResource,
   run_command: runCommand,
   run_experiment: runExperiment,
-  session_note: sessionNote,
-  skill_disable: skillDisable,
-  skill_enable: skillEnable,
-  skill_list: skillList,
-  skill_read: skillRead,
+  skill: skillTool,
   stop_process: stopProcess,
   subagent: subagentTool,
   speech_generation: speechGeneration,
   speech_voices: speechVoices,
   todo_write: todoWrite,
-  update_notes: updateNotes,
   update_experiment: updateExperiment,
   video_generation: videoGeneration,
   video_understanding: videoUnderstanding,

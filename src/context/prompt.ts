@@ -713,8 +713,8 @@ function toModelTools(tools: ToolDefinition[]): JsonObject[] {
 function renderCodeIntelligencePolicy(tools: ToolDefinition[]): string[] {
   const names = new Set(tools.map((tool) => tool.name));
   const lines: string[] = [];
-  if (names.has("codegraph_explore")) {
-    lines.push("For repository-wide architecture, call flows, impact analysis, and cross-file exploration, prefer the context engine with codegraph_explore first; use codegraph_search/node/callers/callees/impact/files/status for targeted follow-up.");
+  if (names.has("codegraph")) {
+    lines.push("For repository-wide architecture, call flows, impact analysis, and cross-file exploration, prefer codegraph op=explore first; use op=search/node/callers/callees/impact/files/status for targeted follow-up.");
   }
   if (names.has("lsp")) {
     lines.push("Use lsp for precise single-location diagnostics, definitions, references, hover, symbols, and code-action checks.");
@@ -725,7 +725,7 @@ function renderCodeIntelligencePolicy(tools: ToolDefinition[]): string[] {
   if (names.has("ast_grep") || names.has("ast_edit")) {
     lines.push("Use ast_grep and ast_edit for structured code search and safe structural rewrites.");
   }
-  if (names.has("codegraph_explore")) {
+  if (names.has("codegraph")) {
     lines.push("If the context engine is unavailable or degraded, fall back to file_search, read_file, lsp, and ast_grep instead of stopping.");
   }
   return lines;
@@ -748,9 +748,9 @@ function renderSkillIndex(skills: SkillDescriptor[], enabledNames: string[]): st
     ].join(" | ");
   });
   return [
-    "Enabled skill index is frozen for this session. Skill bodies are not embedded; call skill_read(id) before relying on an enabled skill.",
-    "Use skill_list to inspect additional discovered skills, then skill_read(id) to load one when useful.",
-    unavailable.length ? `Configured enabled skills not discovered: ${unavailable.map(escapeXmlText).join(", ")}. Do not call skill_read for missing skills.` : undefined,
+    "Enabled skill index is frozen for this session. Skill bodies are not embedded; call skill op=read with id before relying on an enabled skill.",
+    "Use skill op=list to inspect additional discovered skills, then skill op=read to load one when useful.",
+    unavailable.length ? `Configured enabled skills not discovered: ${unavailable.map(escapeXmlText).join(", ")}. Do not call skill op=read for missing skills.` : undefined,
     enabledSkillLines.length ? `Enabled skill index:\n${enabledSkillLines.join("\n")}` : "Enabled skill index: none.",
   ].filter((line): line is string => Boolean(line)).join("\n");
 }

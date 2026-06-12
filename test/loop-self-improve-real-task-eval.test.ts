@@ -99,7 +99,7 @@ test("self-improve real task eval learns from real command verification and gate
     assert.match(blockedBeforeLoopSkill.error?.message ?? "", /Loop Skill body/);
 
     const readLoopSkill = await registry.call(
-      { id: "read_loop_skill", name: "skill_read", arguments: { id: "inferoa-loop-skill" } },
+      { id: "read_loop_skill", name: "skill", arguments: { op: "read", id: "inferoa-loop-skill" } },
       { session_id: postSession.session_id, run_id: "run_read_loop_skill" },
     );
     assert.equal(readLoopSkill.ok, true, JSON.stringify(readLoopSkill));
@@ -130,7 +130,7 @@ test("self-improve real task eval learns from real command verification and gate
     assert.match(blockedBeforeWorkspaceSkill.error?.message ?? "", /Workspace Skill body/);
 
     const readWorkspaceSkill = await registry.call(
-      { id: "read_workspace_skill", name: "skill_read", arguments: { id: "inferoa-workspace-skill" } },
+      { id: "read_workspace_skill", name: "skill", arguments: { op: "read", id: "inferoa-workspace-skill" } },
       { session_id: postSession.session_id, run_id: "run_read_workspace_skill" },
     );
     assert.equal(readWorkspaceSkill.ok, true, JSON.stringify(readWorkspaceSkill));

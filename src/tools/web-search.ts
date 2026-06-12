@@ -29,27 +29,6 @@ export async function webSearch(args: JsonObject, context: ToolExecutionContext)
   if (!query) {
     return fail("web_search_missing_query", "web_search requires a non-empty query.");
   }
-  const directUrl = firstHttpUrl(query);
-  if (directUrl) {
-    const opened = await webOpen(
-      {
-        url: directUrl.toString(),
-        max_bytes: args.max_bytes,
-        timeout_ms: args.timeout_ms,
-      },
-      context,
-    );
-    return {
-      ...opened,
-      summary: opened.ok ? `Opened direct URL from search query: ${directUrl.host}` : opened.summary,
-      data: {
-        ...objectField(opened.data),
-        query,
-        direct_url: directUrl.toString(),
-        via_search: true,
-      },
-    };
-  }
   const limit = typeof args.limit === "number" ? Math.max(1, Math.min(args.limit, 20)) : 5;
   const provider = context.config.web_search.provider;
   try {
@@ -163,28 +142,6 @@ function objectField(value: unknown): JsonObject {
 
 function stringField(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
-}
-
-function firstHttpUrl(value: string): URL | undefined {
-  const exact = normalizeHttpUrl(value);
-  if (exact) {
-    return exact;
-  }
-  for (const match of value.matchAll(/https?:\/\/[^\s<>"'`)\]]+/gi)) {
-    const parsed = normalizeHttpUrl(trimTrailingUrlPunctuation(match[0] ?? ""));
-    if (parsed) {
-      return parsed;
-    }
-  }
-  return undefined;
-}
-
-function trimTrailingUrlPunctuation(value: string): string {
-  let next = value.trim();
-  while (/[.,;:!?。，、；：！？]$/.test(next)) {
-    next = next.slice(0, -1);
-  }
-  return next;
 }
 
 async function configuredProviderSearch(

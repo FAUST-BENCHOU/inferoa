@@ -632,7 +632,7 @@ test("runtime freezes enabled skill prompt state for a run", async () => {
                   {
                     id: "call_enable_skill",
                     type: "function",
-                    function: { name: "skill_enable", arguments: JSON.stringify({ ids: ["demo-skill"] }) },
+                    function: { name: "skill", arguments: JSON.stringify({ op: "enable", ids: ["demo-skill"] }) },
                   },
                 ],
               },
@@ -641,7 +641,7 @@ test("runtime freezes enabled skill prompt state for a run", async () => {
         });
         writeSse(res, { choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 20, completion_tokens: 2 } });
       } else {
-        writeSse(res, { id: "resp_after_skill_enable", model: "long-horizon-test", choices: [{ delta: { content: "stable skill snapshot" } }] });
+        writeSse(res, { id: "resp_after_skill_op_enable", model: "long-horizon-test", choices: [{ delta: { content: "stable skill snapshot" } }] });
         writeSse(res, { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 21, completion_tokens: 3 } });
       }
       res.end("data: [DONE]\n\n");

@@ -135,25 +135,15 @@ const VALID_OPS = new Set(["add", "replace", "delete"]);
 const MAX_EDIT_CONTENT_LENGTH = 1200;
 export const SELF_IMPROVE_OPTIMIZER_TOOL_NAMES = [
   "ast_grep",
-  "codegraph_callers",
-  "codegraph_callees",
-  "codegraph_explore",
-  "codegraph_files",
-  "codegraph_impact",
-  "codegraph_node",
-  "codegraph_search",
-  "codegraph_status",
+  "codegraph",
   "file_search",
-  "git_diff",
-  "git_show",
-  "git_status",
+  "git",
   "glob",
   "list_dir",
   "lsp",
   "read_file",
   "read_resource",
-  "skill_list",
-  "skill_read",
+  "skill",
 ] as const;
 
 const AGENTIC_OPTIMIZER_SYSTEM_LINES = [

@@ -10,7 +10,7 @@ export function openAiResponsesPromptCacheControls(
   if (!supportsOpenAiPromptCacheControls(setup)) {
     return {};
   }
-  const promptCacheKey = request.prompt_cache_key ?? buildPromptCacheKey(request);
+  const promptCacheKey = request.prompt_cache_key ?? buildResponsesPromptCacheKey(setup, request);
   if (!promptCacheKey) {
     return {};
   }
@@ -33,8 +33,25 @@ export function buildPromptCacheKey(request: Pick<ModelRequest, "provider_id" | 
   return `inferoa:${base32UrlSha256([providerId, model, sessionId, promptEpochId].join("\0"), 40)}`;
 }
 
+export function buildCodexPromptCacheKey(request: Pick<ModelRequest, "provider_id" | "model" | "session_id">): string | undefined {
+  const sessionId = request.session_id.trim();
+  if (!sessionId) {
+    return undefined;
+  }
+  const providerId = request.provider_id.trim() || "unknown-provider";
+  const model = request.model.trim() || "unknown-model";
+  return `inferoa:${base32UrlSha256([providerId, model, sessionId].join("\0"), 40)}`;
+}
+
+function buildResponsesPromptCacheKey(setup: ModelSetup, request: ModelRequest): string | undefined {
+  if (setup.provider_id === "openai-codex") {
+    return buildCodexPromptCacheKey(request);
+  }
+  return buildPromptCacheKey(request);
+}
+
 function supportsOpenAiPromptCacheControls(setup: ModelSetup): boolean {
-  return setup.provider === "external" && setup.provider_id === "openai";
+  return setup.provider === "external" && (setup.provider_id === "openai" || setup.provider_id === "openai-codex");
 }
 
 function supportsOpenAiPromptCacheRetention(setup: ModelSetup): boolean {

@@ -60,7 +60,7 @@ const checks: Record<Milestone, () => Promise<Check[]>> = {
     await containsCheck("src/tui/tool-renderer.ts", "renderDiff", "diff renderer"),
     await containsCheck("src/tui/tool-renderer.ts", "collapseCompactToolRows", "compact tool batching"),
     await containsCheck("src/tools/workspace-tools.ts", "diff", "write/edit diff evidence"),
-    { name: "Required model-facing tools present", pass: requiredTools(["file_search", "read_file", "edit_file", "write_file", "run_command", "git_status", "todo_write", "complete_step", "lsp"]) },
+    { name: "Required model-facing tools present", pass: requiredTools(["file_search", "read_file", "edit_file", "write_file", "run_command", "git", "todo_write", "lsp"]) },
   ],
   T4: async () => [
     await containsCheck("src/session/store.ts", "renameSession", "session rename support"),

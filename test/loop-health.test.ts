@@ -404,8 +404,8 @@ test("loop policy command returns configured default background isolation", asyn
       && item.review_surface === "loop inbox external_action_approval"
     ));
     assert.equal(parsed.skill_policy?.prompt_contract?.skill_bodies_embedded, false);
-    assert.equal(parsed.skill_policy?.prompt_contract?.skill_body_access, "on_demand_skill_read");
-    assert.equal(parsed.skill_policy?.prompt_contract?.learned_skill_adoption, "explicit_adopt_or_skill_enable");
+    assert.equal(parsed.skill_policy?.prompt_contract?.skill_body_access, "on_demand_skill_op_read");
+    assert.equal(parsed.skill_policy?.prompt_contract?.learned_skill_adoption, "explicit_adopt_or_skill_op_enable");
     assert.ok(parsed.skill_policy?.configured_enabled?.includes("inferoa-loop-skill"));
     assert.ok(parsed.skill_policy?.configured_enabled?.includes("inferoa-workspace-skill"));
     assert.equal(parsed.skill_policy?.missing_enabled?.includes("missing-loop-skill"), true);

@@ -7,7 +7,7 @@ export function buildGoalWorkPrompt(goalOrObjective: GoalRecord | string): strin
     return [
       `Loop objective: ${objective}`,
       "Continue the active research loop cycle.",
-      "Use the loop task as the research cycle: keep loop steps current with goal op=update_step while maintaining research experiments with init_experiment, run_experiment, log_experiment, update_experiment, and update_notes.",
+      "Use the loop task as the research cycle: keep loop steps current with goal op=update_step while maintaining research experiments with init_experiment, run_experiment, log_experiment, and update_experiment.",
       "If a benchmark run is pending, log it before starting another run. If no experiment exists, identify or create ./autoresearch.sh, establish metrics and guardrails, initialize a baseline experiment, run it, and log the baseline.",
       "For exploratory work, create separate experiments for distinct hypotheses; keep at most one pending run at a time.",
       "Use metric evidence, guardrail checks, failed runs, rejected experiments, and notes to decide the next useful experiment.",

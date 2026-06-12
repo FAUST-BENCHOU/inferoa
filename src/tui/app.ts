@@ -1965,7 +1965,7 @@ export class TuiApp {
     const options = webSearchProviderSetupOptions();
     const defaultIndex = Math.max(0, options.findIndex((option) => option.value === current));
     return await this.selectOption("Web Search", options, defaultIndex, [
-      fg256(244, "Direct URLs are opened by web_open even when keyword search uses fallback."),
+      fg256(244, "Use web_search for keyword search and web_open for direct URLs."),
     ]);
   }
 
@@ -2021,7 +2021,7 @@ export class TuiApp {
       })),
       visible.map((skill) => enabled.has(skill.id) || enabled.has(skill.name)),
       [
-        fg256(244, "Only the index is injected into the prompt. skill_read loads details on demand."),
+        fg256(244, "Only the index is injected into the prompt. skill op=read loads details on demand."),
         ...(skills.length > visible.length ? [fg256(244, `${skills.length - visible.length} more hidden; open /skills with a filter.`)] : []),
       ],
     );
@@ -2995,13 +2995,13 @@ export class TuiApp {
     }
     this.renderPanel("Skill", [
       `${fg256(48, "✓")} ${wasEnabled ? "ready" : "enabled"} · ${skill.name}`,
-      fg256(244, "Only the compact skill index is kept in the prompt. The agent can load details with skill_read."),
+      fg256(244, "Only the compact skill index is kept in the prompt. The agent can load details with skill op=read."),
     ]);
     if (!this.app.config.model_setup.base_url || !this.app.config.model_setup.model) {
       this.renderNotice("Skill is enabled. Configure a model with /setup before triggering model work.");
       return;
     }
-    this.enqueuePrompt(`Use the ${skill.name} skill (${skill.id}). Read its body with skill_read if useful, then apply it to the current task. If no concrete task is present, ask one concise clarifying question.`);
+    this.enqueuePrompt(`Use the ${skill.name} skill (${skill.id}). Read its body with skill op=read if useful, then apply it to the current task. If no concrete task is present, ask one concise clarifying question.`);
   }
 
   private resolveSkillQuery(query: string, skills: SkillDescriptor[]): SkillDescriptor | undefined {
@@ -8441,22 +8441,8 @@ function permissionColor(permission: string): number {
 
 function displayToolName(name: string): string {
   switch (name) {
-    case "codegraph_explore":
-      return "context_explore";
-    case "codegraph_search":
-      return "context_search";
-    case "codegraph_node":
-      return "context_symbol";
-    case "codegraph_callers":
-      return "context_callers";
-    case "codegraph_callees":
-      return "context_callees";
-    case "codegraph_impact":
-      return "context_impact";
-    case "codegraph_files":
-      return "context_files";
-    case "codegraph_status":
-      return "context_status";
+    case "codegraph":
+      return "context";
     default:
       return name;
   }

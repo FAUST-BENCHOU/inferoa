@@ -17,6 +17,23 @@ const LEARNED_WORKSPACE_SKILL_ALIASES = new Map([
   ["workspace_skill", "inferoa-workspace-skill"],
 ]);
 
+export async function skillTool(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
+  const op = String(args.op ?? "");
+  if (op === "list") {
+    return skillList(args, context);
+  }
+  if (op === "read") {
+    return skillRead(args, context);
+  }
+  if (op === "enable") {
+    return skillEnable(args, context);
+  }
+  if (op === "disable") {
+    return skillDisable(args, context);
+  }
+  return fail("skill_op_invalid", "skill op must be list, read, enable, or disable.");
+}
+
 export async function skillList(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const query = typeof args.query === "string" ? args.query.toLowerCase() : "";
   const includeDisabled = args.include_disabled !== false;
@@ -44,7 +61,7 @@ export async function skillRead(args: JsonObject, context: ToolExecutionContext)
   const requestedId = String(args.id ?? "");
   const id = LEARNED_WORKSPACE_SKILL_ALIASES.get(requestedId) ?? requestedId;
   if (!id) {
-    return fail("skill_id_required", "skill_read requires id");
+    return fail("skill_id_required", "skill op=read requires id");
   }
   const skills = await new SkillRegistry(context.workspace, context.config).discover();
   const skill = skills.find((item) => item.id === id || item.name === id || item.id === requestedId || item.name === requestedId);
@@ -109,7 +126,7 @@ export async function skillRead(args: JsonObject, context: ToolExecutionContext)
 export async function skillEnable(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const requested = parseSkillIds(args);
   if (!requested.length) {
-    return fail("skill_ids_required", "skill_enable requires ids");
+    return fail("skill_ids_required", "skill op=enable requires ids");
   }
   const skills = await new SkillRegistry(context.workspace, context.config).discover();
   const resolved = resolveSkills(requested, skills);
@@ -131,7 +148,7 @@ export async function skillEnable(args: JsonObject, context: ToolExecutionContex
 export async function skillDisable(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const requested = parseSkillIds(args);
   if (!requested.length) {
-    return fail("skill_ids_required", "skill_disable requires ids");
+    return fail("skill_ids_required", "skill op=disable requires ids");
   }
   const skills = await new SkillRegistry(context.workspace, context.config).discover();
   const resolved = resolveSkills(requested, skills, true);

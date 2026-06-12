@@ -97,15 +97,26 @@ test("web_fetch is not exposed as a registry tool", async () => {
   }
 });
 
-test("web_search delegates direct URLs to open when search provider is disabled", async () => {
-  const server = createServer((_req, res) => {
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end("<!doctype html><title>URL Through Search</title><main>Direct URL query was fetched.</main>");
-  });
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const address = server.address() as AddressInfo;
-  const url = `http://127.0.0.1:${address!.port}/`;
+test("web_search treats direct URLs as search text instead of opening them", async () => {
+  const originalFetch = globalThis.fetch;
+  const requested: string[] = [];
+  const directUrl = "http://127.0.0.1:65530/direct-doc";
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    requested.push(url);
+    if (url.startsWith("https://html.duckduckgo.com/html/")) {
+      return new Response(
+        [
+          '<div class="result results_links">',
+          '<a class="result__a" href="/l/?uddg=https%3A%2F%2Fexample.com%2Furl-search">URL search result</a>',
+          '<a class="result__snippet">The URL was searched as query text.</a>',
+          "</div>",
+        ].join(""),
+        { status: 200, headers: { "content-type": "text/html" } },
+      );
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  }) as typeof fetch;
 
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-web-search-url-"));
   const store = await SessionStore.open(path.join(dir, "state"));
@@ -116,16 +127,17 @@ test("web_search delegates direct URLs to open when search provider is disabled"
     next.web_search.provider = "off";
     const registry = new ToolRegistry(next, workspace, store);
     const result = await registry.call(
-      { id: "web4", name: "web_search", arguments: { query: `please inspect ${url}，thanks` } },
+      { id: "web4", name: "web_search", arguments: { query: `please inspect ${directUrl} thanks` } },
       { session_id: session.session_id, run_id: "run" },
     );
     assert.equal(result.ok, true);
-    assert.equal(result.data?.title, "URL Through Search");
-    assert.equal(result.data?.opened, true);
-    assert.match(String(result.data?.text ?? ""), /Direct URL query was fetched/);
+    assert.equal(result.data?.provider, "DuckDuckGo");
+    assert.equal(result.data?.opened, undefined);
+    assert.match(String(result.data?.results_text ?? ""), /URL search result/);
+    assert.equal(requested.some((item) => item === directUrl), false);
   } finally {
+    globalThis.fetch = originalFetch;
     store.close();
-    server.close();
     await rm(dir, { recursive: true, force: true });
   }
 });

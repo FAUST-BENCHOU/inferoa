@@ -51,8 +51,8 @@ export interface LoopSkillPolicyReport {
     catalog_visible: boolean;
     enabled_list_visible: boolean;
     skill_bodies_embedded: boolean;
-    skill_body_access: "on_demand_skill_read";
-    learned_skill_adoption: "explicit_adopt_or_skill_enable";
+    skill_body_access: "on_demand_skill_op_read";
+    learned_skill_adoption: "explicit_adopt_or_skill_op_enable";
   };
   configured_enabled: string[];
   discovered_count: number;
@@ -164,8 +164,8 @@ export async function readLoopSkillPolicy(config: VllmAgentConfig, workspace: Wo
       catalog_visible: true,
       enabled_list_visible: true,
       skill_bodies_embedded: false,
-      skill_body_access: "on_demand_skill_read",
-      learned_skill_adoption: "explicit_adopt_or_skill_enable",
+      skill_body_access: "on_demand_skill_op_read",
+      learned_skill_adoption: "explicit_adopt_or_skill_op_enable",
     },
     configured_enabled: configuredEnabled,
     discovered_count: descriptors.length,

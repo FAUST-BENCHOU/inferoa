@@ -94,7 +94,7 @@ test("external mutation classifier routes supported tool calls through the polic
     operation: "publish",
   });
   assert.equal(classifyExternalMutationToolCall("run_command", { command: "gh pr view 17 --repo owner/repo" }), undefined);
-  assert.equal(classifyExternalMutationToolCall("skill_read", { command: "gh pr merge 17" }), undefined);
+  assert.equal(classifyExternalMutationToolCall("skill", { op: "read", command: "gh pr merge 17" }), undefined);
 });
 
 test("external mutation policy denies unattended mutations and allows interactive mutations", () => {

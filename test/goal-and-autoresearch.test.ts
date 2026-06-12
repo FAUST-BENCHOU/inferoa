@@ -381,17 +381,6 @@ test("plan mode persists a plan, injects guidance, and requires approval without
     assert.equal(store.listEvents(session.session_id).filter((event) => event.type === "todo.updated").length, 1);
     assert.equal(readPlanState(store, session.session_id)?.plan.status, "drafting");
 
-    const evidence = await registry.call(
-      {
-        id: "plan_evidence",
-        name: "complete_step",
-        arguments: { step_id: "deep-research-codebase", evidence: { summary: "Read-only planning research complete." } },
-      },
-      { session_id: session.session_id, run_id: "run_plan" },
-    );
-    assert.equal(evidence.ok, true, JSON.stringify(evidence));
-    assert.equal(store.listEvents(session.session_id).filter((event) => event.type === "evidence.step.completed").length, 1);
-
     const prematureApproval = await registry.call(
       { id: "plan_early", name: "plan", arguments: { op: "approve", summary: "No executable plan yet." } },
       { session_id: session.session_id, run_id: "run_plan" },
@@ -897,7 +886,7 @@ test("goal completion requires a summary and accepts long summaries", async () =
       {
         id: "gs_reflection",
         name: "goal",
-        arguments: { op: "reflect", decision: "done", summary: "No additional horizon.", verification_evidence: { git_status: "clean enough" } },
+        arguments: { op: "reflect", decision: "done", summary: "No additional horizon.", verification_evidence: { git: "clean enough" } },
       },
       { session_id: session.session_id, run_id: "run_gs", request_class: "reflection", visibility: "internal" },
     );
@@ -1018,7 +1007,7 @@ test("goal reflection gates completion and can expand a new horizon generation",
       {
         id: "ga_done",
         name: "goal",
-        arguments: { op: "reflect", decision: "done", summary: "No more work.", verification_evidence: { git_status: "checked" } },
+        arguments: { op: "reflect", decision: "done", summary: "No more work.", verification_evidence: { git: "checked" } },
       },
       { session_id: session.session_id, run_id: "run_reflection_done", request_class: "reflection", visibility: "internal" },
     );
@@ -2125,8 +2114,8 @@ test("autoresearch prompt context bounds notes and result descriptions without l
     const notes = await registry.call(
       {
         id: "ar_limit_notes",
-        name: "update_notes",
-        arguments: { body: longNotes },
+        name: "update_experiment",
+        arguments: { notes: longNotes },
       },
       { session_id: session.session_id, run_id: "run_ar_limit" },
     );

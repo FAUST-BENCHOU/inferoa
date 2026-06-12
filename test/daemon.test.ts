@@ -179,7 +179,7 @@ test("daemon goal supervisor expands horizon through internal reflection and com
                       op: "reflect",
                       decision: "done",
                       summary: "No additional horizon remains.",
-                      verification_evidence: { git_status: "checked", hidden_horizon: "complete" },
+                      verification_evidence: { git: "checked", hidden_horizon: "complete" },
                     }),
                   },
                 }

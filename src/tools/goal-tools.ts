@@ -923,7 +923,7 @@ function loopSkillPolicyCompletionBlockMessage(context: ToolExecutionContext, go
     }
     return `Cannot complete goal while Inferoa Loop Skill is enabled until horizon ${goal.horizon_generation} has a pass non-reflection verification from command, human review, or checker. Reflection-only evidence is not enough.`;
   }
-  return "Cannot complete goal while Inferoa Loop Skill is enabled until the Loop Skill body has been read with skill_read for this goal.";
+  return "Cannot complete goal while Inferoa Loop Skill is enabled until the Loop Skill body has been read with skill op=read for this goal.";
 }
 
 function workspaceSkillPolicyCompletionBlockMessage(context: ToolExecutionContext, goal: GoalRecord, descriptors: SkillDescriptor[]): string | undefined {
@@ -934,7 +934,7 @@ function workspaceSkillPolicyCompletionBlockMessage(context: ToolExecutionContex
   if (load) {
     return undefined;
   }
-  return "Cannot complete workspace development goal while Inferoa Workspace Skill is enabled until the Workspace Skill body has been read with skill_read for this goal.";
+  return "Cannot complete workspace development goal while Inferoa Workspace Skill is enabled until the Workspace Skill body has been read with skill op=read for this goal.";
 }
 
 function appendWorkspaceCompletionGateSatisfied(

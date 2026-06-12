@@ -925,11 +925,6 @@ test("ToolRegistry runs workspace, search, command, git, and evidence tools", as
     assert.equal(command.ok, true);
     const todo = await registry.call({ id: "tc5", name: "todo_write", arguments: { items: [{ id: "a", status: "done" }] } }, { session_id: session.session_id });
     assert.equal(todo.ok, true);
-    const evidence = await registry.call(
-      { id: "tc6", name: "complete_step", arguments: { step_id: "unit", evidence: { ok: true } } },
-      { session_id: session.session_id },
-    );
-    assert.equal(evidence.ok, true);
     assert.equal(store.getSession(session.session_id)?.status, "idle");
   } finally {
     store.close();

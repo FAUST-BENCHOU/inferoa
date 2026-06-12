@@ -142,18 +142,6 @@ const DEFINITIONS = [
     ),
   },
   {
-    name: "complete_step",
-    description: "Record that a milestone/task step completed with concrete evidence.",
-    permission: "read",
-    parameters: objectSchema(
-      {
-        step_id: string("Stable step id."),
-        evidence: jsonObject("Evidence object or concise structured proof."),
-      },
-      ["step_id", "evidence"],
-    ),
-  },
-  {
     name: "edit_file",
     description: "Replace exact text in a workspace file, or in an absolute local file when workspace access is full. If no exact match is found, the result includes nearby similar lines; escaped multiline text is accepted as a fallback.",
     permission: "write",
@@ -185,30 +173,19 @@ const DEFINITIONS = [
     ),
   },
   {
-    name: "git_diff",
-    description: "Show bounded git diff output.",
+    name: "git",
+    description: "Read bounded git state. Use op=status for status, op=diff for workspace or staged diff, and op=show for a revision or file at revision.",
     permission: "read",
-    parameters: objectSchema({
-      cwd: string("Optional workspace-relative cwd."),
-      staged: boolean("Show staged diff."),
-      path: string("Optional path filter. Omit or pass empty to show the whole workspace diff."),
-    }),
-  },
-  {
-    name: "git_show",
-    description: "Show a bounded git object or file at revision.",
-    permission: "read",
-    parameters: objectSchema({
-      rev: string("Revision or object."),
-      cwd: string("Optional workspace-relative cwd."),
-      path: string("Optional path filter. Omit or pass empty for the whole revision."),
-    }, ["rev"]),
-  },
-  {
-    name: "git_status",
-    description: "Show bounded git status.",
-    permission: "read",
-    parameters: objectSchema({ cwd: string("Optional workspace-relative cwd.") }),
+    parameters: objectSchema(
+      {
+        op: stringEnum("Git operation.", ["status", "diff", "show"]),
+        cwd: string("Optional workspace-relative cwd."),
+        staged: boolean("For op=diff, show staged diff."),
+        path: string("Optional path filter. Omit or pass empty for the whole workspace diff or revision."),
+        rev: string("Revision or object for op=show."),
+      },
+      ["op"],
+    ),
   },
   {
     name: "glob",
@@ -480,18 +457,6 @@ const DEFINITIONS = [
     }),
   },
   {
-    name: "session_note",
-    description: "Append a durable session note.",
-    permission: "read",
-    parameters: objectSchema(
-      {
-        note: string("Note body."),
-        tags: { type: "array", items: string("Tag.") },
-      },
-      ["note"],
-    ),
-  },
-  {
     name: "subagent",
     description: "Delegate a scoped task to a child sub-agent from the current session. If a loop is active, loop context is attached; otherwise the sub-agent runs as a focused child session and returns concrete evidence to this run.",
     permission: "read",
@@ -504,47 +469,20 @@ const DEFINITIONS = [
     ),
   },
   {
-    name: "skill_list",
-    description: "List discovered skills as a compact index without loading full skill bodies.",
-    permission: "read",
-    parameters: objectSchema({
-      query: string("Optional case-insensitive filter over id, name, or description."),
-      include_disabled: boolean("Include skills that are not enabled in config. Defaults to true."),
-      limit: number("Maximum skills."),
-    }),
-  },
-  {
-    name: "skill_enable",
-    description: "Enable discovered skills by id or name and persist the workspace skill selection.",
+    name: "skill",
+    description: "Manage skills: list discovered skills, read a skill body before relying on it, or enable/disable skill ids in the persisted workspace selection.",
     permission: "write",
     parameters: objectSchema(
       {
-        ids: { type: "array", items: string("Skill id or exact skill name.") },
+        op: stringEnum("Skill operation.", ["list", "read", "enable", "disable"]),
+        id: string("Skill id or exact skill name for op=read."),
+        ids: { type: "array", items: string("Skill id or exact skill name for op=enable or op=disable.") },
+        query: string("Optional case-insensitive filter over id, name, or description for op=list."),
+        include_disabled: boolean("For op=list, include skills that are not enabled in config. Defaults to true."),
+        limit: number("For op=list, maximum skills."),
+        line_count: number("For op=read, maximum lines to return."),
       },
-      ["ids"],
-    ),
-  },
-  {
-    name: "skill_disable",
-    description: "Disable skills by id or name and persist the workspace skill selection.",
-    permission: "write",
-    parameters: objectSchema(
-      {
-        ids: { type: "array", items: string("Skill id, exact skill name, or enabled entry.") },
-      },
-      ["ids"],
-    ),
-  },
-  {
-    name: "skill_read",
-    description: "Read the full body for one discovered skill by id or name.",
-    permission: "read",
-    parameters: objectSchema(
-      {
-        id: string("Skill id or exact skill name."),
-        line_count: number("Maximum lines to return."),
-      },
-      ["id"],
+      ["op"],
     ),
   },
   {
@@ -603,16 +541,6 @@ const DEFINITIONS = [
     description: "List voices exposed by a configured vLLM-Omni Speech endpoint.",
     permission: "network",
     parameters: objectSchema({}),
-  },
-  {
-    name: "update_notes",
-    description: "Persist the active research experiment notes or append a single idea under an Ideas section.",
-    permission: "read",
-    parameters: objectSchema({
-      experiment_name: string("Optional experiment name. Defaults to the active experiment."),
-      body: string("Replacement notes body. Defaults to existing notes when append_idea is set."),
-      append_idea: string("Optional idea to append as a bullet."),
-    }),
   },
   {
     name: "update_experiment",
@@ -706,7 +634,7 @@ const DEFINITIONS = [
   },
   {
     name: "web_search",
-    description: "Search the web for keyword queries through the configured provider or the default zero-key HTTP fallback chain. If the query contains a direct HTTP/HTTPS URL, it is opened directly instead of being searched.",
+    description: "Search the web for keyword queries through the configured provider or the default zero-key HTTP fallback chain. Use web_open for direct HTTP/HTTPS URLs.",
     permission: "network",
     parameters: objectSchema(
       {

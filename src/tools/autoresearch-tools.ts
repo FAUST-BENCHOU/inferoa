@@ -270,26 +270,6 @@ export async function logExperiment(args: JsonObject, context: ToolExecutionCont
   }
 }
 
-export async function updateNotes(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
-  const state = readAutoresearchState(context.store, context.session_id);
-  if (!state.enabled) {
-    return fail("autoresearch_not_initialized", "no active autoresearch experiment; call init_experiment first", autoresearchFailureData(state));
-  }
-  const experiment = selectExperiment(state, args);
-  if (!experiment) {
-    return fail("autoresearch_not_initialized", "no active research experiment; call init_experiment first", autoresearchFailureData(state));
-  }
-  const body = stringArg(args.body) ?? experiment.notes;
-  const appendIdea = stringArg(args.append_idea);
-  const notes = appendIdea ? appendIdeaToNotes(body, appendIdea) : body;
-  const nextExperiment = { ...experiment, notes };
-  const next = writeAutoresearchState(context.store, context.session_id, upsertAutoresearchExperiment(state, nextExperiment, { setActive: true }), context.run_id);
-  return ok(appendIdea ? "Research idea appended." : "Research notes updated.", {
-    notes,
-    autoresearch: next as unknown as JsonObject,
-  });
-}
-
 export async function updateExperiment(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   let state: AutoresearchState | undefined;
   try {
@@ -561,16 +541,4 @@ function objectArg(value: unknown): JsonObject | undefined {
 
 function booleanArg(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
-}
-
-function appendIdeaToNotes(notes: string, idea: string): string {
-  const trimmed = notes.trimEnd();
-  const bullet = `- ${idea.trim()}`;
-  if (!trimmed) {
-    return `## Ideas\n${bullet}\n`;
-  }
-  if (!trimmed.includes("## Ideas")) {
-    return `${trimmed}\n\n## Ideas\n${bullet}\n`;
-  }
-  return `${trimmed}\n${bullet}\n`;
 }

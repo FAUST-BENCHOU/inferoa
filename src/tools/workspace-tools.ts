@@ -321,7 +321,21 @@ function formatPatchFailure(message: string): string {
   return trimmed || "git apply failed";
 }
 
-export async function gitStatus(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
+export async function gitTool(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
+  const op = String(args.op ?? "");
+  if (op === "status") {
+    return gitStatus(args, context);
+  }
+  if (op === "diff") {
+    return gitDiff(args, context);
+  }
+  if (op === "show") {
+    return gitShow(args, context);
+  }
+  return fail("git_op_invalid", "git op must be status, diff, or show.");
+}
+
+async function gitStatus(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const cwd = resolveInside(context.workspace.root, String(args.cwd ?? "."));
   const result = await runRtkAwareShellCommand({
     config: context.config,
@@ -329,15 +343,15 @@ export async function gitStatus(args: JsonObject, context: ToolExecutionContext)
     session_id: context.session_id,
     run_id: context.run_id,
     tool_call_id: context.tool_call_id,
-    tool_name: context.tool_name ?? "git_status",
+    tool_name: context.tool_name ?? "git",
     command: "git status --short --branch",
     cwd,
     timeout_ms: 10_000,
   });
-  return commandResult("git_status", result, context, "git.status");
+  return commandResult("git status", result, context, "git.status");
 }
 
-export async function gitDiff(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
+async function gitDiff(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const cwd = resolveInside(context.workspace.root, String(args.cwd ?? "."));
   const pathArg = optionalPathFilter(args.path) ?? ".";
   const command = ["git", "diff", args.staged ? "--staged" : "", "--", shellQuote(pathArg)].filter(Boolean).join(" ");
@@ -347,16 +361,19 @@ export async function gitDiff(args: JsonObject, context: ToolExecutionContext): 
     session_id: context.session_id,
     run_id: context.run_id,
     tool_call_id: context.tool_call_id,
-    tool_name: context.tool_name ?? "git_diff",
+    tool_name: context.tool_name ?? "git",
     command,
     cwd,
     timeout_ms: 10_000,
   });
-  return commandResult("git_diff", result, context, "git.diff");
+  return commandResult("git diff", result, context, "git.diff");
 }
 
-export async function gitShow(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
+async function gitShow(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const cwd = resolveInside(context.workspace.root, String(args.cwd ?? "."));
+  if (typeof args.rev !== "string" || !args.rev.trim()) {
+    return fail("git_rev_required", "git op=show requires rev.");
+  }
   const rev = shellQuote(String(args.rev));
   const pathArg = optionalPathFilter(args.path);
   const command = pathArg ? `git show --stat --patch ${rev} -- ${shellQuote(pathArg)}` : `git show --stat --patch ${rev}`;
@@ -366,12 +383,12 @@ export async function gitShow(args: JsonObject, context: ToolExecutionContext): 
     session_id: context.session_id,
     run_id: context.run_id,
     tool_call_id: context.tool_call_id,
-    tool_name: context.tool_name ?? "git_show",
+    tool_name: context.tool_name ?? "git",
     command,
     cwd,
     timeout_ms: 10_000,
   });
-  return commandResult("git_show", result, context, "git.show");
+  return commandResult("git show", result, context, "git.show");
 }
 
 function optionalPathFilter(value: unknown): string | undefined {
@@ -391,26 +408,6 @@ export async function todoWrite(args: JsonObject, context: ToolExecutionContext)
     data: { items: items as never },
   });
   return ok(`Updated ${items.length} todo items`, { items: items as never });
-}
-
-export async function completeStep(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
-  context.store.appendEvent({
-    session_id: context.session_id,
-    run_id: context.run_id,
-    type: "evidence.step.completed",
-    data: { step_id: String(args.step_id), evidence: (args.evidence ?? {}) as JsonObject },
-  });
-  return ok(`Completed ${String(args.step_id)}`, { step_id: String(args.step_id), evidence: (args.evidence ?? {}) as JsonObject });
-}
-
-export async function sessionNote(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
-  context.store.appendEvent({
-    session_id: context.session_id,
-    run_id: context.run_id,
-    type: "session.note",
-    data: { note: String(args.note), tags: Array.isArray(args.tags) ? (args.tags as never) : [] },
-  });
-  return ok("Session note recorded", { note: String(args.note) });
 }
 
 async function commandResult(

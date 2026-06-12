@@ -502,8 +502,8 @@ test("completion requires enabled Loop Skill body to be loaded before claiming d
     assert.match(blocked.error?.message ?? "", /Loop Skill body/);
 
     const read = await registry.call(
-      { id: "read_loop_skill", name: "skill_read", arguments: { id: "inferoa-loop-skill" } },
-      { session_id: fixture.session.session_id, run_id: "run_skill_read" },
+      { id: "read_loop_skill", name: "skill", arguments: { op: "read", id: "inferoa-loop-skill" } },
+      { session_id: fixture.session.session_id, run_id: "run_skill_op_read" },
     );
     assert.equal(read.ok, true, JSON.stringify(read));
 
@@ -641,8 +641,8 @@ test("completion requires enabled Workspace Skill body for workspace development
     assert.match(blocked.error?.message ?? "", /Workspace Skill body/);
 
     const read = await registry.call(
-      { id: "read_workspace_skill", name: "skill_read", arguments: { id: "inferoa-workspace-skill" } },
-      { session_id: fixture.session.session_id, run_id: "run_workspace_skill_read" },
+      { id: "read_workspace_skill", name: "skill", arguments: { op: "read", id: "inferoa-workspace-skill" } },
+      { session_id: fixture.session.session_id, run_id: "run_workspace_skill_op_read" },
     );
     assert.equal(read.ok, true, JSON.stringify(read));
 

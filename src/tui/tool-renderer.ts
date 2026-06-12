@@ -35,11 +35,7 @@ const COMPACT_SUCCESS_TOOLS = new Set([
   "web_open",
   "web_search",
   "lsp",
-  "codegraph_search",
-  "codegraph_status",
-  "codegraph_files",
-  "skill_list",
-  "skill_read",
+  "skill",
 ]);
 
 export function renderToolCards(events: SessionEvent[], store: SessionStore, options: ToolRenderOptions = {}): string[] {
@@ -65,6 +61,10 @@ function groupToolEvents(events: SessionEvent[]): ToolEventGroup[] {
       current.name = name;
     }
     if (event.type === "tool.result") {
+      const args = objectField(event.data.arguments);
+      if (Object.keys(args).length) {
+        current.args = args;
+      }
       current.result = objectField(event.data.result) as unknown as ToolResult;
       current.name = name;
     }
@@ -123,9 +123,12 @@ function renderToolBody(group: ToolEventGroup, store: SessionStore): string[] {
     case "stop_process":
       lines.push(...renderProcess(data));
       break;
-    case "git_diff":
-    case "git_show":
-      lines.push(...renderDiff(stringField(data.output) ?? resourceText(result?.resource_uri, store)));
+    case "git":
+      if (stringField(group.args.op) === "status") {
+        lines.push(...renderTextPreview(stringField(data.output) ?? resourceText(result?.resource_uri, store) ?? ""));
+      } else {
+        lines.push(...renderDiff(stringField(data.output) ?? resourceText(result?.resource_uri, store)));
+      }
       break;
     case "apply_patch":
       lines.push(...renderDiff(stringField(data.diff) ?? stringField(group.args.patch)));
@@ -154,14 +157,7 @@ function renderToolBody(group: ToolEventGroup, store: SessionStore): string[] {
     case "read_resource":
       lines.push(...renderTextPreview(stringField(data.content) ?? ""));
       break;
-    case "codegraph_explore":
-    case "codegraph_search":
-    case "codegraph_callers":
-    case "codegraph_callees":
-    case "codegraph_impact":
-    case "codegraph_node":
-    case "codegraph_status":
-    case "codegraph_files":
+    case "codegraph":
       lines.push(...renderTextPreview(stringField(data.content) ?? ""));
       break;
     case "file_search":
@@ -180,9 +176,6 @@ function renderToolBody(group: ToolEventGroup, store: SessionStore): string[] {
     case "web_search":
       lines.push(...renderWebSearch(data));
       break;
-    case "git_status":
-      lines.push(...renderTextPreview(stringField(data.output) ?? resourceText(result?.resource_uri, store) ?? ""));
-      break;
     case "todo_write":
       lines.push(...renderTodos(data));
       break;
@@ -199,18 +192,10 @@ function renderToolBody(group: ToolEventGroup, store: SessionStore): string[] {
     case "run_experiment":
     case "log_experiment":
     case "update_experiment":
-    case "update_notes":
       lines.push(...renderAutoresearchTool(group.name, data));
-      break;
-    case "session_note":
-      lines.push(...renderTextPreview(stringField(data.note) ?? stringField(group.args.note) ?? ""));
       break;
     case "subagent":
       lines.push(...renderSubagentTool(data));
-      break;
-    case "complete_step":
-      lines.push(`${fg256(39, "step")} ${stringField(data.step_id) ?? stringField(group.args.step_id) ?? "unknown"}`);
-      lines.push(...renderEvidenceObject(objectField(data.evidence)));
       break;
     default:
       lines.push(...renderGeneric(data, result?.resource_uri));
@@ -265,9 +250,7 @@ function shouldExpandToolGroup(group: ToolEventGroup, body: string[]): boolean {
       "edit_file",
       "ast_edit",
       "write_file",
-      "git_diff",
-      "git_show",
-      "git_status",
+      "git",
       "todo_write",
       "clarify",
       "goal",
@@ -276,13 +259,7 @@ function shouldExpandToolGroup(group: ToolEventGroup, body: string[]): boolean {
       "init_experiment",
       "run_experiment",
       "log_experiment",
-      "update_notes",
-      "complete_step",
-      "codegraph_explore",
-      "codegraph_callers",
-      "codegraph_callees",
-      "codegraph_impact",
-      "codegraph_node",
+      "codegraph",
     ].includes(group.name)
   ) {
     return true;
@@ -367,20 +344,8 @@ function compactToolName(name: string): string {
       return "fetch";
     case "web_search":
       return "web";
-    case "codegraph_explore":
+    case "codegraph":
       return "context";
-    case "codegraph_search":
-      return "semantic";
-    case "codegraph_node":
-      return "symbol";
-    case "codegraph_callers":
-    case "codegraph_callees":
-    case "codegraph_impact":
-      return "trace";
-    case "codegraph_files":
-      return "files";
-    case "codegraph_status":
-      return "context-status";
     default:
       return name.replace(/_/g, "-");
   }
@@ -950,11 +915,6 @@ function renderGeneric(data: JsonObject, resourceUri?: string): string[] {
   return renderKeyValueObject(data);
 }
 
-function renderEvidenceObject(data: JsonObject): string[] {
-  const rows = renderKeyValueObject(data);
-  return rows.length ? rows.map((row, index) => (index === 0 ? `${fg256(39, "evidence")} ${row}` : `         ${row}`)) : [fg256(243, "No evidence fields.")];
-}
-
 function renderKeyValueObject(data: JsonObject): string[] {
   const entries = Object.entries(data);
   if (!entries.length) {
@@ -1151,19 +1111,8 @@ export function toolTraceAction(name: string, ok: boolean | undefined = true, co
       return `Stopped process${failed}`;
     case "ast_grep":
       return `Searched AST${failed}`;
-    case "codegraph_explore":
-      return `Explored context${failed}`;
-    case "codegraph_search":
-      return `Searched context index${failed}`;
-    case "codegraph_node":
-      return `Read context symbol${failed}`;
-    case "codegraph_callers":
-    case "codegraph_callees":
-    case "codegraph_impact":
-      return `Traced context index${failed}`;
-    case "codegraph_files":
-    case "codegraph_status":
-      return `Checked context index${failed}`;
+    case "codegraph":
+      return `Ran codegraph${failed}`;
     case "lsp":
       return `Queried language server${failed}`;
     case "lsp_rename":
@@ -1175,10 +1124,7 @@ export function toolTraceAction(name: string, ok: boolean | undefined = true, co
       return `Edited file${failed}`;
     case "apply_patch":
       return `Applied patch${failed}`;
-    case "git_status":
-      return `Checked git status${failed}`;
-    case "git_diff":
-    case "git_show":
+    case "git":
       return `Read git data${failed}`;
     case "todo_write":
       return `Updated todo${failed}`;
@@ -1188,8 +1134,6 @@ export function toolTraceAction(name: string, ok: boolean | undefined = true, co
       return `Updated loop${failed}`;
     case "plan":
       return `Updated plan${failed}`;
-    case "session_note":
-      return `Recorded session note${failed}`;
     case "subagent":
       return `Ran subagent${failed}`;
     case "init_experiment":
@@ -1200,24 +1144,14 @@ export function toolTraceAction(name: string, ok: boolean | undefined = true, co
       return `Logged experiment${failed}`;
     case "update_experiment":
       return `Updated experiment${failed}`;
-    case "update_notes":
-      return `Updated notes${failed}`;
-    case "complete_step":
-      return `Recorded evidence${failed}`;
     case "web_search":
       return `Searched web${failed}`;
     case "web_fetch":
       return `Fetched URL${failed}`;
     case "web_open":
       return `Opened URL${failed}`;
-    case "skill_list":
-      return `Listed skills${failed}`;
-    case "skill_read":
-      return `Read skill${failed}`;
-    case "skill_enable":
-      return `Enabled skills${failed}`;
-    case "skill_disable":
-      return `Disabled skills${failed}`;
+    case "skill":
+      return `Updated skill${failed}`;
     case "image_generation":
       return `Generated image${failed}`;
     case "image_edit":
@@ -1245,11 +1179,67 @@ export function toolTraceAction(name: string, ok: boolean | undefined = true, co
 }
 
 function toolGroupAction(group: ToolEventGroup): string {
+  const failed = group.result?.ok === false ? " failed" : "";
   if (group.name === "goal") {
-    const failed = group.result?.ok === false ? " failed" : "";
     return goalToolAction(group, failed);
   }
+  if (group.name === "codegraph") {
+    return codegraphToolAction(group, failed);
+  }
+  if (group.name === "git") {
+    return gitToolAction(group, failed);
+  }
+  if (group.name === "skill") {
+    return skillToolAction(group, failed);
+  }
   return toolTraceAction(group.name, group.result?.ok, "card");
+}
+
+function codegraphToolAction(group: ToolEventGroup, failed: string): string {
+  switch (stringField(group.args.op)) {
+    case "explore":
+      return `Explored context${failed}`;
+    case "search":
+      return `Searched context index${failed}`;
+    case "node":
+      return `Read context symbol${failed}`;
+    case "callers":
+    case "callees":
+    case "impact":
+      return `Traced context index${failed}`;
+    case "files":
+    case "status":
+      return `Checked context index${failed}`;
+    default:
+      return `Ran codegraph${failed}`;
+  }
+}
+
+function gitToolAction(group: ToolEventGroup, failed: string): string {
+  switch (stringField(group.args.op)) {
+    case "status":
+      return `Checked git status${failed}`;
+    case "diff":
+    case "show":
+      return `Read git data${failed}`;
+    default:
+      return `Read git data${failed}`;
+  }
+}
+
+function skillToolAction(group: ToolEventGroup, failed: string): string {
+  switch (stringField(group.args.op)) {
+    case "list":
+      return `Listed skills${failed}`;
+    case "read":
+      return `Read skill${failed}`;
+    case "enable":
+      return `Enabled skills${failed}`;
+    case "disable":
+      return `Disabled skills${failed}`;
+    default:
+      return `Updated skill${failed}`;
+  }
 }
 
 function toolGroupDetail(group: ToolEventGroup, summary: string): string {
@@ -1282,19 +1272,8 @@ function toolGroupDetail(group: ToolEventGroup, summary: string): string {
       return stringField(data.process_id) ?? stringField(group.args.process_id) ?? compactSummary(summary);
     case "ast_grep":
       return stringField(group.args.selector) ?? stringField(group.args.query) ?? compactSummary(summary);
-    case "codegraph_explore":
-      return stringField(group.args.query) ?? compactSummary(summary);
-    case "codegraph_search":
-      return stringField(group.args.query) ?? compactSummary(summary);
-    case "codegraph_node":
-    case "codegraph_callers":
-    case "codegraph_callees":
-    case "codegraph_impact":
-      return stringField(group.args.symbol) ?? compactSummary(summary);
-    case "codegraph_files":
-      return stringField(group.args.path) ?? stringField(group.args.pattern) ?? compactSummary(summary);
-    case "codegraph_status":
-      return compactSummary(summary);
+    case "codegraph":
+      return codegraphToolDetail(group, summary);
     case "lsp":
       return [stringField(group.args.action), stringField(group.args.path)].filter(Boolean).join(" · ") || compactSummary(summary);
     case "lsp_rename":
@@ -1303,9 +1282,8 @@ function toolGroupDetail(group: ToolEventGroup, summary: string): string {
     case "edit_file":
     case "ast_edit":
       return stringField(data.path) ?? stringField(group.args.path) ?? compactSummary(summary);
-    case "git_diff":
-    case "git_show":
-      return stringField(group.args.path) ?? stringField(group.args.rev) ?? compactSummary(summary);
+    case "git":
+      return gitToolDetail(group, summary);
     case "todo_write":
       return compactSummary(summary);
     case "clarify":
@@ -1317,8 +1295,6 @@ function toolGroupDetail(group: ToolEventGroup, summary: string): string {
       const plan = objectField(data.plan);
       return [stringField(plan.objective), stringField(plan.status)].filter(Boolean).join(" · ") || compactSummary(summary);
     }
-    case "session_note":
-      return stringField(data.note) ?? stringField(group.args.note) ?? compactSummary(summary);
     case "subagent":
       return stringField(data.child_session_id) ?? stringField(data.session_id) ?? compactSummary(summary);
     case "log_experiment": {
@@ -1349,8 +1325,6 @@ function toolGroupDetail(group: ToolEventGroup, summary: string): string {
       const experiment = objectField(state.experiment);
       return stringField(experiment.name) ?? compactSummary(summary);
     }
-    case "update_notes":
-      return compactSummary(summary);
     case "update_experiment": {
       const experiment = objectField(data.experiment);
       return [stringField(experiment.name), stringField(experiment.status)].filter(Boolean).join(" · ") || compactSummary(summary);
@@ -1360,15 +1334,8 @@ function toolGroupDetail(group: ToolEventGroup, summary: string): string {
     case "web_fetch":
     case "web_open":
       return stringField(group.args.url) ?? stringField(data.final_url) ?? compactSummary(summary);
-    case "skill_list": {
-      const skills = Array.isArray(data.skills) ? data.skills : undefined;
-      return skills ? formatCount(skills.length, "skill") : compactSummary(summary);
-    }
-    case "skill_read":
-      return stringField(data.id) ?? stringField(group.args.id) ?? compactSummary(summary);
-    case "skill_enable":
-    case "skill_disable":
-      return compactSummary(summary);
+    case "skill":
+      return skillToolDetail(group, data, summary);
     case "image_generation":
     case "image_edit":
     case "vision_understanding":
@@ -1379,6 +1346,54 @@ function toolGroupDetail(group: ToolEventGroup, summary: string): string {
     case "speech_generation":
     case "speech_voices":
       return stringField(data.resource_uri) ?? stringField(data.status) ?? compactSummary(summary);
+    default:
+      return compactSummary(summary);
+  }
+}
+
+function codegraphToolDetail(group: ToolEventGroup, summary: string): string {
+  switch (stringField(group.args.op)) {
+    case "explore":
+    case "search":
+      return stringField(group.args.query) ?? compactSummary(summary);
+    case "node":
+    case "callers":
+    case "callees":
+    case "impact":
+      return stringField(group.args.symbol) ?? compactSummary(summary);
+    case "files":
+      return stringField(group.args.path) ?? stringField(group.args.pattern) ?? compactSummary(summary);
+    case "status":
+      return compactSummary(summary);
+    default:
+      return compactSummary(summary);
+  }
+}
+
+function gitToolDetail(group: ToolEventGroup, summary: string): string {
+  switch (stringField(group.args.op)) {
+    case "status":
+      return compactSummary(summary);
+    case "diff":
+      return stringField(group.args.path) ?? (booleanField(group.args.staged) ? "staged" : undefined) ?? compactSummary(summary);
+    case "show":
+      return stringField(group.args.path) ?? stringField(group.args.rev) ?? compactSummary(summary);
+    default:
+      return compactSummary(summary);
+  }
+}
+
+function skillToolDetail(group: ToolEventGroup, data: JsonObject, summary: string): string {
+  switch (stringField(group.args.op)) {
+    case "list": {
+      const skills = Array.isArray(data.skills) ? data.skills : undefined;
+      return skills ? formatCount(skills.length, "skill") : compactSummary(summary);
+    }
+    case "read":
+      return stringField(data.id) ?? stringField(group.args.id) ?? compactSummary(summary);
+    case "enable":
+    case "disable":
+      return compactSummary(summary);
     default:
       return compactSummary(summary);
   }

@@ -63,12 +63,12 @@ test("self-improve e2e proves Loop Skill and Workspace Skill change later loop b
     assert.equal(blocked.error?.code, "goal_skill_policy_required");
 
     const readLoopSkill = await registry.call(
-      { id: "read_loop_skill", name: "skill_read", arguments: { id: "inferoa-loop-skill" } },
+      { id: "read_loop_skill", name: "skill", arguments: { op: "read", id: "inferoa-loop-skill" } },
       { session_id: session.session_id, run_id: "run_read_loop_skill" },
     );
     assert.equal(readLoopSkill.ok, true, JSON.stringify(readLoopSkill));
     const readWorkspaceSkill = await registry.call(
-      { id: "read_workspace_skill", name: "skill_read", arguments: { id: "inferoa-workspace-skill" } },
+      { id: "read_workspace_skill", name: "skill", arguments: { op: "read", id: "inferoa-workspace-skill" } },
       { session_id: session.session_id, run_id: "run_read_workspace_skill" },
     );
     assert.equal(readWorkspaceSkill.ok, true, JSON.stringify(readWorkspaceSkill));
@@ -132,8 +132,8 @@ test("self-improve e2e proves Loop Skill and Workspace Skill change later loop b
       replay_id: replay.id,
       replay_status: replay.status,
       adopted_skill_ids: adopted.skill_targets?.map((target) => target.skill_id),
-      blocked_before_skill_read: blocked.error?.code,
-      blocked_soft_only_after_skill_read: blockedSoftOnly.error?.code,
+      blocked_before_skill_op_read: blocked.error?.code,
+      blocked_soft_only_after_skill_op_read: blockedSoftOnly.error?.code,
       skill_body_loads: view.skill_body_loads,
       skill_rule_applications: view.skill_rule_applications,
       verification_records: view.verifications,
@@ -141,8 +141,8 @@ test("self-improve e2e proves Loop Skill and Workspace Skill change later loop b
     await writeFile(path.join(caseDir, "README.md"), renderCaseReport(proposal.id, replay.id, blockedSoftOnly.error?.code ?? "", view), "utf8");
 
     const report = await readFile(path.join(caseDir, "README.md"), "utf8");
-    assert.match(report, /blocked_before_skill_read: goal_skill_policy_required/);
-    assert.match(report, /blocked_soft_only_after_skill_read: goal_skill_policy_required/);
+    assert.match(report, /blocked_before_skill_op_read: goal_skill_policy_required/);
+    assert.match(report, /blocked_soft_only_after_skill_op_read: goal_skill_policy_required/);
     assert.match(report, /workspace-command-verifier-used/);
     assert.match(report, /loop-completion-gate-satisfied/);
   } finally {
@@ -211,8 +211,8 @@ function renderCaseReport(proposalId: string, replayId: string, blockedSoftOnlyC
     "",
     `proposal_id: ${proposalId}`,
     `replay_id: ${replayId}`,
-    "blocked_before_skill_read: goal_skill_policy_required",
-    `blocked_soft_only_after_skill_read: ${blockedSoftOnlyCode}`,
+    "blocked_before_skill_op_read: goal_skill_policy_required",
+    `blocked_soft_only_after_skill_op_read: ${blockedSoftOnlyCode}`,
     "",
     "## Skill Body Loads",
     "",

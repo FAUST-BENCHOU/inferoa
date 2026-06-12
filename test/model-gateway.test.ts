@@ -6,7 +6,7 @@ import { once } from "node:events";
 import { DEFAULT_CONFIG } from "../src/config/defaults.js";
 import { normalizeUsage } from "../src/model/endpoint-signals.js";
 import { ModelGateway } from "../src/model/gateway.js";
-import { buildPromptCacheKey } from "../src/model/prompt-cache.js";
+import { buildCodexPromptCacheKey, buildPromptCacheKey } from "../src/model/prompt-cache.js";
 import { CORE_TOOL_DEFINITIONS } from "../src/tools/schemas.js";
 import type { ToolDefinition, VllmAgentConfig } from "../src/types.js";
 
@@ -78,7 +78,10 @@ test("Codex Responses requests send system prompt as instructions", async () => 
     assert.equal(requestPath, "/backend-api/codex/responses");
     assert.equal(requestBody?.instructions, "Be concise.");
     assert.equal(requestBody?.store, false);
-    assert.equal(Object.hasOwn(requestBody ?? {}, "prompt_cache_key"), false);
+    assert.equal(
+      requestBody?.prompt_cache_key,
+      buildCodexPromptCacheKey({ provider_id: "openai-codex", model: "gpt-5.4", session_id: "s" }),
+    );
     assert.equal(Object.hasOwn(requestBody ?? {}, "prompt_cache_retention"), false);
     assert.equal(Object.hasOwn(requestBody ?? {}, "temperature"), false);
     assert.equal(Object.hasOwn(requestBody ?? {}, "max_output_tokens"), false);
