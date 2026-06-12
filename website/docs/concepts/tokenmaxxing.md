@@ -45,9 +45,8 @@ Open the tokenmaxxing view from the TUI:
 The view reports recent token usage, cache evidence when the endpoint exposes
 it, RTK savings, context pressure, and model-selection pressure. Cache fields
 are shown only when the provider returns enough usage detail to make them
-meaningful. The view is also reachable through friendly aliases:
-`/cache`, `/rtk`, `/activity`, `/evidence`, and `/history`. See
-[Slash commands](../reference/slash-commands.md) for the full registry.
+meaningful. Use `/tokenmaxxing signals` for raw lifecycle and evidence rows.
+See [Slash commands](../reference/slash-commands.md) for the full registry.
 
 ## Interpreting The View
 

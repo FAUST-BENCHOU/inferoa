@@ -81,6 +81,44 @@ test("resumed sessions reuse the frozen prompt surface after live tools change",
   }
 });
 
+test("scoped runtime tools freeze per session and cannot widen on resume", async () => {
+  const server = simpleModelServer();
+  await server.start();
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-prefix-scoped-tools-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const runtimeConfig = config(server.baseUrl);
+    const workspace: WorkspaceIdentity = { id: "w_prefix_scoped_tools", root: dir, alias: "prefix-scoped-tools" };
+    const runtime = new Runtime(runtimeConfig, workspace, store);
+
+    const first = await runtime.run({
+      prompt: "freeze scoped self-improve tools",
+      tool_names: ["read_file", "skill_read"],
+    });
+    await runtime.run({
+      session_id: first.session.session_id,
+      prompt: "try to widen scoped tools",
+      tool_names: ["edit_file", "run_command"],
+    });
+
+    assert.equal(server.requests.length, 2);
+    assert.deepEqual(toolNames(server.requests[0]!), ["read_file", "skill_read"]);
+    assert.deepEqual(toolNames(server.requests[1]!), ["read_file", "skill_read"]);
+    assert.equal(toolNames(server.requests[1]!).includes("edit_file"), false);
+    assert.equal(toolNames(server.requests[1]!).includes("run_command"), false);
+
+    const requests = modelRequests(store, first.session.session_id);
+    assert.equal(requests.length, 2);
+    assert.equal(requests[1]?.data.prompt_epoch_id, requests[0]?.data.prompt_epoch_id);
+    assert.equal(requests[1]?.data.tool_schema_hash, requests[0]?.data.tool_schema_hash);
+    assert.equal(store.listEvents(first.session.session_id).filter((event) => event.type === "prompt.session_snapshot.created").length, 1);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+    await server.stop();
+  }
+});
+
 test("model calls within an epoch append new tail messages without rewriting the prefix", async () => {
   let calls = 0;
   const server = captureModelServer((res) => {

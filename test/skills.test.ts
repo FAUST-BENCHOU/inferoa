@@ -114,3 +114,46 @@ test("SkillRegistry discovers native and imported skills and tools read details 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("missing learned skills are reported as not adopted without a failed tool call", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-missing-learned-skills-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_missing_learned_skills", root: dir, alias: "missing-learned-skills" };
+    const config: VllmAgentConfig = structuredClone(DEFAULT_CONFIG);
+    config.skills.enabled = ["inferoa-loop-skill", "inferoa-workspace-skill"];
+    const registry = new SkillRegistry(workspace, config);
+    const discovered = await registry.discover();
+    assert.deepEqual(registry.enabledSkillIds(discovered), []);
+    assert.deepEqual(registry.missingEnabledSkillNames(discovered), ["inferoa-loop-skill", "inferoa-workspace-skill"]);
+
+    const session = store.createSession(workspace, "missing learned skills");
+    const tools = new ToolRegistry(config, workspace, store);
+    const read = await tools.call(
+      { id: "read_missing_loop_skill", name: "skill_read", arguments: { id: "inferoa-loop-skill" } },
+      { session_id: session.session_id, run_id: "run_missing_loop_skill" },
+    );
+
+    assert.equal(read.ok, true, JSON.stringify(read));
+    assert.equal((read.data as { status?: string } | undefined)?.status, "not_adopted");
+    const readWorkspace = await tools.call(
+      { id: "read_missing_workspace_skill", name: "skill_read", arguments: { id: "inferoa-workspace-skill" } },
+      { session_id: session.session_id, run_id: "run_missing_workspace_skill" },
+    );
+
+    assert.equal(readWorkspace.ok, true, JSON.stringify(readWorkspace));
+    assert.equal((readWorkspace.data as { status?: string } | undefined)?.status, "not_adopted");
+    const readAlias = await tools.call(
+      { id: "read_missing_loop_skill_alias", name: "skill_read", arguments: { id: "loop_skill" } },
+      { session_id: session.session_id, run_id: "run_missing_loop_skill_alias" },
+    );
+
+    assert.equal(readAlias.ok, true, JSON.stringify(readAlias));
+    assert.equal((readAlias.data as { id?: string; status?: string } | undefined)?.id, "inferoa-loop-skill");
+    assert.equal((readAlias.data as { status?: string } | undefined)?.status, "not_adopted");
+    assert.equal(store.listEvents(session.session_id).filter((event) => event.type === "skill.body.loaded").length, 0);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

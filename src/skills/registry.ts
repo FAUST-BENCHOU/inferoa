@@ -44,7 +44,7 @@ export class SkillRegistry {
 
   async loadEnabled(descriptors?: SkillDescriptor[]): Promise<Skill[]> {
     descriptors ??= await this.discover();
-    return this.loadSelected(descriptors, this.config.skills.enabled);
+    return this.loadSelected(descriptors, this.enabledSkillIds(descriptors));
   }
 
   async loadSelected(descriptors: SkillDescriptor[], enabledNames: string[]): Promise<Skill[]> {
@@ -59,6 +59,20 @@ export class SkillRegistry {
       }
     }
     return loaded;
+  }
+
+  enabledSkillIds(descriptors: SkillDescriptor[]): string[] {
+    const enabled = new Set(this.config.skills.enabled);
+    return [...new Set(
+      descriptors
+        .filter((descriptor) => enabled.has(descriptor.id) || enabled.has(descriptor.name))
+        .map((descriptor) => descriptor.id),
+    )].sort();
+  }
+
+  missingEnabledSkillNames(descriptors: SkillDescriptor[]): string[] {
+    const discovered = new Set(descriptors.flatMap((descriptor) => [descriptor.id, descriptor.name]));
+    return [...new Set(this.config.skills.enabled.filter((name) => !discovered.has(name)))].sort();
   }
 
   private async discoveryRoots(): Promise<{ path: string; trust: SkillDescriptor["trust"]; importer?: boolean }[]> {

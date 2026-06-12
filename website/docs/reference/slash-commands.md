@@ -20,7 +20,7 @@ subcommands.
 | `/inbox` | Show loop review, blocker, automation, and self-improve items |
 | `/self-improve` | Manage loop learning proposals and replay reports |
 | [`/plan`](../workflows/plan-mode.md) | Start or manage plan mode |
-| `/tokenmaxxing` | Show token, cache, RTK, and routing savings (also `/cache`, `/rtk`, `/activity`, `/evidence`, `/history`) |
+| `/tokenmaxxing` | Show token, cache, RTK, and routing savings |
 | `/context` | Show context usage, compression state, and code intelligence |
 | `/tools` | Show fixed tool schemas and renderer status |
 | `/sessions` | Manage chat sessions |
@@ -111,4 +111,3 @@ related surfaces still resolves:
 | Alias | Resolves To |
 | --- | --- |
 | `/endpoint`, `/endpoints` | `/system` |
-| `/cache`, `/rtk`, `/activity`, `/evidence`, `/history` | `/tokenmaxxing` |

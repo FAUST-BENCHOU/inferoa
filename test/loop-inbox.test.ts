@@ -62,7 +62,7 @@ test("loop inbox projects pending review, daemon, and staged proposal items", as
     assert.equal(inbox.items.find((item) => item.kind === "goal_review")?.action, "/loop review");
     const proposalItem = inbox.items.find((item) => item.kind === "skill_proposal");
     assert.equal(proposalItem?.source, "self-improve");
-    assert.equal(proposalItem?.action, "inferoa self-improve replay && inferoa self-improve adopt");
+    assert.equal(proposalItem?.action, "inferoa self-improve adopt");
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });

@@ -50,7 +50,7 @@ test("slash parser exposes system command and keeps endpoint aliases", () => {
   assert.equal(endpoints.error, undefined);
 });
 
-test("slash parser exposes tokenmaxxing and keeps old savings aliases", () => {
+test("slash parser exposes tokenmaxxing without old savings aliases", () => {
   const tokenmaxxing = parseSlashCommand("/tokenmaxxing");
   assert.equal(tokenmaxxing.command?.name, "tokenmaxxing");
   assert.equal(tokenmaxxing.error, undefined);
@@ -60,21 +60,11 @@ test("slash parser exposes tokenmaxxing and keeps old savings aliases", () => {
   assert.equal(tokenmaxxingSignals.args, "signals");
   assert.equal(tokenmaxxingSignals.error, undefined);
 
-  const activity = parseSlashCommand("/activity");
-  assert.equal(activity.command?.name, "tokenmaxxing");
-  assert.equal(activity.error, undefined);
-
-  const cache = parseSlashCommand("/cache");
-  assert.equal(cache.command?.name, "tokenmaxxing");
-  assert.equal(cache.error, undefined);
-
-  const rtk = parseSlashCommand("/rtk");
-  assert.equal(rtk.command?.name, "tokenmaxxing");
-  assert.equal(rtk.error, undefined);
-
-  const evidenceAlias = parseSlashCommand("/evidence");
-  assert.equal(evidenceAlias.command?.name, "tokenmaxxing");
-  assert.equal(evidenceAlias.error, undefined);
+  for (const legacy of ["activity", "cache", "rtk", "evidence", "history"]) {
+    const parsed = parseSlashCommand(`/${legacy}`);
+    assert.equal(parsed.command, undefined);
+    assert.equal(parsed.error, `Unrecognized command '/${legacy}'. Type '/' for commands.`);
+  }
 
   const fresh = parseSlashCommand("/new");
   assert.equal(fresh.command, undefined);
@@ -136,6 +126,7 @@ test("slash registry exposes chat subcommands for completion", () => {
   assert.equal(slashCommandWithSubcommands("/self-improve"), "self-improve");
   assert.equal(slashCommandWithSubcommands("/plan"), "plan");
   assert.equal(slashCommandWithSubcommands("/autoresearch"), undefined);
+  assert.equal(slashCommandWithSubcommands("/cache"), undefined);
   assert.equal(slashCommandWithSubcommands("/sessions"), "sessions");
   assert.equal(slashCommandWithSubcommands("/clear"), undefined);
   assert.equal(parseSlashCommand("/jobs").error, "Unrecognized command '/jobs'. Type '/' for commands.");
@@ -184,7 +175,7 @@ test("slash registry exposes chat subcommands for completion", () => {
   );
   assert.deepEqual(
     slashSubcommands("self-improve").map((item) => item.value),
-    ["/self-improve help", "/self-improve status", "/self-improve propose", "/self-improve run --replay", "/self-improve report", "/self-improve adopt"],
+    ["/self-improve status", "/self-improve learn", "/self-improve adopt"],
   );
   assert.deepEqual(
     slashSubcommands("inbox").map((item) => item.value),

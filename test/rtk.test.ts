@@ -53,10 +53,10 @@ test("config enables managed RTK by default and honors env overrides", async () 
   }
 });
 
-test("slash parser and activity view expose RTK savings", () => {
+test("activity view exposes RTK savings without an rtk slash alias", () => {
   const rtk = parseSlashCommand("/rtk");
-  assert.equal(rtk.command?.name, "tokenmaxxing");
-  assert.equal(rtk.error, undefined);
+  assert.equal(rtk.command, undefined);
+  assert.equal(rtk.error, "Unrecognized command '/rtk'. Type '/' for commands.");
 
   const activity = stripAnsi(
     renderSessionActivityLines(

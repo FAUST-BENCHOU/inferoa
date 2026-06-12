@@ -84,12 +84,9 @@ export const SLASH_SUBCOMMANDS: SlashSubcommandSpec[] = [
   { command: "inbox", name: "resolve", value: "/inbox resolve", description: "Mark an inbox item resolved" },
   { command: "inbox", name: "dismiss", value: "/inbox dismiss", description: "Hide an inbox item" },
   { command: "inbox", name: "promote", value: "/inbox promote", description: "Queue a runnable inbox item" },
-  { command: "self-improve", name: "help", value: "/self-improve help", description: "Show self-improve workflow and commands" },
   { command: "self-improve", name: "status", value: "/self-improve status", description: "Show learning evidence, proposals, and replay count" },
-  { command: "self-improve", name: "propose", value: "/self-improve propose", description: "Stage learned Loop/Workspace Skill proposals" },
-  { command: "self-improve", name: "run replay", value: "/self-improve run --replay", description: "Run structured replay/gating for a proposal" },
-  { command: "self-improve", name: "report", value: "/self-improve report", description: "Show the latest replay report" },
-  { command: "self-improve", name: "adopt", value: "/self-improve adopt", description: "Adopt staged learned Loop/Workspace Skills" },
+  { command: "self-improve", name: "learn", value: "/self-improve learn", description: "Stage and replay a learned skill proposal" },
+  { command: "self-improve", name: "adopt", value: "/self-improve adopt", description: "Preview and adopt staged learned skills" },
   { command: "plan", name: "show", value: "/plan show", description: "Show active plan state" },
   { command: "plan", name: "set", value: "/plan set", description: "Set or replace the plan objective" },
   { command: "plan", name: "pause", value: "/plan pause", description: "Pause the current plan" },
@@ -153,11 +150,6 @@ const COMMANDS = new Map(SLASH_COMMANDS.map((command) => [command.name, command]
 const COMMAND_ALIASES = new Map<string, SlashCommandName>([
   ["endpoint", "system"],
   ["endpoints", "system"],
-  ["activity", "tokenmaxxing"],
-  ["cache", "tokenmaxxing"],
-  ["rtk", "tokenmaxxing"],
-  ["evidence", "tokenmaxxing"],
-  ["history", "tokenmaxxing"],
 ]);
 const SUBCOMMANDS = SLASH_SUBCOMMANDS.reduce((map, command) => {
   const bucket = map.get(command.command) ?? [];

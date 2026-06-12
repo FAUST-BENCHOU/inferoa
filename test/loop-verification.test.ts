@@ -504,6 +504,30 @@ test("completion requires enabled Loop Skill body to be loaded before claiming d
     );
     assert.equal(read.ok, true, JSON.stringify(read));
 
+    const blockedAfterRead = await registry.call(
+      { id: "complete_blocked_by_soft_only", name: "goal", arguments: { op: "complete", summary: "Done." } },
+      { session_id: fixture.session.session_id, run_id: "run_complete_soft_only", control_plane: true },
+    );
+    assert.equal(blockedAfterRead.ok, false);
+    assert.equal(blockedAfterRead.error?.code, "goal_skill_policy_required");
+    assert.match(blockedAfterRead.error?.message ?? "", /non-reflection verification/);
+
+    const verifier = await registry.call(
+      {
+        id: "command_verifier",
+        name: "goal",
+        arguments: {
+          op: "verify",
+          provider: "command",
+          verdict: "pass",
+          confidence: "hard",
+          evidence: { command: "npm test", status: "pass" },
+        },
+      },
+      { session_id: fixture.session.session_id, run_id: "run_command_verifier" },
+    );
+    assert.equal(verifier.ok, true, JSON.stringify(verifier));
+
     const completed = await registry.call(
       { id: "complete_allowed_after_skill", name: "goal", arguments: { op: "complete", summary: "Done." } },
       { session_id: fixture.session.session_id, run_id: "run_complete_allowed", control_plane: true },
@@ -515,6 +539,115 @@ test("completion requires enabled Loop Skill body to be loaded before claiming d
       && application.rule_id === "loop-completion-gate-satisfied"
       && application.body_hash
     ));
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("missing configured Loop Skill does not create an impossible completion gate", async () => {
+  const fixture = await createFixture("inferoa-loop-verification-missing-loop-skill-");
+  try {
+    const nextConfig = config();
+    nextConfig.skills.enabled = ["inferoa-loop-skill"];
+    const registry = new ToolRegistry(nextConfig, fixture.workspace, fixture.store);
+    let state = replaceGoalPlanning(createGoalState({ objective: "Complete without an adopted learned skill" }), {
+      steps: [{ id: "done", title: "Complete implementation", status: "completed" }],
+    });
+    state = writeGoalState(fixture.store, fixture.session.session_id, state, "run_seed");
+
+    const reflected = await registry.call(
+      {
+        id: "reflect_done",
+        name: "goal",
+        arguments: {
+          op: "reflect",
+          decision: "done",
+          summary: "Implementation is ready.",
+          verification_evidence: { summary: "checked" },
+        },
+      },
+      { session_id: fixture.session.session_id, run_id: "run_reflect", request_class: "reflection", visibility: "internal" },
+    );
+    assert.equal(reflected.ok, true, JSON.stringify(reflected));
+
+    const completed = await registry.call(
+      { id: "complete_without_missing_skill_gate", name: "goal", arguments: { op: "complete", summary: "Done." } },
+      { session_id: fixture.session.session_id, run_id: "run_complete", control_plane: true },
+    );
+    assert.equal(completed.ok, true, JSON.stringify(completed));
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("completion requires enabled Workspace Skill body for workspace development goals", async () => {
+  const fixture = await createFixture("inferoa-loop-verification-workspace-skill-gate-");
+  try {
+    const workspaceSkillDir = path.join(fixture.workspace.root, ".inferoa", "skills", "inferoa-workspace-skill");
+    await mkdir(workspaceSkillDir, { recursive: true });
+    await writeFile(
+      path.join(workspaceSkillDir, "SKILL.md"),
+      "---\nname: Inferoa Workspace Skill\ndescription: Learned workspace workflow policy.\n---\n\nRun npm test before completion.\n",
+      "utf8",
+    );
+    const nextConfig = config();
+    nextConfig.skills.enabled = ["inferoa-workspace-skill"];
+    const registry = new ToolRegistry(nextConfig, fixture.workspace, fixture.store);
+    const state = replaceGoalPlanning(createGoalState({ objective: "Update README docs and TypeScript tests" }), {
+      steps: [{ id: "done", title: "Complete docs and test update", status: "completed" }],
+    });
+    writeGoalState(fixture.store, fixture.session.session_id, state, "run_seed");
+
+    const reflected = await registry.call(
+      {
+        id: "reflect_done",
+        name: "goal",
+        arguments: {
+          op: "reflect",
+          decision: "done",
+          summary: "Docs and tests are ready.",
+          verification_evidence: { command: "npm test", status: "pass" },
+        },
+      },
+      { session_id: fixture.session.session_id, run_id: "run_reflect", request_class: "reflection", visibility: "internal" },
+    );
+    assert.equal(reflected.ok, true, JSON.stringify(reflected));
+
+    const verifier = await registry.call(
+      {
+        id: "command_verifier",
+        name: "goal",
+        arguments: {
+          op: "verify",
+          provider: "command",
+          verdict: "pass",
+          confidence: "hard",
+          evidence: { command: "npm test", status: "pass" },
+        },
+      },
+      { session_id: fixture.session.session_id, run_id: "run_command_verifier" },
+    );
+    assert.equal(verifier.ok, true, JSON.stringify(verifier));
+
+    const blocked = await registry.call(
+      { id: "complete_blocked_by_workspace_skill", name: "goal", arguments: { op: "complete", summary: "Done." } },
+      { session_id: fixture.session.session_id, run_id: "run_complete_blocked", control_plane: true },
+    );
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.error?.code, "goal_skill_policy_required");
+    assert.match(blocked.error?.message ?? "", /Workspace Skill body/);
+
+    const read = await registry.call(
+      { id: "read_workspace_skill", name: "skill_read", arguments: { id: "inferoa-workspace-skill" } },
+      { session_id: fixture.session.session_id, run_id: "run_workspace_skill_read" },
+    );
+    assert.equal(read.ok, true, JSON.stringify(read));
+
+    const completed = await registry.call(
+      { id: "complete_allowed_after_workspace_skill", name: "goal", arguments: { op: "complete", summary: "Done." } },
+      { session_id: fixture.session.session_id, run_id: "run_complete_allowed", control_plane: true },
+    );
+    assert.equal(completed.ok, true, JSON.stringify(completed));
   } finally {
     await fixture.cleanup();
   }

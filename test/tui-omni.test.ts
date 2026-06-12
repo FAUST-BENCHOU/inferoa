@@ -4,11 +4,9 @@ import { DEFAULT_CONFIG } from "../src/config/defaults.js";
 import { stripAnsi, visibleWidth } from "../src/tui/ansi.js";
 import {
   commandDeckFrame,
-  cacheEvidenceOverview,
   describeModelSetupForDisplay,
   endpointStatusLinesForDisplay,
   normalizeContextWindowInput,
-  PREFIX_CACHE_REPORT_TITLE,
   setupReviewLinesForDisplay,
   TUI_OMNI_SETUP_CAPABILITIES,
   webSearchProviderSetupOptions,
@@ -150,20 +148,4 @@ test("TUI setup review uses full-width rows and does not truncate final summary"
   assert.ok(compactPlain.includes(config.model_setup.model ?? ""));
   assert.ok(compactPlain.includes(config.model_setup.base_url ?? ""));
   assert.match(plain, /local vault/);
-});
-
-test("prefix cache report excludes the warmup turn from aggregate hit rate", () => {
-  const lines = stripAnsi(cacheEvidenceOverview([
-    { run_id: "run_1", usage: { prompt_tokens: 1000, cached_prompt_tokens: 58 } },
-    { run_id: "run_2", usage: { prompt_tokens: 1000, cached_prompt_tokens: 971 } },
-  ], [
-    { session_id: "s", run_id: "run_1", type: "user.prompt", data: { prompt: "who are you" } },
-    { session_id: "s", run_id: "run_2", type: "user.prompt", data: { prompt: "continue" } },
-  ]).join("\n"));
-
-  assert.equal(PREFIX_CACHE_REPORT_TITLE, "Prefix Cache Report");
-  assert.match(lines, /turns 2/);
-  assert.match(lines, /usage cache cached 971\/1000 · hit 97\.1% · 1\/1 turns exposed/);
-  assert.doesNotMatch(lines, /1029\/2000/);
-  assert.doesNotMatch(lines, /51\.5%/);
 });

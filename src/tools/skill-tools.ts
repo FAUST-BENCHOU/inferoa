@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import path from "node:path";
 import type { JsonObject, ToolResult } from "../types.js";
 import { saveUserConfig } from "../config/config.js";
 import { readGoalState } from "../goals/state.js";
@@ -6,6 +7,15 @@ import { SkillRegistry } from "../skills/registry.js";
 import { sha256Hex } from "../util/hash.js";
 import { clampLimit, fail, ok } from "../util/limit.js";
 import type { ToolExecutionContext } from "./context.js";
+
+const LEARNED_WORKSPACE_SKILL_ALIASES = new Map([
+  ["inferoa-loop-skill", "inferoa-loop-skill"],
+  ["Inferoa Loop Skill", "inferoa-loop-skill"],
+  ["loop_skill", "inferoa-loop-skill"],
+  ["inferoa-workspace-skill", "inferoa-workspace-skill"],
+  ["Inferoa Workspace Skill", "inferoa-workspace-skill"],
+  ["workspace_skill", "inferoa-workspace-skill"],
+]);
 
 export async function skillList(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const query = typeof args.query === "string" ? args.query.toLowerCase() : "";
@@ -31,13 +41,24 @@ export async function skillList(args: JsonObject, context: ToolExecutionContext)
 }
 
 export async function skillRead(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
-  const id = String(args.id ?? "");
+  const requestedId = String(args.id ?? "");
+  const id = LEARNED_WORKSPACE_SKILL_ALIASES.get(requestedId) ?? requestedId;
   if (!id) {
     return fail("skill_id_required", "skill_read requires id");
   }
   const skills = await new SkillRegistry(context.workspace, context.config).discover();
-  const skill = skills.find((item) => item.id === id || item.name === id);
+  const skill = skills.find((item) => item.id === id || item.name === id || item.id === requestedId || item.name === requestedId);
   if (!skill?.path) {
+    if (LEARNED_WORKSPACE_SKILL_ALIASES.has(requestedId) || LEARNED_WORKSPACE_SKILL_ALIASES.has(id)) {
+      return ok(`Skill ${id} has not been adopted in this workspace.`, {
+        id,
+        requested_id: requestedId,
+        status: "not_adopted",
+        configured_enabled: context.config.skills.enabled.includes(id),
+        expected_path: path.join(context.workspace.root, ".inferoa", "skills", id, "SKILL.md"),
+        next: "Complete a verified /loop, then run /self-improve learn and approve adoption before relying on this learned skill.",
+      });
+    }
     return fail("skill_not_found", `Skill not found: ${id}`);
   }
   const body = await fs.readFile(skill.path, "utf8");

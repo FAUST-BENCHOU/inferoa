@@ -5,7 +5,11 @@ import path from "node:path";
 import test from "node:test";
 import { runFinalAcceptance } from "../src/validation/acceptance.js";
 
-const PRODUCT_SOURCE_ALLOWING_EXPLICIT_TOOL_CAP = new Set(["src/runtime.ts"]);
+const PRODUCT_SOURCE_ALLOWING_EXPLICIT_TOOL_CAP = new Set([
+  "src/runtime.ts",
+  // Self-improve optimizer is a bounded proposal job, not a user-facing long-horizon loop.
+  "src/opt/agentic-propose.ts",
+]);
 
 test("final acceptance rejects external-only chat providers", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-acceptance-preflight-"));

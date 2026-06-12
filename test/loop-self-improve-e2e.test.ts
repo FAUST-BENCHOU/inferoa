@@ -73,6 +73,14 @@ test("self-improve e2e proves Loop Skill and Workspace Skill change later loop b
     );
     assert.equal(readWorkspaceSkill.ok, true, JSON.stringify(readWorkspaceSkill));
 
+    const blockedSoftOnly = await registry.call(
+      { id: "blocked_soft_only_complete", name: "goal", arguments: { op: "complete", summary: "Done." } },
+      { session_id: session.session_id, run_id: "run_blocked_soft_only_complete", control_plane: true },
+    );
+    assert.equal(blockedSoftOnly.ok, false);
+    assert.equal(blockedSoftOnly.error?.code, "goal_skill_policy_required");
+    assert.match(blockedSoftOnly.error?.message ?? "", /non-reflection verification/);
+
     const verify = await registry.call(
       {
         id: "workspace_verify",
@@ -125,14 +133,16 @@ test("self-improve e2e proves Loop Skill and Workspace Skill change later loop b
       replay_status: replay.status,
       adopted_skill_ids: adopted.skill_targets?.map((target) => target.skill_id),
       blocked_before_skill_read: blocked.error?.code,
+      blocked_soft_only_after_skill_read: blockedSoftOnly.error?.code,
       skill_body_loads: view.skill_body_loads,
       skill_rule_applications: view.skill_rule_applications,
       verification_records: view.verifications,
     }, null, 2)}\n`, "utf8");
-    await writeFile(path.join(caseDir, "README.md"), renderCaseReport(proposal.id, replay.id, view), "utf8");
+    await writeFile(path.join(caseDir, "README.md"), renderCaseReport(proposal.id, replay.id, blockedSoftOnly.error?.code ?? "", view), "utf8");
 
     const report = await readFile(path.join(caseDir, "README.md"), "utf8");
     assert.match(report, /blocked_before_skill_read: goal_skill_policy_required/);
+    assert.match(report, /blocked_soft_only_after_skill_read: goal_skill_policy_required/);
     assert.match(report, /workspace-command-verifier-used/);
     assert.match(report, /loop-completion-gate-satisfied/);
   } finally {
@@ -195,13 +205,14 @@ function addHistoricalLoopEvidence(
   }
 }
 
-function renderCaseReport(proposalId: string, replayId: string, view: ReturnType<typeof readGoalLoopView>): string {
+function renderCaseReport(proposalId: string, replayId: string, blockedSoftOnlyCode: string, view: ReturnType<typeof readGoalLoopView>): string {
   return [
     "# Loop Self-Improve Case Evidence",
     "",
     `proposal_id: ${proposalId}`,
     `replay_id: ${replayId}`,
     "blocked_before_skill_read: goal_skill_policy_required",
+    `blocked_soft_only_after_skill_read: ${blockedSoftOnlyCode}`,
     "",
     "## Skill Body Loads",
     "",

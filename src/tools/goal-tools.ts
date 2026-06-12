@@ -44,14 +44,18 @@ import { readAutoresearchState, researchCompletionBlockMessage, setAutoresearchM
 import {
   humanReviewVerificationVerdict,
   goalVerifierPolicyCompletionBlockMessage,
+  readGoalVerificationRecords,
   recordGoalVerification,
   reflectionVerificationVerdict,
 } from "../loop/verification.js";
+import { SkillRegistry, type SkillDescriptor } from "../skills/registry.js";
 import type { GoalLoopVerificationConfidence, GoalLoopVerificationProvider, GoalLoopVerificationVerdict } from "../loop/types.js";
 
 const CONTROL_PLANE_GOAL_OPS = new Set(["create", "review_decision", "resume", "complete", "drop"]);
 const LOOP_SKILL_ID = "inferoa-loop-skill";
 const WORKSPACE_SKILL_ID = "inferoa-workspace-skill";
+const WORKSPACE_SKILL_ACTIVATION_PATTERN =
+  /\b(code|coding|implementation|implement|bug|fix|test|tests|testing|docs|documentation|readme|release|build|package|review|repo|workspace|typescript|javascript|node|npm)\b|代码|文档|测试|发版|发布|评审|仓库|项目|修复|实现|开发/i;
 
 export async function goalTool(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const op = stringArg(args.op) ?? "get";
@@ -85,7 +89,7 @@ export async function goalTool(args: JsonObject, context: ToolExecutionContext):
       case "verify":
         return recordGoalVerificationTool(args, context);
       case "review_decision":
-        return reviewGoalDecision(args, context);
+        return await reviewGoalDecision(args, context);
       case "set_strategy":
         return updateGoalStrategy(args, context);
       case "set_owner":
@@ -103,9 +107,9 @@ export async function goalTool(args: JsonObject, context: ToolExecutionContext):
       case "resume":
         return resumeGoal(context);
       case "complete":
-        return finishGoal(args, context, "complete");
+        return await finishGoal(args, context, "complete");
       case "drop":
-        return finishGoal(args, context, "dropped");
+        return await finishGoal(args, context, "dropped");
       default:
         return fail("invalid_goal_op", `Unknown goal operation: ${op}`);
     }
@@ -534,7 +538,7 @@ function recordGoalVerificationTool(args: JsonObject, context: ToolExecutionCont
   return ok(`Recorded ${provider} verification: ${verdict}`, { verification: record as unknown as JsonObject });
 }
 
-function reviewGoalDecision(args: JsonObject, context: ToolExecutionContext): ToolResult {
+async function reviewGoalDecision(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const state = readGoalState(context.store, context.session_id);
   if (!state) {
     return fail("goal_missing", "No goal to review.");
@@ -550,7 +554,7 @@ function reviewGoalDecision(args: JsonObject, context: ToolExecutionContext): To
   const feedback = stringArg(args.feedback) ?? stringArg(args.summary);
   try {
     if (decision === "approve") {
-      return approveGoalReviewDecision(state, context);
+      return await approveGoalReviewDecision(state, context);
     }
     const next =
       decision === "block"
@@ -564,7 +568,7 @@ function reviewGoalDecision(args: JsonObject, context: ToolExecutionContext): To
   }
 }
 
-function approveGoalReviewDecision(state: GoalState, context: ToolExecutionContext): ToolResult {
+async function approveGoalReviewDecision(state: GoalState, context: ToolExecutionContext): Promise<ToolResult> {
   const pending = state.goal.pending_review_decision;
   if (!pending) {
     return failGoalWithState(state, "goal_review_missing", "No pending goal review decision.");
@@ -591,7 +595,7 @@ function approveGoalReviewDecision(state: GoalState, context: ToolExecutionConte
     if (verifierMessage) {
       return failGoalWithState(state, "goal_verifier_policy_required", verifierMessage);
     }
-    const skillPolicyMessage = goalSkillPolicyCompletionBlockMessage(context, reflected.goal);
+    const skillPolicyMessage = await goalSkillPolicyCompletionBlockMessage(context, reflected.goal);
     if (skillPolicyMessage) {
       return failGoalWithState(state, "goal_skill_policy_required", skillPolicyMessage);
     }
@@ -604,6 +608,7 @@ function approveGoalReviewDecision(state: GoalState, context: ToolExecutionConte
         summary: reflected.goal.last_reflection_summary,
       },
     });
+    appendWorkspaceCompletionGateSatisfied(context, reflected.goal, reflected.goal.last_reflection_summary);
     const completed = completeGoalAfterReflection(reflected, reflected.goal.last_reflection_summary);
     const saved = writeGoalState(context.store, context.session_id, completed, context.run_id);
     appendApprovedReflectionEvents(context, state, saved, pending);
@@ -740,7 +745,7 @@ function appendSkillRuleApplied(
   skillId: string,
   input: SkillRuleApplicationInput,
 ): void {
-  const bodyLoad = latestSkillBodyLoadEvent(context, goal.id, skillId);
+  const bodyLoad = latestSkillBodyLoadEvent(context, goal, skillId);
   if (!bodyLoad) {
     return;
   }
@@ -775,7 +780,7 @@ function appendSkillRuleApplied(
 
 function latestSkillBodyLoadEvent(
   context: ToolExecutionContext,
-  goalId: string,
+  goal: GoalRecord,
   skillId: string,
 ): ReturnType<ToolExecutionContext["store"]["listEvents"]>[number] | undefined {
   const loads = context.store
@@ -785,8 +790,8 @@ function latestSkillBodyLoadEvent(
       && event.data.skill_id === skillId
       && stringArg(event.data.body_hash)
     );
-  return loads.filter((event) => event.data.goal_id === goalId).at(-1)
-    ?? loads.filter((event) => !event.data.goal_id).at(-1);
+  return loads.filter((event) => event.data.goal_id === goal.id).at(-1)
+    ?? loads.filter((event) => !event.data.goal_id && Boolean(event.created_at) && event.created_at! >= goal.created_at).at(-1);
 }
 
 function resumeGoal(context: ToolExecutionContext): ToolResult {
@@ -810,7 +815,7 @@ function resumeGoal(context: ToolExecutionContext): ToolResult {
   return describeGoal(writeGoalState(context.store, context.session_id, next, context.run_id), "Goal resumed", context);
 }
 
-function finishGoal(args: JsonObject, context: ToolExecutionContext, status: "complete" | "dropped"): ToolResult {
+async function finishGoal(args: JsonObject, context: ToolExecutionContext, status: "complete" | "dropped"): Promise<ToolResult> {
   const state = readGoalState(context.store, context.session_id);
   if (!state) {
     return fail("goal_missing", status === "complete" ? "cannot complete goal because no goal is active" : "No goal to drop.");
@@ -865,7 +870,7 @@ function finishGoal(args: JsonObject, context: ToolExecutionContext, status: "co
     if (verifierMessage) {
       return failGoalWithState(state, "goal_verifier_policy_required", verifierMessage);
     }
-    const skillPolicyMessage = goalSkillPolicyCompletionBlockMessage(context, state.goal);
+    const skillPolicyMessage = await goalSkillPolicyCompletionBlockMessage(context, state.goal);
     if (skillPolicyMessage) {
       return failGoalWithState(state, "goal_skill_policy_required", skillPolicyMessage);
     }
@@ -878,6 +883,7 @@ function finishGoal(args: JsonObject, context: ToolExecutionContext, status: "co
         summary,
       },
     });
+    appendWorkspaceCompletionGateSatisfied(context, state.goal, summary);
   }
   const next = cloneGoalState(state);
   if (summary) {
@@ -897,20 +903,95 @@ function isInternalReflectionContext(context: ToolExecutionContext): boolean {
   return context.request_class === "reflection" && context.visibility === "internal";
 }
 
-function goalSkillPolicyCompletionBlockMessage(context: ToolExecutionContext, goal: GoalRecord): string | undefined {
-  if (!isSkillEnabled(context, LOOP_SKILL_ID, "Inferoa Loop Skill")) {
+async function goalSkillPolicyCompletionBlockMessage(context: ToolExecutionContext, goal: GoalRecord): Promise<string | undefined> {
+  const descriptors = await new SkillRegistry(context.workspace, context.config).discover().catch(() => [] as SkillDescriptor[]);
+  return loopSkillPolicyCompletionBlockMessage(context, goal, descriptors)
+    ?? workspaceSkillPolicyCompletionBlockMessage(context, goal, descriptors);
+}
+
+function loopSkillPolicyCompletionBlockMessage(context: ToolExecutionContext, goal: GoalRecord, descriptors: SkillDescriptor[]): string | undefined {
+  if (!isSkillActive(context, descriptors, LOOP_SKILL_ID, "Inferoa Loop Skill")) {
     return undefined;
   }
-  const load = latestSkillBodyLoadEvent(context, goal.id, LOOP_SKILL_ID);
+  const load = latestSkillBodyLoadEvent(context, goal, LOOP_SKILL_ID);
+  if (load) {
+    const records = readGoalVerificationRecords(context.store, context.session_id, goal.id).filter(
+      (record) => record.horizon_generation === goal.horizon_generation,
+    );
+    if (records.some(isLearnedLoopStrongVerification)) {
+      return undefined;
+    }
+    return `Cannot complete goal while Inferoa Loop Skill is enabled until horizon ${goal.horizon_generation} has a pass non-reflection verification from command, connector, human review, or checker. Reflection-only evidence is not enough.`;
+  }
+  return "Cannot complete goal while Inferoa Loop Skill is enabled until the Loop Skill body has been read with skill_read for this goal.";
+}
+
+function workspaceSkillPolicyCompletionBlockMessage(context: ToolExecutionContext, goal: GoalRecord, descriptors: SkillDescriptor[]): string | undefined {
+  if (!isSkillActive(context, descriptors, WORKSPACE_SKILL_ID, "Inferoa Workspace Skill") || !workspaceSkillAppliesToGoal(goal)) {
+    return undefined;
+  }
+  const load = latestSkillBodyLoadEvent(context, goal, WORKSPACE_SKILL_ID);
   if (load) {
     return undefined;
   }
-  return "Cannot complete goal while Inferoa Loop Skill is enabled until the Loop Skill body has been read with skill_read for this goal.";
+  return "Cannot complete workspace development goal while Inferoa Workspace Skill is enabled until the Workspace Skill body has been read with skill_read for this goal.";
+}
+
+function appendWorkspaceCompletionGateSatisfied(
+  context: ToolExecutionContext,
+  goal: GoalRecord,
+  summary: string | undefined,
+): void {
+  if (!isSkillEnabled(context, WORKSPACE_SKILL_ID, "Inferoa Workspace Skill") || !workspaceSkillAppliesToGoal(goal)) {
+    return;
+  }
+  appendSkillRuleApplied(context, goal, WORKSPACE_SKILL_ID, {
+    target: "workspace_skill",
+    rule_id: "workspace-completion-gate-satisfied",
+    rule_summary: "Workspace Skill body was loaded before allowing workspace development goal completion.",
+    decision: "complete",
+    evidence: {
+      summary,
+    },
+  });
+}
+
+function workspaceSkillAppliesToGoal(goal: GoalRecord): boolean {
+  if (goal.kind !== "task") {
+    return false;
+  }
+  const text = [
+    goal.objective,
+    goal.summary,
+    goal.planning?.summary,
+    ...(goal.planning?.steps ?? []).flatMap((step) => [step.title, step.notes]),
+  ].filter((item): item is string => typeof item === "string" && item.trim().length > 0).join("\n");
+  return WORKSPACE_SKILL_ACTIVATION_PATTERN.test(text);
 }
 
 function isSkillEnabled(context: ToolExecutionContext, skillId: string, skillName: string): boolean {
   const enabled = new Set(context.config.skills.enabled);
   return enabled.has(skillId) || enabled.has(skillName);
+}
+
+function isSkillActive(context: ToolExecutionContext, descriptors: SkillDescriptor[], skillId: string, skillName: string): boolean {
+  if (!isSkillEnabled(context, skillId, skillName)) {
+    return false;
+  }
+  return descriptors.some((descriptor) => descriptor.id === skillId || descriptor.name === skillName);
+}
+
+function isLearnedLoopStrongVerification(record: ReturnType<typeof readGoalVerificationRecords>[number]): boolean {
+  if (record.verdict !== "pass" || record.provider === "reflection") {
+    return false;
+  }
+  if (record.provider === "command" || record.provider === "human") {
+    return record.confidence === "hard";
+  }
+  if (record.provider === "connector" || record.provider === "research") {
+    return record.confidence === "hard" || record.confidence === "mixed";
+  }
+  return record.provider === "checker";
 }
 
 function failGoalWithState(state: GoalState, code: string, message: string, extra: JsonObject = {}): ToolResult {

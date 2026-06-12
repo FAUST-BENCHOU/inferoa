@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { DEFAULT_CONFIG } from "../src/config/defaults.js";
 import { SessionStore } from "../src/session/store.js";
 import { TuiApp } from "../src/tui/app.js";
@@ -19,6 +20,7 @@ import {
   stageGoalReviewDecision,
   writeGoalState,
 } from "../src/goals/state.js";
+import { optLitePropose } from "../src/opt/opt-lite.js";
 
 test("clear starts a clean default session without prompting or rendering creation details", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-clear-session-"));
@@ -907,7 +909,7 @@ test("inbox view renders in transcript flow without a framed panel", async () =>
   }
 });
 
-test("self-improve status renders in transcript flow with workflow commands", async () => {
+test("self-improve status renders a compact transcript without command checklist", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-self-improve-transcript-"));
   const store = await SessionStore.open(stateDir);
   try {
@@ -943,21 +945,313 @@ test("self-improve status renders in transcript flow with workflow commands", as
     assert.equal(latest?.title, "Self-Improve");
     const plain = stripAnsi(latest?.body.join("\n") ?? "");
     assert.match(plain, /verified loop evidence/i);
-    assert.match(plain, /\/self-improve status/);
-    assert.match(plain, /\/self-improve propose/);
-    assert.match(plain, /\/self-improve run --replay/);
-    assert.match(plain, /\/self-improve report/);
-    assert.match(plain, /\/self-improve adopt/);
+    assert.doesNotMatch(plain, /\bCommands\b/);
+    assert.doesNotMatch(plain, /\/self-improve propose/);
+    assert.doesNotMatch(plain, /\/self-improve run --replay/);
+    assert.doesNotMatch(plain, /\/self-improve report/);
     assert.deepEqual(
       view.composerSuggestions("/self-improve ", []).map((item) => item.value),
-      [
-        "/self-improve help",
-        "/self-improve status",
-        "/self-improve propose",
-        "/self-improve run --replay",
-        "/self-improve report",
-        "/self-improve adopt",
-      ],
+      ["/self-improve status", "/self-improve learn", "/self-improve adopt"],
+    );
+  } finally {
+    store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("self-improve from welcome keeps the chat banner before command output", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-self-improve-welcome-"));
+  const originalStdoutWrite = process.stdout.write;
+  const store = await SessionStore.open(stateDir);
+  try {
+    const workspace = { id: "w_self_improve_welcome", root: stateDir, alias: "self-improve-welcome" };
+    const tui = new TuiApp(
+      {
+        config: structuredClone(DEFAULT_CONFIG),
+        configFiles: [],
+        workspace,
+        store,
+        runtime: {},
+      } as never,
+    );
+    const view = tui as unknown as {
+      openView: (command: "self-improve", args: string) => Promise<void>;
+      shouldRenderWelcomeComposer: () => boolean;
+    };
+    let output = "";
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      output += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+      return true;
+    }) as typeof process.stdout.write;
+
+    await view.openView("self-improve", "");
+
+    const plain = stripAnsi(output);
+    const bannerIndex = plain.indexOf("Welcome back!");
+    const panelIndex = plain.indexOf("Self-Improve");
+    assert.ok(bannerIndex >= 0);
+    assert.ok(panelIndex >= 0);
+    assert.ok(bannerIndex < panelIndex);
+    assert.equal(view.shouldRenderWelcomeComposer(), false);
+  } finally {
+    process.stdout.write = originalStdoutWrite;
+    store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("self-improve learn returns composer control while optimizer is pending", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-self-improve-learn-bg-"));
+  const store = await SessionStore.open(stateDir);
+  try {
+    const workspace = { id: "w_self_improve_learn_bg", root: stateDir, alias: "self-improve-learn-bg" };
+    const session = store.createSession(workspace, "verified self improve source");
+    let goal = createGoalState({ objective: "Keep slash commands responsive" });
+    writeGoalState(store, session.session_id, goal, "run_goal");
+    goal = completeGoalReflection(
+      goal,
+      {
+        decision: "done",
+        summary: "Verified with npm test.",
+        verification_evidence: { command: "npm test", status: "pass" },
+      },
+      "run_reflect",
+    );
+    writeGoalState(store, session.session_id, goal, "run_reflect");
+    store.appendEvent({
+      session_id: session.session_id,
+      run_id: "run_reflect",
+      type: "goal.reflection.completed",
+      data: {
+        goal_id: goal.goal.id,
+        source_horizon_generation: 0,
+        horizon_generation: 0,
+        decision: "done",
+        summary: goal.goal.last_reflection_summary,
+        verification_evidence: goal.goal.verification_evidence,
+      },
+    });
+
+    const config = structuredClone(DEFAULT_CONFIG);
+    config.model_setup.base_url = "http://127.0.0.1:65535/v1";
+    config.model_setup.model = "optimizer-model";
+    let runtimeOptions: { signal?: AbortSignal } | undefined;
+    const tui = new TuiApp(
+      {
+        config,
+        configFiles: [],
+        workspace,
+        store,
+        runtime: {
+          async run(options: { signal?: AbortSignal }) {
+            runtimeOptions = options;
+            await new Promise((_resolve, reject) => {
+              options.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+            });
+            throw new Error("unreachable");
+          },
+        },
+      } as never,
+    );
+    const transcripts: Array<{ title: string; body: string[] }> = [];
+    const activity: string[] = [];
+    const view = tui as unknown as {
+      renderSelfImproveView: (args?: string) => Promise<void>;
+      renderLoopTranscriptPanel: (title: string, body: string[]) => void;
+      startActivityIndicator: (label: string) => {
+        status: (label: string) => void;
+        record: (line: string) => void;
+        pauseForOutput: () => void;
+        stop: () => void;
+      };
+      shutdownBackgroundWork: (reason: string) => Promise<void>;
+    };
+    view.renderLoopTranscriptPanel = (title, body) => {
+      transcripts.push({ title, body });
+    };
+    view.startActivityIndicator = (label) => {
+      activity.push(`start:${stripAnsi(label)}`);
+      return {
+        status: (next) => activity.push(`status:${stripAnsi(next)}`),
+        record: () => {},
+        pauseForOutput: () => {},
+        stop: () => activity.push("stop"),
+      };
+    };
+
+    const result = await Promise.race([
+      view.renderSelfImproveView("learn").then(() => "returned"),
+      delay(100).then(() => "blocked"),
+    ]);
+
+    assert.equal(result, "returned");
+    assert.equal(runtimeOptions, undefined);
+    assert.equal(activity[0], "start:Learning from loop evidence");
+    assert.deepEqual(transcripts, []);
+    for (let index = 0; index < 20 && !runtimeOptions; index += 1) {
+      await delay(10);
+    }
+    const startedRuntimeOptions = runtimeOptions as { signal?: AbortSignal } | undefined;
+    assert.ok(startedRuntimeOptions);
+    assert.ok(startedRuntimeOptions.signal);
+
+    await view.shutdownBackgroundWork("test done");
+  } finally {
+    store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("self-improve learn opens inline adopt review after accepted replay", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-self-improve-learn-review-"));
+  const store = await SessionStore.open(stateDir);
+  try {
+    const workspace = { id: "w_self_improve_learn_review", root: stateDir, alias: "self-improve-learn-review" };
+    for (let index = 0; index < 4; index += 1) {
+      const session = store.createSession(workspace, `verified self improve source ${index}`);
+      let goal = createGoalState({ objective: `Ship verified docs workflow ${index}` });
+      writeGoalState(store, session.session_id, goal, `run_goal_${index}`);
+      goal = completeGoalReflection(
+        goal,
+        {
+          decision: "done",
+          summary: "Verified with npm test.",
+          verification_evidence: { command: "npm test", status: "pass" },
+        },
+        `run_reflect_${index}`,
+      );
+      writeGoalState(store, session.session_id, goal, `run_reflect_${index}`);
+      store.appendEvent({
+        session_id: session.session_id,
+        run_id: `run_reflect_${index}`,
+        type: "goal.reflection.completed",
+        data: {
+          goal_id: goal.goal.id,
+          source_horizon_generation: 0,
+          horizon_generation: 0,
+          decision: "done",
+          summary: goal.goal.last_reflection_summary,
+          verification_evidence: goal.goal.verification_evidence,
+        },
+      });
+    }
+
+    const tui = new TuiApp(
+      {
+        config: structuredClone(DEFAULT_CONFIG),
+        configFiles: [],
+        workspace,
+        store,
+        runtime: {},
+      } as never,
+    );
+    const transcripts: Array<{ title: string; body: string[] }> = [];
+    const view = tui as unknown as {
+      renderSelfImproveView: (args?: string) => Promise<void>;
+      renderLoopTranscriptPanel: (title: string, body: string[]) => void;
+      startActivityIndicator: (label: string) => {
+        status: () => void;
+        record: () => void;
+        pauseForOutput: () => void;
+        stop: () => void;
+      };
+      askSelfImproveAdoptDecision: () => Promise<"approve" | "cancel">;
+    };
+    view.renderLoopTranscriptPanel = (title, body) => {
+      transcripts.push({ title, body });
+    };
+    view.startActivityIndicator = () => ({
+      status: () => {},
+      record: () => {},
+      pauseForOutput: () => {},
+      stop: () => {},
+    });
+    view.askSelfImproveAdoptDecision = async () => "cancel";
+
+    await view.renderSelfImproveView("learn");
+    for (let index = 0; index < 50 && !transcripts.some((item) => item.title === "Self-Improve Adopt Review"); index += 1) {
+      await delay(10);
+    }
+
+    const review = transcripts.find((item) => item.title === "Self-Improve Adopt Review");
+    assert.ok(review);
+    const plain = stripAnsi(review.body.join("\n"));
+    assert.match(plain, /Inferoa Loop Skill/);
+    assert.match(plain, /Inferoa Workspace Skill/);
+    assert.equal(transcripts.at(-1)?.title, "Self-Improve Adopt Cancelled");
+    await assert.rejects(
+      () => readFile(path.join(stateDir, ".inferoa", "skills", "inferoa-loop-skill", "SKILL.md"), "utf8"),
+      /ENOENT/,
+    );
+  } finally {
+    store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("self-improve adopt previews staged skills and requires confirmation", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-self-improve-adopt-preview-"));
+  const store = await SessionStore.open(stateDir);
+  try {
+    const workspace = { id: "w_self_improve_adopt_preview", root: stateDir, alias: "self-improve-adopt-preview" };
+    const session = store.createSession(workspace, "verified self improve source");
+    let goal = createGoalState({ objective: "Ship verified docs workflow" });
+    writeGoalState(store, session.session_id, goal, "run_goal");
+    goal = completeGoalReflection(
+      goal,
+      {
+        decision: "done",
+        summary: "Verified with npm test.",
+        verification_evidence: { command: "npm test", status: "pass" },
+      },
+      "run_reflect",
+    );
+    writeGoalState(store, session.session_id, goal, "run_reflect");
+    store.appendEvent({
+      session_id: session.session_id,
+      run_id: "run_reflect",
+      type: "goal.reflection.completed",
+      data: {
+        goal_id: goal.goal.id,
+        source_horizon_generation: 0,
+        horizon_generation: 0,
+        decision: "done",
+        summary: goal.goal.last_reflection_summary,
+        verification_evidence: goal.goal.verification_evidence,
+      },
+    });
+    const proposal = await optLitePropose(store, workspace);
+    const tui = new TuiApp(
+      {
+        config: structuredClone(DEFAULT_CONFIG),
+        configFiles: [],
+        workspace,
+        store,
+        runtime: {},
+      } as never,
+    );
+    const transcripts: Array<{ title: string; body: string[] }> = [];
+    const view = tui as unknown as {
+      renderSelfImproveView: (args?: string) => Promise<void>;
+      renderLoopTranscriptPanel: (title: string, body: string[]) => void;
+      confirm: (label: string, defaultValue: boolean) => Promise<boolean>;
+    };
+    view.renderLoopTranscriptPanel = (title, body) => {
+      transcripts.push({ title, body });
+    };
+    view.confirm = async () => false;
+
+    await view.renderSelfImproveView(`adopt ${proposal.id}`);
+
+    const preview = transcripts.find((item) => item.title === "Self-Improve Adopt Preview");
+    assert.ok(preview);
+    const previewPlain = stripAnsi(preview.body.join("\n"));
+    assert.match(previewPlain, /Inferoa Loop Skill/);
+    assert.match(previewPlain, /Inferoa Workspace Skill/);
+    assert.equal(transcripts.at(-1)?.title, "Self-Improve Adopt Cancelled");
+    await assert.rejects(
+      () => readFile(path.join(stateDir, ".inferoa", "skills", "inferoa-loop-skill", "SKILL.md"), "utf8"),
+      /ENOENT/,
     );
   } finally {
     store.close();
@@ -1447,6 +1741,139 @@ test("suppressed internal reflection renders tool trace without assistant text",
     assert.match(plain, /done · loop task 1/);
     assert.match(plain, /improve docs wording/);
     assert.doesNotMatch(plain, /hidden reflection assistant text/);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("self-improve optimizer renders internal tool trace into chat transcript", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-self-improve-visible-trace-"));
+  try {
+    const session = {
+      session_id: "s_self_improve_visible_trace",
+      workspace_id: "w_self_improve_visible_trace",
+      title: "self-improve optimizer",
+      status: "idle",
+      created_at: new Date(0).toISOString(),
+      updated_at: new Date(0).toISOString(),
+    };
+    const runId = "run_self_improve_visible_trace";
+    const toolCallId = "call_self_improve_read";
+    const events = [
+      {
+        session_id: session.session_id,
+        run_id: runId,
+        type: "tool.call",
+        created_at: new Date(0).toISOString(),
+        data: {
+          tool_call_id: toolCallId,
+          tool_name: "read_file",
+          arguments: { path: "src/opt/agentic-propose.ts" },
+        },
+      },
+      {
+        session_id: session.session_id,
+        run_id: runId,
+        type: "tool.result",
+        created_at: new Date(0).toISOString(),
+        data: {
+          tool_call_id: toolCallId,
+          tool_name: "read_file",
+          result: {
+            ok: true,
+            summary: "Read 12 lines from src/opt/agentic-propose.ts",
+            data: {
+              path: "src/opt/agentic-propose.ts",
+              start_line: 1,
+              line_count: 12,
+              content: "1: export function buildAgenticEvidencePacket() {}\n",
+            },
+          },
+        },
+      },
+    ];
+    const transcript: string[] = [];
+    const tui = new TuiApp(
+      {
+        config: structuredClone(DEFAULT_CONFIG),
+        configFiles: [],
+        workspace: { id: "w_self_improve_visible_trace", root: stateDir, alias: "self-improve-visible-trace" },
+        store: { listEvents: () => events },
+        runtime: {
+          run: async (options: { onStatus?: (event: { type: string; [key: string]: unknown }) => void }) => {
+            options.onStatus?.({ type: "model_start", model: "optimizer-trace-test" });
+            options.onStatus?.({
+              type: "tool_start",
+              session_id: session.session_id,
+              run_id: runId,
+              tool_name: "read_file",
+              tool_call_id: toolCallId,
+              summary: "Reading optimizer source",
+            });
+            options.onStatus?.({
+              type: "tool_end",
+              session_id: session.session_id,
+              run_id: runId,
+              tool_name: "read_file",
+              tool_call_id: toolCallId,
+              ok: true,
+              summary: "Read 12 lines from src/opt/agentic-propose.ts",
+              duration_ms: 7,
+            });
+            return {
+              session,
+              run_id: runId,
+              content: "{\"edits\":[]}",
+              tool_rounds: 1,
+              tool_calls: 1,
+              duration_ms: 1,
+              tokens_used: 1,
+              rtk: {
+                tool_calls: 1,
+                rtk_tool_calls: 0,
+                rtk_commands: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                saved_tokens: 0,
+                savings_pct: 0,
+                estimated_without_rtk_tokens: 1,
+                status: "ok",
+              },
+            };
+          },
+        },
+      } as never,
+    );
+    const view = tui as unknown as {
+      runVisibleSelfImproveOptimizer: (options: { prompt: string; title?: string; request_class?: "background"; visibility?: "internal" }) => Promise<unknown>;
+      startActivityIndicator: (label: string) => {
+        status: () => void;
+        record: () => void;
+        pauseForOutput: () => void;
+        stop: () => void;
+      };
+      writeTranscript: (text: string) => void;
+    };
+    view.startActivityIndicator = () => ({
+      status: () => {},
+      record: () => {},
+      pauseForOutput: () => {},
+      stop: () => {},
+    });
+    view.writeTranscript = (text) => {
+      transcript.push(text);
+    };
+
+    await view.runVisibleSelfImproveOptimizer({
+      prompt: "Return JSON.",
+      title: "self-improve optimizer",
+      request_class: "background",
+      visibility: "internal",
+    });
+
+    const plain = stripAnsi(transcript.join(""));
+    assert.match(plain, /Read file/);
+    assert.match(plain, /agentic-propose\.ts/);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }

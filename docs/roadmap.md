@@ -143,8 +143,7 @@ Validation:
 - after every assistant turn, render a compact cache/usage footer with prompt
   tokens, cached prompt tokens, cache hit rate, output tokens, endpoint mode,
   model, and request id when available;
-- expose a `/cache` or equivalent TUI view for recent turns and aggregate cache
-  evidence;
+- expose recent turns and aggregate cache evidence through `/tokenmaxxing`;
 - keep stable prompt sections and deterministic tool schema order within each
   prompt epoch.
 

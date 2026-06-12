@@ -67,8 +67,7 @@ Slash commands live inside the TUI. See
   measurement.
 - Use [`/plan set`](./workflows/plan-mode.md) for ambiguous work that needs an
   inspectable plan before execution.
-- Use `/tokenmaxxing` (also `/cache`, `/rtk`, `/activity`) to see token, cache,
-  RTK, and routing pressure.
+- Use `/tokenmaxxing` to see token, cache, RTK, and routing pressure.
 - Use `/access` to change this workspace's file and tool access mode.
 
 ## Repository Development

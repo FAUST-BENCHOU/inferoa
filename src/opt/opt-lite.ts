@@ -8,6 +8,18 @@ import type { SessionStore } from "../session/store.js";
 import type { JsonObject, VllmAgentConfig, WorkspaceIdentity } from "../types.js";
 import { ensureDir } from "../util/fs.js";
 import { shortHash, stableJson } from "../util/hash.js";
+import {
+  buildAgenticEvidencePacket,
+  AgenticNoEditsError,
+  modelGatewayAgenticOptimizer,
+  renderAgenticSkillTargets,
+  type AgenticOptimizerRun,
+  type AgenticProposalOptimizer,
+  type AgenticProposalOptimizerResult,
+  type AgenticProposalSource,
+  type AgenticSkillProposalDraft,
+  type LoopLearningSignalTier,
+} from "./agentic-propose.js";
 
 export interface OptLiteStatus {
   proposal_count: number;
@@ -32,6 +44,8 @@ export interface OptLiteProposalSummary {
   skill_id: string;
   skill_path?: string;
   skill_targets?: OptSkillTargetSummary[];
+  proposal_source?: AgenticProposalSource;
+  agentic_run?: AgenticOptimizerRun;
   evidence: OptEvidenceSummary;
 }
 
@@ -42,6 +56,8 @@ export interface OptLiteProposal extends OptLiteProposalSummary {
   source_events: OptSourceEvent[];
   workspace_commands?: OptWorkspaceCommandEvidence[];
   skill_targets?: OptSkillTarget[];
+  model_proposal?: AgenticSkillProposalDraft;
+  agentic_error?: string;
   skill_body: string;
   staged_skill_path: string;
   skill_paths?: Record<string, string>;
@@ -65,12 +81,23 @@ export interface OptReplayReport extends OptReplayReportSummary {
     validation_improved: boolean;
     heldout_not_regressed: boolean;
     hard_failures: number;
+    edit_gate_passed?: boolean;
   };
   splits: {
     train: OptReplaySample[];
     validation: OptReplaySample[];
     heldout: OptReplaySample[];
   };
+  edit_verdicts?: OptReplayEditVerdict[];
+}
+
+export interface OptReplayEditVerdict {
+  target: OptSkillTargetKind;
+  section: string;
+  status: "accepted" | "rejected" | "needs_evidence";
+  reason: string;
+  source_signal_ids: string[];
+  source_event_ids: number[];
 }
 
 export interface OptLiteRunOptions {
@@ -81,6 +108,18 @@ export interface OptLiteRunOptions {
 export interface OptLiteRunReport {
   kind: "replay";
   replay: OptReplayReport;
+}
+
+export interface OptLiteLearnReport {
+  kind: "learn";
+  proposal: OptLiteProposal;
+  replay: OptReplayReport;
+}
+
+export interface OptLiteProposeOptions {
+  config?: VllmAgentConfig;
+  optimizer?: AgenticProposalOptimizer;
+  mode?: "auto" | "agentic" | "deterministic_fallback";
 }
 
 export interface OptReplaySample {
@@ -123,6 +162,23 @@ export interface OptSkillTarget extends OptSkillTargetSummary {
   skill_name: string;
   body: string;
   edits: OptLearningEdit[];
+}
+
+export interface OptAdoptPreview {
+  proposal_id: string;
+  proposal_source?: AgenticProposalSource;
+  status: OptLiteProposalStatus;
+  latest_replay?: OptReplayReportSummary;
+  targets: OptAdoptPreviewTarget[];
+}
+
+export interface OptAdoptPreviewTarget {
+  target: OptSkillTargetKind;
+  skill_id: string;
+  skill_name: string;
+  staged_skill_path: string;
+  body: string;
+  line_count: number;
 }
 
 export interface OptLearningEdit {
@@ -191,18 +247,27 @@ export async function optLiteStatus(store: SessionStore, workspace: WorkspaceIde
   };
 }
 
-export async function optLitePropose(store: SessionStore, workspace: WorkspaceIdentity): Promise<OptLiteProposal> {
+export async function optLitePropose(
+  store: SessionStore,
+  workspace: WorkspaceIdentity,
+  options: OptLiteProposeOptions = {},
+): Promise<OptLiteProposal> {
   recordGoalLearningSignals(store, workspace);
   const evidence = collectOptEvidence(store, workspace);
   if (!evidence.sessions.length) {
     throw new Error("No eligible loop evidence found. Complete or verify a loop before proposing a learned skill.");
   }
   const createdAt = new Date().toISOString();
-  const targetDrafts = renderSkillTargets(evidence);
+  const agentic = await tryAgenticSkillTargets(store, workspace, options);
+  const targetDrafts = agentic?.targets ?? renderSkillTargets(evidence);
+  const proposalSource: AgenticProposalSource = agentic?.source ?? "deterministic_fallback";
   const skillBody = renderCombinedSkillBody(targetDrafts);
   const id = `self_improve_${shortHash(stableJson({
+    proposal_source: proposalSource,
     evidence: evidence.source_events,
     workspace_commands: evidence.workspace_commands,
+    model_proposal: agentic?.model_proposal,
+    agentic_error: agentic?.error,
     skill_targets: targetDrafts.map((target) => ({ target: target.target, skill_id: target.skill_id, body: target.body, edits: target.edits })),
   }), 12)}`;
   const skillTargets = targetDrafts.map((target) => ({
@@ -215,11 +280,15 @@ export async function optLitePropose(store: SessionStore, workspace: WorkspaceId
     status: "staged",
     created_at: createdAt,
     skill_id: primaryTarget.skill_id,
+    proposal_source: proposalSource,
     evidence: evidence.summary,
     source_sessions: evidence.sessions,
     source_events: evidence.source_events,
     workspace_commands: evidence.workspace_commands,
     skill_targets: skillTargets,
+    model_proposal: agentic?.model_proposal,
+    agentic_run: agentic?.agentic_run,
+    agentic_error: agentic?.error,
     skill_body: skillBody,
     staged_skill_path: primaryTarget.staged_skill_path,
   };
@@ -313,7 +382,9 @@ export async function optLiteReplay(store: SessionStore, workspace: WorkspaceIde
   const validationImproved = averageScore(splits.validation, "candidate_policy_score") > averageScore(splits.validation, "baseline_policy_score");
   const heldoutNotRegressed = averageScore(splits.heldout, "candidate_policy_score") >= averageScore(splits.heldout, "baseline_policy_score");
   const hardFailures = [...splits.validation, ...splits.heldout].reduce((sum, sample) => sum + sample.fail_records + sample.blocked_records, 0);
-  const accepted = validationImproved && heldoutNotRegressed && hardFailures === 0;
+  const editVerdicts = proposal.model_proposal ? agenticEditVerdicts(store, workspace, proposal) : undefined;
+  const editGatePassed = !editVerdicts?.some((verdict) => verdict.status !== "accepted");
+  const accepted = validationImproved && heldoutNotRegressed && hardFailures === 0 && editGatePassed;
   const id = `replay_${shortHash(stableJson({ proposal_id: proposal.id, samples }), 12)}`;
   const reportPath = path.join(optReplayDir(workspace.root), `${id}.json`);
   const report: OptReplayReport = {
@@ -329,8 +400,10 @@ export async function optLiteReplay(store: SessionStore, workspace: WorkspaceIde
       validation_improved: validationImproved,
       heldout_not_regressed: heldoutNotRegressed,
       hard_failures: hardFailures,
+      edit_gate_passed: editVerdicts ? editGatePassed : undefined,
     },
     splits,
+    edit_verdicts: editVerdicts,
   };
   await writeReplayReport(workspace.root, report);
   recordOptReplay(store, workspace, proposal, report);
@@ -343,11 +416,25 @@ export async function optLiteRun(
   options: OptLiteRunOptions,
 ): Promise<OptLiteRunReport> {
   if (!options.replay) {
-    throw new Error("Self-improve run requires an explicit training mode. Use: inferoa self-improve run --replay [proposal_id]");
+    throw new Error("Self-improve run requires an explicit training mode. Use: inferoa self-improve learn for the default flow.");
   }
   return {
     kind: "replay",
     replay: await optLiteReplay(store, workspace, options.proposal_id),
+  };
+}
+
+export async function optLiteLearn(
+  store: SessionStore,
+  workspace: WorkspaceIdentity,
+  options: OptLiteProposeOptions = {},
+): Promise<OptLiteLearnReport> {
+  const proposal = await optLitePropose(store, workspace, options);
+  const replay = await optLiteReplay(store, workspace, proposal.id);
+  return {
+    kind: "learn",
+    proposal,
+    replay,
   };
 }
 
@@ -362,12 +449,41 @@ export async function optLiteReport(workspace: WorkspaceIdentity, replayId?: str
   return report;
 }
 
+export async function optLiteAdoptPreview(workspace: WorkspaceIdentity, proposalId?: string): Promise<OptAdoptPreview> {
+  const proposals = await readProposals(workspace.root);
+  const proposal = proposalId
+    ? proposals.find((item) => item.id === proposalId)
+    : proposals.slice().reverse().find((item) => item.status === "staged");
+  if (!proposal) {
+    throw new Error(proposalId ? `No proposal found: ${proposalId}` : "No staged self-improve proposal found.");
+  }
+  const reports = await readReplayReports(workspace.root);
+  const latestReplay = reports.slice().reverse().find((report) => report.proposal_id === proposal.id);
+  return {
+    proposal_id: proposal.id,
+    proposal_source: proposal.proposal_source,
+    status: proposal.status,
+    latest_replay: latestReplay ? replaySummary(latestReplay) : undefined,
+    targets: proposalSkillTargets(proposal).map((target) => ({
+      target: target.target,
+      skill_id: target.skill_id,
+      skill_name: target.skill_name,
+      staged_skill_path: target.staged_skill_path,
+      body: target.body,
+      line_count: target.body.split(/\r?\n/).length,
+    })),
+  };
+}
+
 function recordSkillProposalStaged(store: SessionStore, workspace: WorkspaceIdentity, proposal: OptLiteProposal): void {
   const targets = proposalSkillTargets(proposal);
   appendOptEventOnce(store, workspace, proposal.source_sessions, "skill.proposal.staged", "proposal_id", proposal.id, {
     proposal_id: proposal.id,
     status: proposal.status,
     skill_id: proposal.skill_id,
+    proposal_source: proposal.proposal_source,
+    agentic_run: agenticRunToJson(proposal.agentic_run),
+    agentic_error: proposal.agentic_error,
     skill_target_ids: targets.map((target) => target.skill_id),
     skill_targets: targets.map((target) => ({
       target: target.target,
@@ -396,6 +512,8 @@ function recordSkillProposalAdopted(store: SessionStore, workspace: WorkspaceIde
     proposal_id: proposal.id,
     status: proposal.status,
     skill_id: proposal.skill_id,
+    proposal_source: proposal.proposal_source,
+    agentic_run: agenticRunToJson(proposal.agentic_run),
     skill_path: proposal.skill_path,
     skill_target_ids: targets.map((target) => target.skill_id),
     skill_paths: proposal.skill_paths,
@@ -409,6 +527,7 @@ function recordOptReplay(store: SessionStore, workspace: WorkspaceIdentity, prop
     replay_id: report.id,
     proposal_id: report.proposal_id,
     status: report.status,
+    proposal_source: proposal.proposal_source,
     sample_count: report.sample_count,
     baseline_score: report.baseline_score,
     candidate_score: report.candidate_score,
@@ -417,7 +536,9 @@ function recordOptReplay(store: SessionStore, workspace: WorkspaceIdentity, prop
       validation_improved: report.gate.validation_improved,
       heldout_not_regressed: report.gate.heldout_not_regressed,
       hard_failures: report.gate.hard_failures,
+      edit_gate_passed: report.gate.edit_gate_passed,
     },
+    edit_verdicts: report.edit_verdicts as unknown as JsonObject[],
     split_counts: {
       train: report.splits.train.length,
       validation: report.splits.validation.length,
@@ -446,6 +567,133 @@ function appendOptEventOnce(
     session_id: sessionId,
     type,
     data,
+  });
+}
+
+async function tryAgenticSkillTargets(
+  store: SessionStore,
+  workspace: WorkspaceIdentity,
+  options: OptLiteProposeOptions,
+): Promise<{ source: AgenticProposalSource; targets: OptSkillTarget[]; model_proposal?: AgenticSkillProposalDraft; agentic_run?: AgenticOptimizerRun; error?: string } | undefined> {
+  if (options.mode === "deterministic_fallback") {
+    return undefined;
+  }
+  const optimizer = options.optimizer ?? (options.config ? modelGatewayAgenticOptimizer(options.config) : undefined);
+  if (!optimizer) {
+    return undefined;
+  }
+  try {
+    const packet = buildAgenticEvidencePacket(store, workspace);
+    const result = unwrapAgenticOptimizerResult(await optimizer.propose(packet));
+    const rendered = renderAgenticSkillTargets(packet, result.draft, await readExistingLearnedSkillBodies(workspace.root));
+    return {
+      source: "agentic",
+      targets: rendered.targets,
+      model_proposal: rendered.proposal,
+      agentic_run: result.run,
+    };
+  } catch (error) {
+    if (error instanceof AgenticNoEditsError) {
+      throw error;
+    }
+    if (isAgenticOptimizerInterrupted(error)) {
+      throw error;
+    }
+    if (options.mode === "agentic") {
+      throw error;
+    }
+    return {
+      source: "deterministic_fallback",
+      targets: renderSkillTargets(collectOptEvidence(store, workspace)),
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function isAgenticOptimizerInterrupted(error: unknown): boolean {
+  if (error instanceof Error) {
+    return error.name === "AbortError" || /aborted|user exited tui|interrupted/i.test(error.message);
+  }
+  return /aborted|user exited tui|interrupted/i.test(String(error));
+}
+
+async function readExistingLearnedSkillBodies(workspaceRoot: string): Promise<Partial<Record<OptSkillTargetKind, string>>> {
+  const entries: Array<[OptSkillTargetKind, string]> = [
+    ["loop_skill", path.join(workspaceRoot, ".inferoa", "skills", "inferoa-loop-skill", "SKILL.md")],
+    ["workspace_skill", path.join(workspaceRoot, ".inferoa", "skills", "inferoa-workspace-skill", "SKILL.md")],
+  ];
+  const output: Partial<Record<OptSkillTargetKind, string>> = {};
+  for (const [target, file] of entries) {
+    const body = await fs.readFile(file, "utf8").catch(() => undefined);
+    if (body?.trim()) {
+      output[target] = body;
+    }
+  }
+  return output;
+}
+
+function unwrapAgenticOptimizerResult(result: AgenticProposalOptimizerResult): { draft: AgenticSkillProposalDraft; run?: AgenticOptimizerRun } {
+  if (typeof result === "object" && result !== null && "draft" in result) {
+    return {
+      draft: result.draft,
+      run: result.run,
+    };
+  }
+  return { draft: result };
+}
+
+function agenticRunToJson(run: AgenticOptimizerRun | undefined): JsonObject | undefined {
+  return run ? {
+    session_id: run.session_id,
+    run_id: run.run_id,
+    title: run.title,
+    request_class: run.request_class,
+  } : undefined;
+}
+
+function agenticEditVerdicts(
+  store: SessionStore,
+  workspace: WorkspaceIdentity,
+  proposal: OptLiteProposal,
+): OptReplayEditVerdict[] {
+  const packet = buildAgenticEvidencePacket(store, workspace);
+  const tiers = new Map(packet.signals.map((signal) => [signal.signal_id, signal.tier]));
+  const eventTypes = new Map(packet.source_events
+    .filter((event) => event.event_id !== undefined)
+    .map((event) => [event.event_id!, event.type]));
+  return (proposal.model_proposal?.edits ?? []).map((edit) => {
+    const citedTiers = edit.source_signal_ids
+      .map((signalId) => tiers.get(signalId))
+      .filter((tier): tier is LoopLearningSignalTier => Boolean(tier));
+    const citesVerifierEvent = edit.source_event_ids.some((eventId) => eventTypes.get(eventId) === "goal.verification.recorded");
+    if (citedTiers.some((tier) => tier === "T0" || tier === "T1") || citesVerifierEvent) {
+      return {
+        target: edit.target,
+        section: edit.section,
+        status: "accepted",
+        reason: "Edit cites T0/T1 verifier or human evidence.",
+        source_signal_ids: edit.source_signal_ids,
+        source_event_ids: edit.source_event_ids,
+      };
+    }
+    if (citedTiers.length) {
+      return {
+        target: edit.target,
+        section: edit.section,
+        status: "needs_evidence",
+        reason: `Edit cites only ${[...new Set(citedTiers)].join("/")} soft evidence; hard evidence is required for acceptance.`,
+        source_signal_ids: edit.source_signal_ids,
+        source_event_ids: edit.source_event_ids,
+      };
+    }
+    return {
+      target: edit.target,
+      section: edit.section,
+      status: "rejected",
+      reason: "Edit citations were not found in the replay evidence packet.",
+      source_signal_ids: edit.source_signal_ids,
+      source_event_ids: edit.source_event_ids,
+    };
   });
 }
 
@@ -1037,6 +1285,8 @@ function proposalSummary(proposal: OptLiteProposal): OptLiteProposalSummary {
     adopted_at: proposal.adopted_at,
     skill_id: proposal.skill_id,
     skill_path: proposal.skill_path,
+    proposal_source: proposal.proposal_source,
+    agentic_run: proposal.agentic_run,
     skill_targets: proposalSkillTargets(proposal).map((target) => ({
       target: target.target,
       skill_id: target.skill_id,

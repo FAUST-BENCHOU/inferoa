@@ -736,6 +736,13 @@ function renderCodeIntelligencePolicy(tools: ToolDefinition[]): string[] {
 function renderSkillIndex(skills: SkillDescriptor[], enabledNames: string[]): string {
   const enabledList = enabledNames.slice().sort();
   const enabled = new Set(enabledList);
+  const discoveredNames = new Set(skills.flatMap((skill) => [skill.id, skill.name]));
+  const activeIds = [...new Set(
+    skills
+      .filter((skill) => enabled.has(skill.id) || enabled.has(skill.name))
+      .map((skill) => skill.id),
+  )].sort();
+  const unavailable = enabledList.filter((name) => !discoveredNames.has(name));
   const lines = skills.slice().sort(compareSkillsForPrompt).slice(0, 80).map((skill) => {
     const active = enabled.has(skill.id) || enabled.has(skill.name);
     return [
@@ -747,11 +754,12 @@ function renderSkillIndex(skills: SkillDescriptor[], enabledNames: string[]): st
     ].join(" | ");
   });
   return [
-    "Skill bodies are not embedded in the prompt. Enabled skills are explicit workspace policy; use skill_read(id) to load relevant enabled skill details before relying on them for goal work.",
+    "Skill bodies are not embedded in the prompt. Enabled discovered skills are explicit workspace policy; use skill_read(id) to load relevant discovered skill details before relying on them for goal work.",
     "Use skill_list to inspect the discovered catalog and skill_read(id) to load details only when useful.",
-    `Enabled skills: ${enabledList.length ? enabledList.map(escapeXmlText).join(", ") : "none"}.`,
+    unavailable.length ? `Configured but unavailable in this workspace: ${unavailable.map(escapeXmlText).join(", ")}. Do not call skill_read for unavailable skills; they have not been adopted or installed here.` : undefined,
+    `Enabled skills: ${activeIds.length ? activeIds.map(escapeXmlText).join(", ") : "none"}.`,
     lines.length ? lines.join("\n") : "- none discovered",
-  ].join("\n");
+  ].filter((line): line is string => Boolean(line)).join("\n");
 }
 
 function compareSkillsForPrompt(left: SkillDescriptor, right: SkillDescriptor): number {

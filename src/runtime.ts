@@ -61,6 +61,7 @@ export interface RuntimeRunOptions {
   visibility?: "normal" | "internal";
   run_id?: string;
   signal?: AbortSignal;
+  tool_names?: string[];
 }
 
 export type RuntimeStatusEvent =
@@ -183,11 +184,12 @@ export class Runtime {
     try {
       throwIfAborted(options.signal);
       const liveDiscoveredSkills = await this.skills.discover();
-      const liveEnabledSkillNames = this.config.skills.enabled.slice().sort();
+      const liveEnabledSkillNames = this.skills.enabledSkillIds(liveDiscoveredSkills);
+      const liveTools = selectRuntimeTools(this.tools.list(), options.tool_names);
       const promptSnapshot = this.ensurePromptSessionSnapshot(
         session.session_id,
         runId,
-        this.tools.list(),
+        liveTools,
         liveDiscoveredSkills,
         liveEnabledSkillNames,
       );
@@ -1060,6 +1062,14 @@ function normalizeMaxToolRounds(value: number | undefined): number | undefined {
     throw new Error("max_tool_rounds must be a non-negative finite number when provided");
   }
   return Math.floor(value);
+}
+
+function selectRuntimeTools(tools: ToolDefinition[], toolNames: string[] | undefined): ToolDefinition[] {
+  if (!toolNames) {
+    return tools;
+  }
+  const allowed = new Set(toolNames);
+  return tools.filter((tool) => allowed.has(tool.name));
 }
 
 function normalizeModelRetryConfig(config: VllmAgentConfig["model_retry"]): NormalizedModelRetryConfig {

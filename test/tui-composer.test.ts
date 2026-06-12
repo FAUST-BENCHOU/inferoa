@@ -168,17 +168,17 @@ test("composer folds cache footer, path, model, and mode into one metadata line"
     cursor: 0,
     items: [],
     selected: 0,
-    width: 132,
+    width: 152,
     metadataLeft: "\x1b[38;5;75m~/local-workbench/work/vllm/inferoa\x1b[0m \x1b[38;5;238m·\x1b[0m \x1b[38;5;252mdeepseek-v4-pro-tokenhub\x1b[0m",
     metadataRight: "Plan ready",
-    footer: "\x1b[38;5;203mprefix cache hit (5.0%)\x1b[0m \x1b[38;5;238m·\x1b[0m \x1b[38;5;244mworked for 5.3s\x1b[0m",
+    footer: "\x1b[38;5;48mcache reuse 5.0%\x1b[0m \x1b[38;5;238m·\x1b[0m \x1b[38;5;48mgap 2.0%\x1b[0m \x1b[38;5;238m·\x1b[0m \x1b[38;5;244mworked for 5.3s\x1b[0m",
   });
   const plain = rendered.lines.map((line) => stripAnsi(line));
-  const metaLines = plain.filter((line) => line.includes("deepseek-v4-pro-tokenhub") || line.includes("prefix cache hit"));
-  const rawLine = rendered.lines.find((line) => stripAnsi(line).includes("prefix cache hit (5.0%)")) ?? "";
+  const metaLines = plain.filter((line) => line.includes("deepseek-v4-pro-tokenhub") || line.includes("cache reuse 5.0%"));
+  const rawLine = rendered.lines.find((line) => stripAnsi(line).includes("cache reuse 5.0%")) ?? "";
 
   assert.equal(metaLines.length, 1);
-  assert.match(metaLines[0] ?? "", /prefix cache hit \(5\.0%\) · ~\/local-workbench\/work\/vllm\/inferoa · deepseek-v4-pro-tokenhub · worked for 5\.3s/);
+  assert.match(metaLines[0] ?? "", /cache reuse 5\.0% · gap 2\.0% · ~\/local-workbench\/work\/vllm\/inferoa · deepseek-v4-pro-tokenhub · worked for 5\.3s/);
   assert.match(metaLines[0] ?? "", /Plan ready$/);
   assert.match(rawLine, /\x1b\[38;5;75m~\/local-workbench\/work\/vllm\/inferoa/);
   assert.match(rawLine, /\x1b\[38;5;252mdeepseek-v4-pro-tokenhub/);

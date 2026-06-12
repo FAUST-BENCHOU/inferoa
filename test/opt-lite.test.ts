@@ -226,7 +226,7 @@ test("self-improve run rejects implicit training mode", async () => {
   }
 });
 
-test("self-improve run and report commands expose replay/gating flow as json", async () => {
+test("self-improve learn, report, and adopt commands expose the review flow as json", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-self-improve-run-cli-"));
   const workspaceRoot = path.join(dir, "workspace");
   const stateDir = path.join(dir, "state");
@@ -245,7 +245,7 @@ test("self-improve run and report commands expose replay/gating flow as json", a
 
   try {
     const cliPath = fileURLToPath(new URL("../src/cli.js", import.meta.url));
-    const proposeOutput = await execFileAsync(process.execPath, [
+    const learnOutput = await execFileAsync(process.execPath, [
       cliPath,
       "--workspace",
       workspaceRoot,
@@ -255,40 +255,30 @@ test("self-improve run and report commands expose replay/gating flow as json", a
       stateDir,
       "--json",
       "self-improve",
-      "propose",
+      "learn",
     ], { maxBuffer: 1024 * 1024 });
-    const parsedProposal = JSON.parse(proposeOutput.stdout) as {
-      id?: string;
-      status?: string;
-      staged_skill_path?: string;
-      skill_targets?: Array<{ target?: string; skill_id?: string; staged_skill_path?: string }>;
+    const parsedLearn = JSON.parse(learnOutput.stdout) as {
+      kind?: string;
+      proposal?: {
+        id?: string;
+        status?: string;
+        proposal_source?: string;
+        staged_skill_path?: string;
+        skill_targets?: Array<{ target?: string; skill_id?: string; staged_skill_path?: string }>;
+      };
+      replay?: { id?: string; status?: string; sample_count?: number; gate?: { validation_improved?: boolean; heldout_not_regressed?: boolean } };
     };
+    assert.equal(parsedLearn.kind, "learn");
+    const parsedProposal = parsedLearn.proposal!;
     assert.equal(parsedProposal.status, "staged");
+    assert.equal(parsedProposal.proposal_source, "deterministic_fallback");
     assert.match(parsedProposal.id ?? "", /^self_improve_/);
     assert.match(parsedProposal.staged_skill_path ?? "", /\.inferoa\/self-improve\/proposals\/self_improve_[^/]+\/proposed\.loop\.SKILL\.md$/);
     assert.deepEqual(parsedProposal.skill_targets?.map((target) => target.skill_id).sort(), ["inferoa-loop-skill", "inferoa-workspace-skill"]);
-    const runOutput = await execFileAsync(process.execPath, [
-      cliPath,
-      "--workspace",
-      workspaceRoot,
-      "--config",
-      configPath,
-      "--state-dir",
-      stateDir,
-      "--json",
-      "self-improve",
-      "run",
-      "--replay",
-    ], { maxBuffer: 1024 * 1024 });
-    const parsedRun = JSON.parse(runOutput.stdout) as {
-      kind?: string;
-      replay?: { id?: string; status?: string; sample_count?: number; gate?: { validation_improved?: boolean; heldout_not_regressed?: boolean } };
-    };
-    assert.equal(parsedRun.kind, "replay");
-    assert.equal(parsedRun.replay?.status, "accepted");
-    assert.equal(parsedRun.replay?.sample_count, 3);
-    assert.equal(parsedRun.replay?.gate?.validation_improved, true);
-    assert.equal(parsedRun.replay?.gate?.heldout_not_regressed, true);
+    assert.equal(parsedLearn.replay?.status, "accepted");
+    assert.equal(parsedLearn.replay?.sample_count, 3);
+    assert.equal(parsedLearn.replay?.gate?.validation_improved, true);
+    assert.equal(parsedLearn.replay?.gate?.heldout_not_regressed, true);
 
     const reportOutput = await execFileAsync(process.execPath, [
       cliPath,
@@ -309,7 +299,7 @@ test("self-improve run and report commands expose replay/gating flow as json", a
       sample_count?: number;
       splits?: { train?: unknown[]; validation?: unknown[]; heldout?: unknown[] };
     };
-    assert.equal(parsedReport.id, parsedRun.replay?.id);
+    assert.equal(parsedReport.id, parsedLearn.replay?.id);
     assert.equal(parsedReport.status, "accepted");
     assert.equal(parsedReport.sample_count, 3);
     assert.equal(parsedReport.splits?.train?.length, 1);

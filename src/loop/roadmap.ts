@@ -71,9 +71,9 @@ const capabilities: LoopRoadmapCapability[] = [
     id: "self-improve-learning",
     name: "Self-improve and learning",
     status: "partially_implemented",
-    current_state: "Self-improve status/propose/run --replay/report/replay/adopt uses verified loop evidence, learning signals, separate Loop Skill and Workspace Skill proposals, durable self-improve events, and structured replay gates.",
+    current_state: "Self-improve status/learn/adopt uses verified loop evidence, learning signals, separate Loop Skill and Workspace Skill proposals, durable optimizer run metadata, durable self-improve events, structured replay gates, and adopt preview confirmation.",
     roadmap_position: "Target-split self-improve closure is partially implemented; skill body load/apply telemetry, impact measurement, live model-rerun replay, and broader training jobs remain future product work",
-    evidence: ["goal.learning_signal.recorded", "skill.proposal.staged", "skill.proposal.adopted", "self_improve.replay.recorded", "inferoa self-improve propose", "inferoa self-improve run --replay", "inferoa self-improve report", "inferoa self-improve adopt", "/self-improve"],
+    evidence: ["goal.learning_signal.recorded", "skill.proposal.staged", "skill.proposal.adopted", "self_improve.replay.recorded", "inferoa self-improve learn", "inferoa self-improve adopt", "/self-improve"],
   },
   {
     id: "automation-heartbeat",

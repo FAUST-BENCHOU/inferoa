@@ -113,7 +113,8 @@ import {
 } from "../loop/inbox.js";
 import { readLoopPolicy, resolveLoopBackgroundIsolation } from "../loop/policy.js";
 import { adoptLoopWorktree, cleanupLoopWorktrees, createLoopWorktree, listLoopWorktrees, readLoopWorktreeHealth, removeLoopWorktree } from "../loop/worktree.js";
-import { optLiteAdopt, optLitePropose, optLiteReport, optLiteRun, optLiteStatus } from "../opt/opt-lite.js";
+import { runtimeAgenticOptimizer, type AgenticOptimizerRuntime } from "../opt/agentic-propose.js";
+import { optLiteAdopt, optLiteAdoptPreview, optLiteLearn, optLiteStatus } from "../opt/opt-lite.js";
 import type { GoalLoopVerification } from "../loop/types.js";
 import { readAutoresearchState, researchCompletionBlockMessage, setAutoresearchMode } from "../autoresearch/state.js";
 import { clonePlanState, createPlanState, planApprovalBlockMessage, readPlanState, writePlanState, type PlanState } from "../plans/state.js";
@@ -140,11 +141,10 @@ import type { loadApp } from "../app.js";
 import { ansi, bgLine, bg256, center, centerBlock, fg256, frame, padRight, terminalHeight, terminalWidth, truncateToWidth, visibleWidth } from "./ansi.js";
 import { parseSlashCommand, slashCommandWithSubcommands, slashSubcommands, suggestedSlashCommands, type SlashCommandName } from "./slash.js";
 import { inferoaActivityLabel, renderActivityLine, renderActivityRecordLine } from "./activity.js";
-import { cacheTurnKind, formatDuration, renderCacheFooter, renderCacheReportTurn } from "./cache-footer.js";
+import { cacheFooterSummaryForRun, formatDuration, renderCacheFooter, type CacheFooterInput } from "./cache-footer.js";
 import { renderCompactEventLine, renderSessionActivityLines } from "./event-view.js";
 import { renderModeMetadataRight } from "./mode-footer.js";
 import { renderPlanDocumentSurface } from "./plan-view.js";
-import { renderRtkSessionLines } from "./rtk-view.js";
 import { renderTokenmaxxingRows, renderTokenmaxxingScreen, tokenmaxxingScreenPageCount, type TokenmaxxingScreenRow } from "./tokenmaxxing-view.js";
 import { composerEraseRowsForResize } from "./resize.js";
 import { RESUME_SESSION_PAGE_SIZE, resumeSessionPage } from "./session-picker.js";
@@ -277,12 +277,8 @@ export interface TuiLaunchOptions {
   noAnimation?: boolean;
 }
 
-interface ChatTurnEvidence {
-  usage?: ModelUsage;
-  requestId?: string;
+interface ChatTurnEvidence extends CacheFooterInput {
   responseId?: string;
-  model?: string;
-  mode?: string;
 }
 
 interface GoalSupervisorRecordDetail {
@@ -308,6 +304,8 @@ interface ActivityIndicator {
   pauseForOutput(options?: { redraw?: boolean }): void;
   stop(options?: { redraw?: boolean }): void;
 }
+
+type SelfImproveAdoptDecision = "approve" | "cancel";
 
 interface SubmitPromptOptions {
   renderPrompt?: boolean;
@@ -352,7 +350,6 @@ export const TUI_OMNI_SETUP_CAPABILITIES: Array<{
   { name: "audio_generation", label: "Audio generation", requiredForAcceptance: false },
   { name: "speech", label: "Speech generation and voices", requiredForAcceptance: false },
 ];
-export const PREFIX_CACHE_REPORT_TITLE = "Prefix Cache Report";
 
 export class TuiApp {
   #sessionId: string | undefined;
@@ -376,6 +373,8 @@ export class TuiApp {
   #promptQueue: PromptQueueState = createPromptQueueState();
   #promptWorker: Promise<void> | undefined;
   #promptWorkerScheduled = false;
+  #selfImproveWorker: Promise<void> | undefined;
+  #selfImproveAbort: AbortController | undefined;
   #goalSupervisorActive = false;
   #activeAbort: AbortController | undefined;
   #activeRunStartedAtMs: number | undefined;
@@ -474,7 +473,7 @@ export class TuiApp {
   }
 
   private enqueuePrompt(prompt: string, options: { renderPrompt?: boolean } = {}): void {
-    const busy = Boolean(this.#activeAbort || this.#promptWorker || this.#promptWorkerScheduled || this.promptRequiresCodeIntelligenceGate());
+    const busy = Boolean(this.#activeAbort || this.#promptWorker || this.#promptWorkerScheduled || this.#selfImproveWorker || this.promptRequiresCodeIntelligenceGate());
     this.#composerFooter = undefined;
     const queued = enqueuePromptForSubmission(this.#promptQueue, prompt, { busy, renderPrompt: options.renderPrompt });
     this.#promptQueue = queued.state;
@@ -489,6 +488,9 @@ export class TuiApp {
 
   private schedulePromptWorker(): void {
     if (this.#promptWorker || this.#promptWorkerScheduled) {
+      return;
+    }
+    if (this.#selfImproveWorker) {
       return;
     }
     this.#promptWorkerScheduled = true;
@@ -630,11 +632,13 @@ export class TuiApp {
   }
 
   private interruptActiveLoop(): boolean {
-    const aborted = this.abortActiveLoop("User interrupted current loop");
-    if (!aborted) {
+    const loopAborted = this.abortActiveLoop("User interrupted current loop");
+    const selfImproveAborted = this.abortSelfImprove("User interrupted self-improve learn");
+    if (!loopAborted && !selfImproveAborted) {
       return false;
     }
-    this.#composerActivity = `${fg256(220, "●")} ${fg256(250, "Interrupting current loop")} ${fg256(244, "queued prompts will run next")}`;
+    const label = selfImproveAborted && !loopAborted ? "Interrupting self-improve learn" : "Interrupting current loop";
+    this.#composerActivity = `${fg256(220, "●")} ${fg256(250, label)} ${fg256(244, "queued prompts will run next")}`;
     this.updateQueueFooter();
     this.#activeComposerRedraw?.();
     return true;
@@ -642,6 +646,15 @@ export class TuiApp {
 
   private abortActiveLoop(reason: string): boolean {
     const controller = this.#activeAbort;
+    if (!controller || controller.signal.aborted) {
+      return false;
+    }
+    controller.abort(reason);
+    return true;
+  }
+
+  private abortSelfImprove(reason: string): boolean {
+    const controller = this.#selfImproveAbort;
     if (!controller || controller.signal.aborted) {
       return false;
     }
@@ -665,19 +678,24 @@ export class TuiApp {
     this.#promptQueue = createPromptQueueState();
     this.clearQueueFooter();
     const aborted = this.abortActiveLoop(reason);
+    const selfImproveAborted = this.abortSelfImprove(reason);
     const worker = this.#promptWorker;
-    if (!worker) {
-      if (aborted) {
+    const selfImproveWorker = this.#selfImproveWorker;
+    if (!worker && !selfImproveWorker) {
+      if (aborted || selfImproveAborted) {
         this.#composerActivity = undefined;
         this.#activeComposerRedraw?.();
       }
       return;
     }
-    if (aborted) {
+    if (aborted || selfImproveAborted) {
       this.#composerActivity = `${fg256(220, "●")} ${fg256(250, "Stopping current loop")}`;
       this.#activeComposerRedraw?.();
     }
-    await worker.catch((error) => {
+    await worker?.catch((error) => {
+      this.writeTranscript(`\n${fg256(203, error instanceof Error ? error.message : String(error))}\n\n`);
+    });
+    await selfImproveWorker?.catch((error) => {
       this.writeTranscript(`\n${fg256(203, error instanceof Error ? error.message : String(error))}\n\n`);
     });
     this.#composerActivity = undefined;
@@ -1168,7 +1186,7 @@ export class TuiApp {
   }
 
   private shouldRenderWelcomeComposer(): boolean {
-    return !this.#hasTranscript && !this.#sessionId && !this.#activeAbort && !this.#promptWorker && !this.#promptWorkerScheduled;
+    return !this.#hasTranscript && !this.#sessionId && !this.#activeAbort && !this.#promptWorker && !this.#promptWorkerScheduled && !this.#selfImproveWorker;
   }
 
   private composerSuggestions(buffer: string, skills: SkillDescriptor[]): ComposerItem[] {
@@ -2664,38 +2682,6 @@ export class TuiApp {
     const snapshot = await new EndpointSignals(this.app.config).snapshot();
     const rtk = await resolveRtkStatus(this.app.config, { allowDownload: false });
     this.renderPanel("System", endpointStatusLinesForDisplay(snapshot, this.app.config, this.describeWebSearchConfig(this.app.config), rtk));
-  }
-
-  private renderCacheView(): void {
-    const session = this.optionalSession();
-    if (!session) {
-      this.renderPanel(PREFIX_CACHE_REPORT_TITLE, ["No active session yet. Run a prompt first."]);
-      return;
-    }
-    const evidence = this.app.store.listEndpointEvidence(session.session_id);
-    const events = this.app.store.listEvents(session.session_id);
-    const lines = evidence.slice(-12).map((item, index) => {
-      const usage = item.usage as ModelUsage | undefined;
-      return `  ${index + 1}. ${renderCacheReportTurn({
-        usage,
-        cacheKind: cacheTurnKind(events, stringField(item.run_id)),
-      })}`;
-    });
-    this.renderPanel(
-      PREFIX_CACHE_REPORT_TITLE,
-      evidence.length
-        ? [...cacheEvidenceOverview(evidence, events), "", fg256(39, "Recent turns"), ...lines]
-        : ["No prefix cache records yet."],
-    );
-  }
-
-  private renderRtkView(): void {
-    const session = this.optionalSession();
-    if (!session) {
-      this.renderPanel("RTK", ["No active session yet. Run a prompt first."]);
-      return;
-    }
-    this.renderPanel("RTK", renderRtkSessionLines(this.app.store.listEvents(session.session_id), terminalWidth()));
   }
 
   private async renderTokenmaxxingView(args = ""): Promise<void> {
@@ -5209,7 +5195,7 @@ export class TuiApp {
     const action = (tokens[0] ?? "status").toLowerCase();
     try {
       if (action === "help") {
-        this.renderLoopTranscriptPanel("Self-Improve", selfImproveHelpLines());
+        this.renderLoopTranscriptPanel("Self-Improve", selfImproveStatusLines(await optLiteStatus(this.app.store, this.app.workspace)));
         return;
       }
       if (action === "status" || action === "show") {
@@ -5217,43 +5203,21 @@ export class TuiApp {
         this.renderLoopTranscriptPanel("Self-Improve", selfImproveStatusLines(status));
         return;
       }
-      if (action === "propose") {
-        const proposal = await optLitePropose(this.app.store, this.app.workspace);
-        this.renderLoopTranscriptPanel("Self-Improve Proposal", [
-          `${fg256(48, "•")} staged ${proposal.id}`,
-          `  skill ${proposal.skill_id}`,
-          `  evidence sessions ${proposal.evidence.goal_sessions} · verifications ${proposal.evidence.verification_records} · signals ${proposal.evidence.learning_signal_records}`,
-          `  ${proposal.staged_skill_path}`,
-          "",
-          `${fg256(39, "Next")} /self-improve run --replay ${proposal.id}`,
-        ]);
-        return;
-      }
-      if (action === "replay") {
-        const run = await optLiteRun(this.app.store, this.app.workspace, { replay: true, proposal_id: tokens[1] });
-        this.renderOptReplayPanel(run.replay);
-        return;
-      }
-      if (action === "run") {
-        const options = parseOptRunFlags(tokens.slice(1));
-        if (!options.replay) {
-          this.renderLoopTranscriptPanel("Self-Improve", [
-            fg256(203, "Usage: /self-improve run --replay [proposal_id]"),
-            "",
-            ...selfImproveCommandLines(),
-          ]);
-          return;
-        }
-        const run = await optLiteRun(this.app.store, this.app.workspace, options);
-        this.renderOptReplayPanel(run.replay);
-        return;
-      }
-      if (action === "report") {
-        const report = await optLiteReport(this.app.workspace, tokens[1]);
-        this.renderOptReplayPanel(report);
+      if (action === "learn") {
+        this.startSelfImproveLearnWorker();
         return;
       }
       if (action === "adopt") {
+        const preview = await optLiteAdoptPreview(this.app.workspace, tokens[1]);
+        this.renderLoopTranscriptPanel("Self-Improve Adopt Preview", selfImproveAdoptPreviewLines(preview));
+        const confirmed = await this.confirm(`Adopt ${preview.proposal_id}?`, false);
+        if (!confirmed) {
+          this.renderLoopTranscriptPanel("Self-Improve Adopt Cancelled", [
+            `${fg256(244, "proposal")} ${preview.proposal_id}`,
+            `${fg256(39, "Next")} inspect or run /self-improve status`,
+          ]);
+          return;
+        }
         const proposal = await optLiteAdopt(this.app.store, this.app.workspace, this.app.config, tokens[1]);
         this.renderLoopTranscriptPanel("Self-Improve Adopted", [
           `${fg256(48, "•")} adopted ${proposal.id}`,
@@ -5266,30 +5230,210 @@ export class TuiApp {
       }
       this.renderLoopTranscriptPanel("Self-Improve", [
         fg256(203, `Unknown self-improve command: ${action}`),
-        "",
-        ...selfImproveCommandLines(),
+        fg256(244, "Use /self-improve status, /self-improve learn, or /self-improve adopt."),
       ]);
     } catch (error) {
       this.renderLoopTranscriptPanel("Self-Improve", [
         fg256(203, error instanceof Error ? error.message : String(error)),
-        "",
-        ...selfImproveCommandLines(),
+        fg256(244, "Use /self-improve status, /self-improve learn, or /self-improve adopt."),
       ]);
     }
   }
 
-  private renderOptReplayPanel(report: Awaited<ReturnType<typeof optLiteReport>>): void {
-    this.renderLoopTranscriptPanel("Self-Improve Replay", [
-      `${fg256(39, "Report")} ${report.id} · ${report.status} · proposal ${report.proposal_id}`,
-      `${fg256(39, "Samples")} total ${report.sample_count} · train ${report.splits.train.length} · validation ${report.splits.validation.length} · heldout ${report.splits.heldout.length}`,
-      `${fg256(39, "Scores")} baseline ${formatOptScore(report.baseline_score)} · candidate ${formatOptScore(report.candidate_score)}`,
-      `${fg256(39, "Gate")} validation ${report.gate.validation_improved ? "improved" : "not improved"} · heldout ${report.gate.heldout_not_regressed ? "not regressed" : "regressed"} · hard failures ${report.gate.hard_failures}`,
-      `${fg256(39, "Path")} ${report.report_path}`,
+  private selfImproveProposeOptions(signal?: AbortSignal, activity?: ActivityIndicator): Parameters<typeof optLiteLearn>[2] {
+    const optimizer = runtimeAgenticOptimizer(this.app.config, {
+      run: async (options) => await this.runVisibleSelfImproveOptimizer(options, activity),
+    }, { signal });
+    return optimizer ? { config: this.app.config, optimizer } : { config: this.app.config };
+  }
+
+  private async runVisibleSelfImproveOptimizer(
+    options: Parameters<AgenticOptimizerRuntime["run"]>[0],
+    sharedActivity?: ActivityIndicator,
+  ): ReturnType<AgenticOptimizerRuntime["run"]> {
+    const activity = sharedActivity ?? this.startActivityIndicator("Self-improve optimizer");
+    const ownsActivity = sharedActivity === undefined;
+    try {
+      return await this.app.runtime.run({
+        prompt: options.prompt,
+        title: options.title,
+        request_class: options.request_class,
+        visibility: options.visibility,
+        signal: options.signal,
+        client_id: randomId("self_improve"),
+        onStatus: (event) => {
+          if (event.type === "model_start") {
+            activity.status("Self-improve optimizer prefill");
+          }
+          if (event.type === "model_retry") {
+            activity.status(`Retrying self-improve optimizer in ${formatDuration(event.delay_ms)}`);
+          }
+          if (event.type === "compression_start") {
+            activity.status(formatCompressionStartActivity(event));
+          }
+          if (event.type === "compression_end") {
+            activity.status("Compacted self-improve context");
+          }
+          if (event.type === "tool_start") {
+            activity.status(event.summary ?? toolActivityAction(event.tool_name));
+          }
+          if (event.type === "tool_end") {
+            const toolBlock = this.toolTraceForCallBlock(event.session_id, event.run_id, event.tool_call_id, true);
+            if (toolBlock) {
+              activity.pauseForOutput({ redraw: false });
+              this.writeTranscript(toolBlock);
+            } else {
+              activity.status(formatToolActivityLine(event.tool_name, event.ok, event.summary, event.duration_ms));
+            }
+          }
+        },
+        onClarify: async (request) => {
+          activity.pauseForOutput({ redraw: false });
+          return await this.askClarification(request);
+        },
+      });
+    } finally {
+      if (ownsActivity) {
+        activity.stop({ redraw: false });
+      } else {
+        activity.status("Replaying learned skill proposal");
+      }
+    }
+  }
+
+  private startSelfImproveLearnWorker(): void {
+    if (this.#selfImproveWorker) {
+      this.renderLoopTranscriptPanel("Self-Improve Learn", [
+        `${fg256(220, "●")} learning already running`,
+      ]);
+      return;
+    }
+    const abort = new AbortController();
+    this.#selfImproveAbort = abort;
+    const activity = this.startActivityIndicator("Learning from loop evidence");
+    const worker = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        void (async () => {
+          try {
+            activity.status("Preparing learned skill edits");
+            const learn = await optLiteLearn(this.app.store, this.app.workspace, this.selfImproveProposeOptions(abort.signal, activity));
+            activity.stop({ redraw: false });
+            this.renderLoopTranscriptPanel("Self-Improve Learn", selfImproveLearnLines(learn));
+            if (learn.replay.status === "accepted") {
+              await this.reviewSelfImproveAdoption(learn.proposal.id);
+            }
+          } catch (error) {
+            activity.stop({ redraw: false });
+            this.renderLoopTranscriptPanel("Self-Improve", [
+              fg256(203, error instanceof Error ? error.message : String(error)),
+            ]);
+          } finally {
+            this.#selfImproveWorker = undefined;
+            if (this.#selfImproveAbort === abort) {
+              this.#selfImproveAbort = undefined;
+            }
+            if (this.#promptQueue.length && this.#running) {
+              this.schedulePromptWorker();
+            } else if (!this.#activeAbort) {
+              this.clearQueueFooter();
+            }
+          }
+        })().finally(resolve);
+      }, 0);
+    });
+    this.#selfImproveWorker = worker;
+  }
+
+  private async reviewSelfImproveAdoption(proposalId: string): Promise<void> {
+    const preview = await optLiteAdoptPreview(this.app.workspace, proposalId);
+    this.renderLoopTranscriptPanel("Self-Improve Adopt Review", selfImproveAdoptPreviewLines(preview));
+    const decision = await this.askSelfImproveAdoptDecision(preview).catch(() => "cancel" as const);
+    if (decision !== "approve") {
+      this.renderLoopTranscriptPanel("Self-Improve Adopt Cancelled", [
+        `${fg256(244, "proposal")} ${preview.proposal_id}`,
+        `${fg256(39, "Next")} inspect or run /self-improve status`,
+      ]);
+      return;
+    }
+    const proposal = await optLiteAdopt(this.app.store, this.app.workspace, this.app.config, proposalId);
+    this.renderLoopTranscriptPanel("Self-Improve Adopted", [
+      `${fg256(48, "•")} adopted ${proposal.id}`,
+      `  skill ${proposal.skill_id}`,
+      proposal.skill_path ? `  ${proposal.skill_path}` : undefined,
       "",
-      report.status === "accepted"
-        ? `${fg256(39, "Next")} /self-improve adopt ${report.proposal_id}`
-        : `${fg256(39, "Next")} inspect this report, collect stronger verified loop evidence, then /self-improve propose`,
-    ]);
+      `${fg256(39, "Next")} future loop sessions can use ${proposal.skill_id}`,
+    ].filter((line): line is string => Boolean(line)));
+  }
+
+  private async askSelfImproveAdoptDecision(preview: Awaited<ReturnType<typeof optLiteAdoptPreview>>): Promise<SelfImproveAdoptDecision> {
+    if (!stdin.isTTY) {
+      return "cancel";
+    }
+    const options: Array<{ value: SelfImproveAdoptDecision; label: string; description: string }> = [
+      { value: "approve", label: "Approve", description: "Adopt the staged Loop and Workspace Skills." },
+      { value: "cancel", label: "Cancel", description: "Leave the proposal staged for later review." },
+    ];
+    let selected = 0;
+    const previousInputModalActive = this.#inputModalActive;
+    this.#inputModalActive = true;
+    this.#rl?.pause();
+    if (stdin.isTTY) {
+      stdin.setRawMode(true);
+    }
+    stdout.write(ansi.showCursor);
+    return await new Promise((resolve, reject) => {
+      const render = () => {
+        this.renderInlinePanel("Self-Improve Review", selfImproveAdoptDecisionLines(preview, options, selected));
+      };
+      const cleanup = () => {
+        this.eraseInlinePanel();
+        this.#inputModalActive = previousInputModalActive;
+        stdin.off("data", onData);
+        stdout.off("resize", onResize);
+        if (stdin.isTTY) {
+          stdin.setRawMode(false);
+        }
+        stdout.write(ansi.hideCursor);
+        this.resumeReadline();
+      };
+      const finish = () => {
+        const value = options[selected]?.value ?? "cancel";
+        cleanup();
+        resolve(value);
+      };
+      const cancel = () => {
+        cleanup();
+        reject(new Error("Self-improve review cancelled"));
+      };
+      const onData = (chunk: Buffer) => {
+        for (const key of terminalInputTokens(chunk.toString("utf8"))) {
+          if (key === "\u0003" || key === "\u001b") {
+            cancel();
+            return;
+          }
+          if (key === "\u001b[A" || key === "k") {
+            selected = (selected - 1 + options.length) % options.length;
+            render();
+            continue;
+          }
+          if (key === "\u001b[B" || key === "j") {
+            selected = (selected + 1) % options.length;
+            render();
+            continue;
+          }
+          if (key === " " || key === "\r" || key === "\n") {
+            finish();
+            return;
+          }
+        }
+      };
+      const onResize = () => {
+        render();
+      };
+      stdin.on("data", onData);
+      stdout.on("resize", onResize);
+      render();
+    });
   }
 
   private async renderLoopView(args = ""): Promise<void> {
@@ -6419,7 +6563,7 @@ export class TuiApp {
       `  /skills    list · manage`,
       `  /loop      status · mode auto|research|focus|explore|timebox · health · review · verify · pause · resume · drop`,
       `  /inbox     show · all · resolve · dismiss · promote`,
-      `  /self-improve help · status · propose · run --replay · report · adopt`,
+      `  /self-improve status · learn · adopt`,
       `  /plan      show · set · pause · resume · approve · drop`,
       `  /tools     expand · compact · last`,
       `  /worktree  list · health · adopt`,
@@ -6552,7 +6696,6 @@ export class TuiApp {
         const footer = renderCacheFooter({
           ...evidence,
           latencyMs: Date.now() - startedAt,
-          cacheKind: cacheTurnKind(this.app.store.listEvents(result.session.session_id), result.run_id),
         });
         this.#composerFooter = footer || undefined;
         this.writeTranscript(withConversationGap(finalOutput));
@@ -6755,11 +6898,14 @@ export class TuiApp {
   }
 
   private latestTurnEvidence(sessionId: string, runId: string): ChatTurnEvidence {
-    const evidence = this.app.store.listEndpointEvidence(sessionId).slice().reverse().find((item) => item.run_id === runId) ?? {};
-    const events = this.app.store.listEvents(sessionId).filter((event) => event.run_id === runId && event.type === "model.response.settled");
-    const settled = events.at(-1)?.data ?? {};
+    const endpointEvidence = this.app.store.listEndpointEvidence(sessionId);
+    const evidence = endpointEvidence.slice().reverse().find((item) => item.run_id === runId) ?? {};
+    const events = this.app.store.listEvents(sessionId);
+    const settled = events.filter((event) => event.run_id === runId && event.type === "model.response.settled").at(-1)?.data ?? {};
+    const cacheSummary = cacheFooterSummaryForRun(events, endpointEvidence, runId);
     return {
-      usage: (settled.usage as ModelUsage | undefined) ?? (evidence.usage as ModelUsage | undefined),
+      ...cacheSummary,
+      usage: cacheSummary.usage ?? (settled.usage as ModelUsage | undefined) ?? (evidence.usage as ModelUsage | undefined),
       requestId: stringField(settled.request_id) ?? stringField(evidence.request_id),
       responseId: stringField(settled.response_id) ?? stringField(evidence.response_id),
       model: stringField(settled.model) ?? stringField(evidence.model),
@@ -8265,50 +8411,6 @@ function objectField(value: unknown): JsonObject {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : {};
 }
 
-export function cacheEvidenceOverview(evidence: JsonObject[], events: readonly SessionEvent[] = []): string[] {
-  let promptTurns = 0;
-  let cacheTurns = 0;
-  let cachePromptTokens = 0;
-  let cachedPromptTokens = 0;
-
-  for (const item of evidence) {
-    if (cacheTurnKind(events, stringField(item.run_id)) === "warmup") {
-      continue;
-    }
-    const usage = objectField(item.usage);
-    const prompt = numericField(usage.prompt_tokens);
-    const cached = numericField(usage.cached_prompt_tokens);
-    if (prompt !== undefined) {
-      promptTurns += 1;
-    }
-    if (prompt !== undefined && cached !== undefined) {
-      cacheTurns += 1;
-      cachePromptTokens += prompt;
-      cachedPromptTokens += cached;
-    }
-  }
-
-  const lines = [`${fg256(39, "turns")} ${evidence.length}`];
-  if (cacheTurns > 0 && cachePromptTokens > 0) {
-    const hit = Math.max(0, Math.min(1, cachedPromptTokens / cachePromptTokens));
-    lines.push(
-      `${fg256(39, "usage cache")} cached ${cachedPromptTokens}/${cachePromptTokens} · hit ${(hit * 100).toFixed(1)}% · ${cacheTurns}/${promptTurns} turns exposed`,
-    );
-  } else if (evidence.some((item) => cacheTurnKind(events, stringField(item.run_id)) === "warmup")) {
-    lines.push(fg256(244, "usage cache is warming up; no steady-state turns yet"));
-  } else if (promptTurns > 0) {
-    lines.push(fg256(244, "usage cache fields were not exposed by recent responses"));
-  } else {
-    lines.push(fg256(244, "No usage token evidence yet."));
-  }
-
-  const metrics = cacheMetricLines(evidence);
-  if (metrics.length) {
-    lines.push("", fg256(39, "Endpoint prefix-cache metrics"), ...metrics);
-  }
-  return lines;
-}
-
 function isActivityEvent(event: SessionEvent): boolean {
   return (
     event.type.includes("evidence") ||
@@ -8322,55 +8424,6 @@ function isActivityEvent(event: SessionEvent): boolean {
     event.type === "run.stopped" ||
     event.type === "run.failed"
   );
-}
-
-function cacheMetricLines(evidence: JsonObject[]): string[] {
-  const metrics = evidence
-    .slice()
-    .reverse()
-    .map((item) => objectField(item.cache_metrics))
-    .find((item) => Object.keys(item).length > 0);
-  if (!metrics) {
-    return [];
-  }
-  const entries = Object.entries(metrics)
-    .map(([key, value]) => [key, numericField(value)] as const)
-    .filter((entry): entry is readonly [string, number] => entry[1] !== undefined && /prefix_cache|prompt_tokens_cached|cached_prompt|cache_hit|local_cache/i.test(entry[0]));
-  if (!entries.length) {
-    return [];
-  }
-  const queryTotal = sumMatchingMetrics(entries, /prefix_cache_queries/i);
-  const hitTotal = sumMatchingMetrics(entries, /prefix_cache_hits/i);
-  const lines: string[] = [];
-  if (queryTotal && hitTotal !== undefined) {
-    lines.push(`  prefix cache hit ${hitTotal}/${queryTotal} · ${((hitTotal / queryTotal) * 100).toFixed(1)}%`);
-  }
-  lines.push(
-    ...entries
-      .filter(([key]) => !/prefix_cache_queries|prefix_cache_hits/i.test(key))
-      .slice(0, 6)
-      .map(([key, value]) => `  ${truncateToWidth(key, Math.max(24, terminalWidth() - 20))} ${formatMetricNumber(value)}`),
-  );
-  return lines.length ? lines : entries.slice(0, 6).map(([key, value]) => `  ${truncateToWidth(key, Math.max(24, terminalWidth() - 20))} ${formatMetricNumber(value)}`);
-}
-
-function sumMatchingMetrics(entries: readonly (readonly [string, number])[], pattern: RegExp): number | undefined {
-  let total = 0;
-  let matched = false;
-  for (const [key, value] of entries) {
-    if (pattern.test(key)) {
-      total += value;
-      matched = true;
-    }
-  }
-  return matched ? total : undefined;
-}
-
-function formatMetricNumber(value: number): string {
-  if (Number.isInteger(value)) {
-    return String(value);
-  }
-  return value.toFixed(3).replace(/\.?0+$/, "");
 }
 
 function isContextCompressionEvent(event: SessionEvent): boolean {
@@ -8505,25 +8558,6 @@ function parseInboxRouteAddFlags(args: string[]): {
     source: source.value,
     priority: parseInboxPriorityFlag(priority.value),
   };
-}
-
-function parseOptRunFlags(args: string[]): { replay: boolean; proposal_id?: string } {
-  let replay = false;
-  let proposalId: string | undefined;
-  for (const arg of args) {
-    if (arg === "--replay") {
-      replay = true;
-      continue;
-    }
-    if (arg.startsWith("--")) {
-      throw new Error(`Unknown self-improve run option: ${arg}`);
-    }
-    if (proposalId) {
-      throw new Error(`Unexpected self-improve run argument: ${arg}`);
-    }
-    proposalId = arg;
-  }
-  return { replay, proposal_id: proposalId };
 }
 
 function parseInboxKindFlag(value: string | undefined): LoopInboxItemKind | undefined {
@@ -9590,15 +9624,6 @@ function formatOptionalPercent(value: number | undefined): string {
   return value === undefined ? "n/a" : formatPercent(value);
 }
 
-function selfImproveHelpLines(): string[] {
-  return [
-    `${fg256(39, "Purpose")} turn verified loop evidence into a reviewable workspace skill.`,
-    `${fg256(39, "Flow")} status -> propose -> run --replay -> report -> adopt`,
-    "",
-    ...selfImproveCommandLines(),
-  ];
-}
-
 function selfImproveStatusLines(status: Awaited<ReturnType<typeof optLiteStatus>>): string[] {
   const latestTargets = status.latest_proposal?.skill_targets?.map((target) => target.skill_id).join(", ");
   return [
@@ -9607,41 +9632,87 @@ function selfImproveStatusLines(status: Awaited<ReturnType<typeof optLiteStatus>
     `${fg256(39, "Proposals")} total ${status.proposal_count} · staged ${status.staged_count} · adopted ${status.adopted_count}`,
     `${fg256(39, "Replay")} reports ${status.replay_count}`,
     status.latest_proposal
-      ? `${fg256(39, "Latest proposal")} ${status.latest_proposal.id} · ${status.latest_proposal.status} · ${latestTargets || status.latest_proposal.skill_id}`
+      ? `${fg256(39, "Latest proposal")} ${status.latest_proposal.id} · ${status.latest_proposal.status} · ${status.latest_proposal.proposal_source ?? "deterministic_fallback"} · ${latestTargets || status.latest_proposal.skill_id}`
       : `${fg256(39, "Latest proposal")} none`,
     status.latest_replay
       ? `${fg256(39, "Latest replay")} ${status.latest_replay.id} · ${status.latest_replay.status} · samples ${status.latest_replay.sample_count} · ${formatOptScore(status.latest_replay.baseline_score)} -> ${formatOptScore(status.latest_replay.candidate_score)}`
       : `${fg256(39, "Latest replay")} none`,
     `${fg256(39, "Next")} ${selfImproveNextAction(status)}`,
-    "",
-    ...selfImproveCommandLines(),
   ];
 }
 
-function selfImproveCommandLines(): string[] {
+function selfImproveLearnLines(learn: Awaited<ReturnType<typeof optLiteLearn>>): string[] {
+  const proposal = learn.proposal;
+  const replay = learn.replay;
+  const targets = proposal.skill_targets?.map((target) => target.skill_id).join(", ") || proposal.skill_id;
   return [
-    fg256(39, "Commands"),
-    `${fg256(48, "  /self-improve help")} ${fg256(244, "show this workflow")}`,
-    `${fg256(48, "  /self-improve status")} ${fg256(244, "show evidence, proposals, and replay reports")}`,
-    `${fg256(48, "  /self-improve propose")} ${fg256(244, "stage learned Loop/Workspace Skills from verified loop evidence")}`,
-    `${fg256(48, "  /self-improve run --replay [proposal_id]")} ${fg256(244, "gate the staged proposal against replay samples")}`,
-    `${fg256(48, "  /self-improve report [replay_id]")} ${fg256(244, "show the latest replay gate report")}`,
-    `${fg256(48, "  /self-improve adopt [proposal_id]")} ${fg256(244, "adopt accepted staged Loop/Workspace Skills")}`,
+    `${fg256(48, "•")} learned ${proposal.id}`,
+    `${fg256(39, "Source")} ${proposal.proposal_source ?? "deterministic_fallback"}${proposal.agentic_error ? ` · fallback ${proposal.agentic_error}` : ""}`,
+    proposal.agentic_run ? `${fg256(39, "Optimizer run")} ${proposal.agentic_run.session_id} · ${proposal.agentic_run.run_id}` : undefined,
+    `${fg256(39, "Targets")} ${targets}`,
+    `${fg256(39, "Evidence")} sessions ${proposal.evidence.goal_sessions} · verifications ${proposal.evidence.verification_records} · signals ${proposal.evidence.learning_signal_records}`,
+    `${fg256(39, "Replay")} ${replay.id} · ${replay.status} · samples ${replay.sample_count} · ${formatOptScore(replay.baseline_score)} -> ${formatOptScore(replay.candidate_score)}`,
+    `${fg256(39, "Gate")} validation ${replay.gate.validation_improved ? "improved" : "not improved"} · heldout ${replay.gate.heldout_not_regressed ? "not regressed" : "regressed"} · hard failures ${replay.gate.hard_failures}${replay.gate.edit_gate_passed === undefined ? "" : ` · edit gate ${replay.gate.edit_gate_passed ? "passed" : "blocked"}`}`,
+    `${fg256(39, "Next")} ${replay.status === "accepted" ? "review staged skill changes below" : "collect stronger verified loop evidence, then /self-improve learn"}`,
+  ].filter((line): line is string => Boolean(line));
+}
+
+function selfImproveAdoptPreviewLines(preview: Awaited<ReturnType<typeof optLiteAdoptPreview>>): string[] {
+  const replayLabel = preview.latest_replay
+    ? `${preview.latest_replay.id} · ${preview.latest_replay.status}`
+    : "none";
+  return [
+    `${fg256(39, "Proposal")} ${preview.proposal_id} · ${preview.status} · ${preview.proposal_source ?? "deterministic_fallback"}`,
+    `${fg256(39, "Replay")} ${replayLabel}`,
+    "",
+    ...preview.targets.flatMap((target) => [
+      `${fg256(39, "Skill")} ${target.skill_id} · ${target.line_count} lines`,
+      `${fg256(244, target.staged_skill_path)}`,
+      ...previewSkillBodyLines(target.body),
+      "",
+    ]),
+    fg256(244, "Confirm to write these staged skills into .inferoa/skills and enable them."),
+  ];
+}
+
+function previewSkillBodyLines(body: string): string[] {
+  const lines = body.split(/\r?\n/);
+  const limit = 120;
+  const shown = lines.slice(0, limit).map((line) => `  ${line}`);
+  if (lines.length > limit) {
+    shown.push(`  ... ${lines.length - limit} more lines`);
+  }
+  return shown;
+}
+
+function selfImproveAdoptDecisionLines(
+  preview: Awaited<ReturnType<typeof optLiteAdoptPreview>>,
+  options: Array<{ value: SelfImproveAdoptDecision; label: string; description: string }>,
+  selected: number,
+): string[] {
+  const targets = preview.targets.map((target) => target.skill_id).join(", ");
+  return [
+    `${fg256(39, "Proposal")} ${preview.proposal_id}`,
+    `${fg256(39, "Targets")} ${targets}`,
+    fg256(244, "Review the staged skill bodies above before approving."),
+    "",
+    ...options.map((option, index) => renderSetupOptionLine(option.label, option.description, index === selected)),
+    "",
+    setupHint("↑/↓ move · space/enter select · esc cancel"),
   ];
 }
 
 function selfImproveNextAction(status: Awaited<ReturnType<typeof optLiteStatus>>): string {
   if (!status.eligible_goal_sessions || !status.verified_records) {
-    return "finish a /loop with verification evidence, then /self-improve propose";
+    return "finish a /loop with verification evidence, then /self-improve learn";
   }
   if (!status.staged_count) {
-    return "/self-improve propose";
+    return "/self-improve learn";
   }
   if (status.latest_replay?.status === "accepted") {
     return `/self-improve adopt ${status.latest_replay.proposal_id}`;
   }
-  const proposalId = status.latest_proposal?.status === "staged" ? ` ${status.latest_proposal.id}` : "";
-  return `/self-improve run --replay${proposalId}`;
+  return "/self-improve learn";
 }
 
 function formatOptScore(value: number): string {

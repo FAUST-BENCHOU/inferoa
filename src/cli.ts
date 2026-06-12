@@ -71,7 +71,8 @@ import { readLoopActions } from "./loop/action-log.js";
 import { queueGoalVerificationSuite, runGoalVerificationSuite } from "./loop/verifier-suite.js";
 import { runConnectorVerifier } from "./loop/connector-verifiers.js";
 import { readLoopPolicy, resolveLoopBackgroundIsolation } from "./loop/policy.js";
-import { optLiteAdopt, optLitePropose, optLiteReplay, optLiteReport, optLiteRun, optLiteStatus } from "./opt/opt-lite.js";
+import { runtimeAgenticOptimizer } from "./opt/agentic-propose.js";
+import { optLiteAdopt, optLiteLearn, optLitePropose, optLiteReplay, optLiteReport, optLiteRun, optLiteStatus } from "./opt/opt-lite.js";
 import {
   attachDaemonJob,
   cancelDaemonJob,
@@ -439,11 +440,8 @@ Debug commands:
 
 Self-improve commands:
   status                           Show learning evidence/proposal status
-  propose                          Stage a workspace skill proposal from verified loop evidence
-  replay [proposal_id]             Replay structured samples and gate a staged proposal
-  run --replay [proposal_id]        Run an explicit replay/gating job
-  report [replay_id]               Show the latest or selected replay report
-  adopt [proposal_id]              Adopt a staged proposal as an enabled workspace skill
+  learn                            Stage and replay a learned skill proposal
+  adopt [proposal_id]              Preview and adopt staged learned skills
 
 Inbox options:
   --all                            Include terminal/done and snoozed items
@@ -498,8 +496,11 @@ async function runSelfImprove(options: ParsedCli): Promise<void> {
       case "status":
         print(await optLiteStatus(app.store, app.workspace), options.json);
         return;
+      case "learn":
+        print(await optLiteLearn(app.store, app.workspace, selfImproveProposeOptions(app)), options.json);
+        return;
       case "propose":
-        print(await optLitePropose(app.store, app.workspace), options.json);
+        print(await optLitePropose(app.store, app.workspace, selfImproveProposeOptions(app)), options.json);
         return;
       case "replay": {
         const [proposalId] = rest;
@@ -514,18 +515,22 @@ async function runSelfImprove(options: ParsedCli): Promise<void> {
         print(await optLiteReport(app.workspace, replayId), options.json);
         return;
       }
-      case "adopt":
-        {
+      case "adopt": {
         const [proposalId] = rest;
         print(await optLiteAdopt(app.store, app.workspace, app.config, proposalId), options.json);
         return;
-        }
+      }
       default:
         throw new Error(`Unknown self-improve command: ${command}`);
     }
   } finally {
     closeApp(app);
   }
+}
+
+function selfImproveProposeOptions(app: Awaited<ReturnType<typeof loadApp>>): Parameters<typeof optLiteLearn>[2] {
+  const optimizer = runtimeAgenticOptimizer(app.config, app.runtime);
+  return optimizer ? { config: app.config, optimizer } : { config: app.config };
 }
 
 function parseOptRunArgs(args: string[]): { replay: boolean; proposal_id?: string } {
