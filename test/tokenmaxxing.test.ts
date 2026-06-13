@@ -153,7 +153,7 @@ test("tokenmaxxing screen keeps summary sticky while paging details", () => {
   assert.match(secondPage, /page 2\/3/);
 });
 
-test("tokenmaxxing fullscreen title shows the provider name in blue", () => {
+test("tokenmaxxing fullscreen title uses theme blue with a bold white provider name", () => {
   const body = [
     { kind: "summary" as const, text: "saved 10 · cache 5 · rtk 1 · tokens 100/106" },
     { kind: "turn" as const, text: "turn 1" },
@@ -165,8 +165,9 @@ test("tokenmaxxing fullscreen title shows the provider name in blue", () => {
 
   assert.match(plain, /Tokenmaxxing · OpenAI Codex/);
   assert.doesNotMatch(plain, /run cache/);
-  assert.match(ansi, /\x1b\[38;5;87mTokenmaxxing\x1b\[0m/);
-  assert.match(ansi, /\x1b\[38;5;87mOpenAI Codex\x1b\[0m/);
+  assert.match(ansi, /\x1b\[38;5;39mTokenmaxxing\x1b\[0m/);
+  assert.match(ansi, /\x1b\[38;5;252m\x1b\[1mOpenAI Codex\x1b\[0m/);
+  assert.doesNotMatch(ansi, /\x1b\[38;5;87m(?:Tokenmaxxing|OpenAI Codex)/);
 });
 
 test("tokenmaxxing view exposes model-call cache and RTK inside a long run", () => {

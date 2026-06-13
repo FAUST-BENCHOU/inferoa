@@ -1,5 +1,5 @@
 import type { JsonObject, ModelUsage, RtkSavingsSummary, SessionEvent } from "../types.js";
-import { bgLine, center, fg256, padRight, terminalHeight, terminalWidth, truncateToWidth, visibleWidth } from "./ansi.js";
+import { ansi, bgLine, center, fg256, padRight, terminalHeight, terminalWidth, truncateToWidth, visibleWidth } from "./ansi.js";
 import { formatDuration, type PrefixCacheTurnKind } from "./cache-footer.js";
 
 export interface TokenmaxxingRenderOptions {
@@ -250,7 +250,7 @@ export function renderTokenmaxxingScreen(
   const firstVisible = total ? top + 1 : 0;
   const lastVisible = total ? Math.min(total, top + contentHeight) : 0;
   const providerName = singleLine(options.providerName ?? "vLLM").trim() || "vLLM";
-  const title = `${fg256(87, "Tokenmaxxing")}${fg256(244, " · ")}${fg256(87, providerName)}`;
+  const title = `${fg256(39, "Tokenmaxxing")}${fg256(244, " · ")}${fg256(252, `${ansi.bold}${providerName}${ansi.reset}`)}`;
   const range = total ? `${firstVisible}-${lastVisible} / ${total}` : "0 / 0";
   const pageLabel = `page ${page + 1}/${pageCount}`;
   const headerRight = `${pageLabel} · ${range}`;
