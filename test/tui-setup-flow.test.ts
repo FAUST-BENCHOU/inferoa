@@ -4,6 +4,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DEFAULT_CONFIG } from "../src/config/defaults.js";
+import { readSecret, secretRef, writeSecret } from "../src/config/secret-vault.js";
+import { externalProviderById } from "../src/model/providers.js";
+import type { ExternalProviderDefinition } from "../src/model/providers.js";
 import { TuiApp } from "../src/tui/app.js";
 
 test("setup save returns to welcome surface", async () => {
@@ -83,6 +86,51 @@ test("setup save returns to welcome surface", async () => {
     assert.equal(rtkPrepared, true);
     assert.deepEqual(renderedPanels, []);
     assert.equal(view.shouldRenderWelcomeComposer(), true);
+  } finally {
+    if (previousStateDir === undefined) {
+      delete process.env.INFEROA_STATE_DIR;
+    } else {
+      process.env.INFEROA_STATE_DIR = previousStateDir;
+    }
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("external provider auth reuses the provider vault key without prompting again", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-setup-external-auth-"));
+  const previousStateDir = process.env.INFEROA_STATE_DIR;
+  process.env.INFEROA_STATE_DIR = stateDir;
+  try {
+    const ref = secretRef("chat-tensormesh", "api-key");
+    await writeSecret(ref, "ak-live-test");
+    assert.equal(readSecret(ref), "ak-live-test");
+
+    const config = structuredClone(DEFAULT_CONFIG);
+    const provider = externalProviderById("tensormesh");
+    assert.ok(provider);
+    const tui = new TuiApp(
+      {
+        config,
+        configFiles: [],
+        workspace: { id: "w_setup_external_auth", root: stateDir, alias: "setup-external-auth" },
+        store: { close() {} },
+        runtime: {},
+      } as never,
+    );
+    const view = tui as unknown as {
+      configureExternalProviderAuth: (setup: typeof config.model_setup, provider: ExternalProviderDefinition) => Promise<void>;
+      askApiKeySelection: () => Promise<{ api_key_ref?: string }>;
+      renderCenteredPanel: () => void;
+    };
+    view.askApiKeySelection = async () => {
+      throw new Error("should not prompt for an already vaulted provider key");
+    };
+    view.renderCenteredPanel = () => {};
+
+    await view.configureExternalProviderAuth(config.model_setup, provider);
+
+    assert.equal(config.model_setup.api_key_ref, ref);
+    assert.equal(config.model_setup.api_key, undefined);
   } finally {
     if (previousStateDir === undefined) {
       delete process.env.INFEROA_STATE_DIR;

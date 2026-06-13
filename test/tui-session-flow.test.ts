@@ -1181,6 +1181,125 @@ test("self-improve learn returns composer control while optimizer is pending", a
   }
 });
 
+test("manual compact returns composer control while compact worker is pending", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-compact-worker-"));
+  const store = await SessionStore.open(stateDir);
+  try {
+    const workspace = { id: "w_compact_worker", root: stateDir, alias: "compact-worker" };
+    const session = store.createSession(workspace, "compact worker");
+    let compactOptions: { onStatus?: (event: unknown) => void; signal?: AbortSignal } | undefined;
+    let resolveCompact!: () => void;
+    const compactPending = new Promise<void>((resolve) => {
+      resolveCompact = resolve;
+    });
+    const tui = new TuiApp(
+      {
+        config: structuredClone(DEFAULT_CONFIG),
+        configFiles: [],
+        workspace,
+        store,
+        runtime: {
+          async compactSession(options: { onStatus?: (event: unknown) => void; signal?: AbortSignal }) {
+            compactOptions = options;
+            options.onStatus?.({ type: "compression_start", reason: "manual", estimated_tokens: 100, threshold_tokens: 200 });
+            await compactPending;
+            return {
+              session,
+              run_id: "run_compact",
+              epoch_id: "pe_compact",
+              summary: "Summary\n- Continue from compact.",
+              summary_strategy: "prefix_query",
+              archive_resource_uri: "resource://session/archive",
+              archived_events: 12,
+              estimated_tokens_before: 100,
+              estimated_tokens_after: 40,
+              compressed_tokens: 60,
+              prompt_messages_before: 10,
+              prompt_messages_after: 4,
+              compressed_messages: 6,
+              protected_tail_events: 2,
+              preserved_tail_events: 3,
+              preserved_rounds: 1,
+              preserved_run_anchor_count: 1,
+              protected_user_prompts: [],
+            };
+          },
+          codeIntelligence: { shouldStartOnWelcome: () => false },
+        },
+      } as never,
+    );
+    const panels: Array<{ title: string; body: string[] }> = [];
+    const transcripts: Array<{ title: string; body: string[] }> = [];
+    const activity: string[] = [];
+    const submitted: string[] = [];
+    const view = tui as unknown as {
+      renderManualCompactView: (args?: string) => Promise<void>;
+      enqueuePrompt: (prompt: string, options?: { renderPrompt?: boolean }) => void;
+      submitPrompt: (prompt: string, options?: { renderPrompt?: boolean }) => Promise<void>;
+      optionalSession: () => { session_id: string } | undefined;
+      renderPanel: (title: string, body: string[]) => void;
+      renderLoopTranscriptPanel: (title: string, body: string[]) => void;
+      renderSubmittedPrompt: (prompt: string) => void;
+      startActivityIndicator: (label: string) => {
+        status: (label: string) => void;
+        record: (line: string) => void;
+        pauseForOutput: () => void;
+        stop: () => void;
+      };
+    };
+    view.optionalSession = () => session;
+    view.submitPrompt = async (prompt) => {
+      submitted.push(prompt);
+    };
+    view.renderSubmittedPrompt = () => {};
+    view.renderPanel = (title, body) => {
+      panels.push({ title, body });
+    };
+    view.renderLoopTranscriptPanel = (title, body) => {
+      transcripts.push({ title, body });
+    };
+    view.startActivityIndicator = (label) => {
+      activity.push(`start:${stripAnsi(label)}`);
+      return {
+        status: (next) => activity.push(`status:${stripAnsi(next)}`),
+        record: (line) => activity.push(`record:${stripAnsi(line)}`),
+        pauseForOutput: () => {},
+        stop: () => activity.push("stop"),
+      };
+    };
+
+    const result = await Promise.race([
+      view.renderManualCompactView("").then(() => "returned"),
+      delay(100).then(() => "blocked"),
+    ]);
+
+    assert.equal(result, "returned");
+    assert.deepEqual(panels, []);
+    assert.match(activity[0] ?? "", /start:Compressing context/);
+    for (let index = 0; index < 20 && !compactOptions; index += 1) {
+      await delay(10);
+    }
+    assert.ok(compactOptions);
+    assert.equal(transcripts.length, 0);
+
+    view.enqueuePrompt("follow-up while compacting");
+    await delay(30);
+    assert.deepEqual(submitted, []);
+
+    resolveCompact();
+    for (let index = 0; index < 20 && (!transcripts.length || !submitted.length); index += 1) {
+      await delay(10);
+    }
+    assert.equal(transcripts.at(-1)?.title, "Compact");
+    assert.match(stripAnsi(transcripts.at(-1)?.body.join("\n") ?? ""), /12 events archived/);
+    assert.ok(activity.includes("stop"));
+    assert.deepEqual(submitted, ["follow-up while compacting"]);
+  } finally {
+    store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("self-improve learn opens inline adopt review after accepted replay", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-self-improve-learn-review-"));
   const store = await SessionStore.open(stateDir);

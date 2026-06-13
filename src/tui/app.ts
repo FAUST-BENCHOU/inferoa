@@ -143,7 +143,8 @@ import {
 } from "./tokenmaxxing-view.js";
 import { composerEraseRowsForResize } from "./resize.js";
 import { RESUME_SESSION_PAGE_SIZE, resumeSessionPage } from "./session-picker.js";
-import { filterProviderPickerOptions, providerPickerPage } from "./provider-picker.js";
+import { filterProviderPickerOptions, prioritizeProviderSetupOptions, providerPickerPage, renderProviderSetupOptionLine } from "./provider-picker.js";
+import { modelPickerHint, type ModelProbeSource } from "./model-picker.js";
 import { renderSessionTranscript } from "./session-transcript.js";
 import { renderUnknownSlashCommandNotice } from "./slash-notice.js";
 import { effectiveWorkspacePermission, setWorkspacePermissionMode } from "../tools/permissions.js";
@@ -249,6 +250,7 @@ interface ComposerMetadataRightCache {
 interface EndpointProbeResult {
   models: string[];
   errors: string[];
+  source?: ModelProbeSource;
 }
 
 export interface SelectOption<T extends string> {
@@ -371,6 +373,8 @@ export class TuiApp {
   #selfImproveWorker: Promise<void> | undefined;
   #selfImproveStatusWorker: Promise<void> | undefined;
   #selfImproveAbort: AbortController | undefined;
+  #compactWorker: Promise<void> | undefined;
+  #compactAbort: AbortController | undefined;
   #goalSupervisorActive = false;
   #activeAbort: AbortController | undefined;
   #activeRunStartedAtMs: number | undefined;
@@ -474,7 +478,7 @@ export class TuiApp {
   }
 
   private enqueuePrompt(prompt: string, options: { renderPrompt?: boolean } = {}): void {
-    const busy = Boolean(this.#activeAbort || this.#promptWorker || this.#promptWorkerScheduled || this.#selfImproveWorker || this.promptRequiresCodeIntelligenceGate());
+    const busy = Boolean(this.#activeAbort || this.#promptWorker || this.#promptWorkerScheduled || this.#selfImproveWorker || this.#compactWorker || this.promptRequiresCodeIntelligenceGate());
     this.#composerFooter = undefined;
     const queued = enqueuePromptForSubmission(this.#promptQueue, prompt, { busy, renderPrompt: options.renderPrompt });
     this.#promptQueue = queued.state;
@@ -491,13 +495,13 @@ export class TuiApp {
     if (this.#promptWorker || this.#promptWorkerScheduled) {
       return;
     }
-    if (this.#selfImproveWorker) {
+    if (this.#selfImproveWorker || this.#compactWorker) {
       return;
     }
     this.#promptWorkerScheduled = true;
     setTimeout(() => {
       this.#promptWorkerScheduled = false;
-      if (this.#promptWorker || !this.#promptQueue.length || !this.#running) {
+      if (this.#promptWorker || this.#compactWorker || !this.#promptQueue.length || !this.#running) {
         return;
       }
       this.#promptWorker = this.drainPromptQueue()
@@ -635,10 +639,15 @@ export class TuiApp {
   private interruptActiveLoop(): boolean {
     const loopAborted = this.abortActiveLoop("User interrupted current loop");
     const selfImproveAborted = this.abortSelfImprove("User interrupted self-improve learn");
-    if (!loopAborted && !selfImproveAborted) {
+    const compactAborted = this.abortCompact("User interrupted compact");
+    if (!loopAborted && !selfImproveAborted && !compactAborted) {
       return false;
     }
-    const label = selfImproveAborted && !loopAborted ? "Interrupting self-improve learn" : "Interrupting current loop";
+    const label = compactAborted && !loopAborted && !selfImproveAborted
+      ? "Interrupting compact"
+      : selfImproveAborted && !loopAborted
+        ? "Interrupting self-improve learn"
+        : "Interrupting current loop";
     this.#composerActivity = `${fg256(220, "●")} ${fg256(250, label)} ${fg256(244, "queued prompts will run next")}`;
     this.updateQueueFooter();
     this.#activeComposerRedraw?.();
@@ -663,6 +672,15 @@ export class TuiApp {
     return true;
   }
 
+  private abortCompact(reason: string): boolean {
+    const controller = this.#compactAbort;
+    if (!controller || controller.signal.aborted) {
+      return false;
+    }
+    controller.abort(reason);
+    return true;
+  }
+
   private async requestExit(): Promise<void> {
     if (this.#shutdownStarted) {
       return;
@@ -680,18 +698,21 @@ export class TuiApp {
     this.clearQueueFooter();
     const aborted = this.abortActiveLoop(reason);
     const selfImproveAborted = this.abortSelfImprove(reason);
+    const compactAborted = this.abortCompact(reason);
     const worker = this.#promptWorker;
     const selfImproveWorker = this.#selfImproveWorker;
     const selfImproveStatusWorker = this.#selfImproveStatusWorker;
-    if (!worker && !selfImproveWorker && !selfImproveStatusWorker) {
-      if (aborted || selfImproveAborted) {
+    const compactWorker = this.#compactWorker;
+    if (!worker && !selfImproveWorker && !selfImproveStatusWorker && !compactWorker) {
+      if (aborted || selfImproveAborted || compactAborted) {
         this.#composerActivity = undefined;
         this.#activeComposerRedraw?.();
       }
       return;
     }
-    if (aborted || selfImproveAborted) {
-      this.#composerActivity = `${fg256(220, "●")} ${fg256(250, "Stopping current loop")}`;
+    if (aborted || selfImproveAborted || compactAborted) {
+      const label = compactAborted && !aborted && !selfImproveAborted ? "Stopping compact" : "Stopping current loop";
+      this.#composerActivity = `${fg256(220, "●")} ${fg256(250, label)}`;
       this.#activeComposerRedraw?.();
     }
     await worker?.catch((error) => {
@@ -701,6 +722,9 @@ export class TuiApp {
       this.writeTranscript(`\n${fg256(203, error instanceof Error ? error.message : String(error))}\n\n`);
     });
     await selfImproveStatusWorker?.catch((error) => {
+      this.writeTranscript(`\n${fg256(203, error instanceof Error ? error.message : String(error))}\n\n`);
+    });
+    await compactWorker?.catch((error) => {
       this.writeTranscript(`\n${fg256(203, error instanceof Error ? error.message : String(error))}\n\n`);
     });
     this.#composerActivity = undefined;
@@ -1205,7 +1229,7 @@ export class TuiApp {
   }
 
   private shouldRenderWelcomeComposer(): boolean {
-    return !this.#hasTranscript && !this.#sessionId && !this.#activeAbort && !this.#promptWorker && !this.#promptWorkerScheduled && !this.#selfImproveWorker;
+    return !this.#hasTranscript && !this.#sessionId && !this.#activeAbort && !this.#promptWorker && !this.#promptWorkerScheduled && !this.#selfImproveWorker && !this.#compactWorker;
   }
 
   private loadComposerSkills(): Promise<SkillDescriptor[]> {
@@ -1679,14 +1703,14 @@ export class TuiApp {
       throw new Error("No external providers are available.");
     }
     let query = "";
-    let filtered = filterProviderPickerOptions(options, query);
+    let filtered = prioritizeProviderSetupOptions(filterProviderPickerOptions(options, query));
     let defaultIndex = Math.max(0, filtered.findIndex((option) => option.provider.id === currentProviderId));
     let pageIndex = Math.floor(defaultIndex / 5);
     let selected = defaultIndex % 5;
     this.#rl?.pause();
 
     const clampSelection = () => {
-      filtered = filterProviderPickerOptions(options, query);
+      filtered = prioritizeProviderSetupOptions(filterProviderPickerOptions(options, query));
       const page = providerPickerPage(filtered, pageIndex);
       pageIndex = page.pageIndex;
       selected = Math.max(0, Math.min(selected, Math.max(0, page.items.length - 1)));
@@ -1847,7 +1871,7 @@ export class TuiApp {
       fg256(244, "Discovering available external providers."),
     ], true);
     const states = await discoverExternalProviderStates();
-    const option = await this.chooseExternalProvider(externalProviderSetupOptions(states), config.model_setup.provider_id);
+    const option = await this.chooseExternalProvider(connectedExternalProviderSetupOptions(externalProviderSetupOptions(states), config.model_setup), config.model_setup.provider_id);
     const provider = option.provider;
     this.applyExternalProviderChoice(config.model_setup, provider);
     const state = option.state ?? states.find((candidate) => candidate.provider.id === provider.id);
@@ -1912,10 +1936,19 @@ export class TuiApp {
       ], true);
       return;
     }
+    const defaultRef = secretRef(`chat-${provider.id}`, "api-key");
+    const existingRef = setup.api_key_ref && readSecret(setup.api_key_ref) ? setup.api_key_ref : undefined;
+    const providerRef = readSecret(defaultRef) ? defaultRef : undefined;
+    const reusableRef = existingRef ?? providerRef;
+    if (reusableRef) {
+      setup.api_key_ref = reusableRef;
+      delete setup.api_key;
+      return;
+    }
     this.applyApiKeySelection(
       setup,
       await this.askApiKeySelection(
-        secretRef(`chat-${provider.id}`, "api-key"),
+        defaultRef,
         `${provider.label} API key`,
         setup.api_key_ref,
         true,
@@ -2043,15 +2076,18 @@ export class TuiApp {
       fg256(243, "Listing models before selection."),
     ], true);
     const snapshot = await new EndpointSignals(config).snapshot();
+    const models = modelsFromSnapshot(snapshot);
+    const errors = snapshot.errors ?? [];
     return {
-      models: modelsFromSnapshot(snapshot),
-      errors: snapshot.errors ?? [],
+      models,
+      errors,
+      source: errors.some((error) => error.startsWith("/models")) ? (models.length ? "fallback" : "manual") : "live",
     };
   }
 
   private async probeOpenAiModels(endpoint: OmniEndpointConfig): Promise<EndpointProbeResult> {
     if (!endpoint.base_url) {
-      return { models: [], errors: ["base_url is required"] };
+      return { models: [], errors: ["base_url is required"], source: "manual" };
     }
     const base = endpoint.base_url.replace(/\/$/, "");
     this.renderCenteredPanel("Model Discovery", [`${fg256(39, "GET")} ${base}/models`, fg256(243, "Listing multimodal endpoint models.")], true);
@@ -2061,13 +2097,13 @@ export class TuiApp {
         headers: authHeaders(endpoint),
       });
       if (!response.ok) {
-        return { models: [], errors: [`/models returned ${response.status}`] };
+        return { models: [], errors: [`/models returned ${response.status}`], source: "manual" };
       }
       const json = (await response.json()) as Record<string, unknown>;
       const data = Array.isArray(json.data) ? dataAsJsonObjects(json.data) : [];
-      return { models: data.map((model) => stringField(model.id) ?? stringField(model.name)).filter((model): model is string => Boolean(model)), errors: [] };
+      return { models: data.map((model) => stringField(model.id) ?? stringField(model.name)).filter((model): model is string => Boolean(model)), errors: [], source: "live" };
     } catch (error) {
-      return { models: [], errors: [`/models unavailable: ${error instanceof Error ? error.message : String(error)}`] };
+      return { models: [], errors: [`/models unavailable: ${error instanceof Error ? error.message : String(error)}`], source: "manual" };
     }
   }
 
@@ -2075,7 +2111,7 @@ export class TuiApp {
     if (probe.models.length) {
       const defaultModel = current && probe.models.includes(current) ? current : probe.models[0] ?? current;
       const defaultIndex = defaultModel && probe.models.includes(defaultModel) ? probe.models.indexOf(defaultModel) : 0;
-      return await this.selectModelOption(title, probe.models, defaultIndex, probe.errors);
+      return await this.selectModelOption(title, probe.models, defaultIndex, probe.errors, probe.source);
     }
     this.renderCenteredPanel(title, ["No models returned. Type a model id manually.", ...probe.errors.map((error) => fg256(203, error))]);
     while (true) {
@@ -2089,7 +2125,7 @@ export class TuiApp {
     }
   }
 
-  private async selectModelOption(title: string, models: string[], defaultIndex = 0, errors: string[] = []): Promise<string> {
+  private async selectModelOption(title: string, models: string[], defaultIndex = 0, errors: string[] = [], source?: ModelProbeSource): Promise<string> {
     let query = "";
     let filtered = models;
     let pageIndex = Math.floor(Math.max(0, defaultIndex) / RESUME_SESSION_PAGE_SIZE);
@@ -2110,10 +2146,15 @@ export class TuiApp {
       const lines = page.items.length
         ? page.items.map((model, index) => renderSetupOptionLine(model, undefined, index === selected))
         : [fg256(244, query ? `No models matched ${query}. Enter uses the typed id.` : "No models available.")];
-      const searchLabel = query ? ` · search ${query}` : "";
-      const hint = `${page.pageIndex + 1}/${page.totalPages} · ${page.totalItems} models${searchLabel} · ←/→ page · type search · enter select · esc cancel`;
+      const hint = modelPickerHint({
+        pageIndex: page.pageIndex,
+        totalPages: page.totalPages,
+        totalItems: page.totalItems,
+        query,
+        source,
+      });
       const footer = errors.length ? ["", fg256(203, "Probe errors"), ...errors.map((error) => `  ${error}`)] : [];
-      this.renderCenteredPanel(title, [...lines, "", setupHint(hint), ...footer], true);
+      this.renderCenteredPanel(title, [...lines, "", hint, ...footer], true);
     };
 
     render();
@@ -2856,7 +2897,9 @@ export class TuiApp {
         includeActivity: options.signals === true,
       });
       clampPage();
-      const screen = renderTokenmaxxingScreen(latestBody, width, height, pageIndex);
+      const screen = renderTokenmaxxingScreen(latestBody, width, height, pageIndex, {
+        providerName: tokenmaxxingProviderName(this.app.config.model_setup),
+      });
       const sameFrame = renderedWidth === width && renderedLines.length === screen.length && renderedLines.every((line, index) => line === screen[index]);
       if (sameFrame) {
         return;
@@ -2994,40 +3037,71 @@ export class TuiApp {
       this.renderPanel("Compact", ["No active session yet."]);
       return;
     }
+    this.startManualCompactWorker(session, args);
+  }
+
+  private startManualCompactWorker(session: SessionRecord, args = ""): void {
+    if (this.#compactWorker) {
+      this.renderLoopTranscriptPanel("Compact", [
+        `${fg256(220, "●")} compact already running`,
+      ]);
+      return;
+    }
+    const abort = new AbortController();
+    this.#compactAbort = abort;
     const activity = this.startActivityIndicator(formatCompressionStartActivity({
       type: "compression_start",
       reason: "manual",
       estimated_tokens: 0,
       threshold_tokens: 0,
     }));
-    try {
-      const result = await this.app.runtime.compactSession({
-        session_id: session.session_id,
-        client_id: randomId("tui"),
-        instructions: args.trim() || undefined,
-        onStatus: (event) => {
-          if (event.type === "compression_start") {
-            activity.status(formatCompressionStartActivity(event));
+    const worker = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        void (async () => {
+          try {
+            const result = await this.app.runtime.compactSession({
+              session_id: session.session_id,
+              client_id: randomId("tui"),
+              instructions: args.trim() || undefined,
+              signal: abort.signal,
+              onStatus: (event) => {
+                if (event.type === "compression_start") {
+                  activity.status(formatCompressionStartActivity(event));
+                }
+                if (event.type === "compression_end") {
+                  activity.record(formatCompressionActivityLine(event));
+                }
+              },
+            });
+            activity.stop({ redraw: false });
+            this.#sessionId = result.session.session_id;
+            const summaryLines = result.summary.split(/\r?\n/).filter(Boolean).slice(0, 8);
+            this.renderLoopTranscriptPanel("Compact", [
+              `${fg256(48, "done")} ${result.archived_events} events archived`,
+              `${fg256(39, "strategy")} ${result.summary_strategy}`,
+              `${fg256(39, "archive")} ${result.archive_resource_uri}`,
+              `${fg256(39, "preserved")} ${result.preserved_tail_events} tail events · ${result.preserved_rounds} rounds`,
+              ...(summaryLines.length ? ["", fg256(39, "Summary"), ...summaryLines.map((line) => `  ${truncateToWidth(line, Math.max(20, terminalWidth() - 8))}`)] : []),
+            ]);
+          } catch (error) {
+            activity.stop({ redraw: false });
+            const message = error instanceof Error ? error.message : String(error);
+            this.renderLoopTranscriptPanel("Compact", [isAbortError(error) ? fg256(244, `Interrupted compact: ${message}`) : fg256(203, message)]);
+          } finally {
+            if (this.#compactAbort === abort) {
+              this.#compactAbort = undefined;
+            }
+            this.#compactWorker = undefined;
+            if (this.#promptQueue.length && this.#running) {
+              this.schedulePromptWorker();
+            } else if (!this.#activeAbort) {
+              this.clearQueueFooter();
+            }
           }
-          if (event.type === "compression_end") {
-            activity.record(formatCompressionActivityLine(event));
-          }
-        },
-      });
-      activity.stop({ redraw: false });
-      this.#sessionId = result.session.session_id;
-      const summaryLines = result.summary.split(/\r?\n/).filter(Boolean).slice(0, 8);
-      this.renderPanel("Compact", [
-        `${fg256(48, "done")} ${result.archived_events} events archived`,
-        `${fg256(39, "strategy")} ${result.summary_strategy}`,
-        `${fg256(39, "archive")} ${result.archive_resource_uri}`,
-        `${fg256(39, "preserved")} ${result.preserved_tail_events} tail events · ${result.preserved_rounds} rounds`,
-        ...(summaryLines.length ? ["", fg256(39, "Summary"), ...summaryLines.map((line) => `  ${truncateToWidth(line, Math.max(20, terminalWidth() - 8))}`)] : []),
-      ]);
-    } catch (error) {
-      activity.stop({ redraw: false });
-      this.renderNotice(error instanceof Error ? error.message : String(error));
-    }
+        })().finally(resolve);
+      }, 0);
+    });
+    this.#compactWorker = worker;
   }
 
   private renderToolsView(args = ""): void {
@@ -7724,6 +7798,24 @@ function modelSetupAuthSummary(setup: ModelSetup): string {
   return "not stored";
 }
 
+function tokenmaxxingProviderName(setup: ModelSetup): string {
+  const externalProvider = externalProviderById(setup.provider_id);
+  if (externalProvider) {
+    return externalProvider.label;
+  }
+  const providerId = setup.provider_id?.trim();
+  if (providerId) {
+    return providerId;
+  }
+  if (setup.mode === "auto" || setup.router === "vllm-sr") {
+    return "Semantic Router";
+  }
+  if (setup.provider === "external") {
+    return "External provider";
+  }
+  return "vLLM";
+}
+
 function isEnvVarName(value: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
@@ -7943,15 +8035,21 @@ function formatGoalCampaignHours(hours: number): string {
   return `${formatted}h`;
 }
 
-function renderProviderSetupOptionLine(option: ExternalProviderSetupOption, active: boolean): string {
-  const marker = active ? fg256(75, "›") : fg256(238, " ");
-  const nameColor = active ? 252 : 248;
-  const prefix = option.discovered
-    ? `${fg256(48, "●")} ${fg256(nameColor, "[discovered]")}`
-    : fg256(244, option.provider.auth_type === "none" ? "[open]" : "[key]");
-  const name = fg256(nameColor, option.provider.label);
-  const detail = option.description ? `  ${fg256(244, option.description)}` : "";
-  return `${marker} ${prefix} ${name}${detail}`;
+function connectedExternalProviderSetupOptions(
+  options: ExternalProviderSetupOption[],
+  setup: ModelSetup,
+): ExternalProviderSetupOption[] {
+  return options.map((option) => {
+    const defaultRef = secretRef(`chat-${option.provider.id}`, "api-key");
+    const inUse = setup.provider === "external" && setup.provider_id === option.provider.id;
+    const currentRefConnected = inUse && Boolean(setup.api_key_ref && readSecret(setup.api_key_ref));
+    const defaultRefConnected = Boolean(readSecret(defaultRef));
+    return {
+      ...option,
+      inUse,
+      connected: option.connected || option.discovered || currentRefConnected || defaultRefConnected,
+    };
+  });
 }
 
 function commandScore(name: string, description: string, query: string): number {

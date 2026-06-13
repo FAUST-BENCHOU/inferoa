@@ -44,6 +44,8 @@ export interface ExternalProviderState {
 export interface ExternalProviderSetupOption {
   provider: ExternalProviderDefinition;
   discovered: boolean;
+  connected?: boolean;
+  inUse?: boolean;
   description: string;
   state?: ExternalProviderState;
 }
@@ -57,6 +59,7 @@ export interface ProviderDiscoveryOptions {
 export interface ProviderProbeResult {
   models: string[];
   errors: string[];
+  source: "live" | "fallback";
 }
 
 export interface ProviderModelProbeOptions {
@@ -81,6 +84,21 @@ const QWEN_HEADERS: Record<string, string> = {
 const EXTERNAL_PROVIDERS: ExternalProviderDefinition[] = [
   provider("openai-compatible", "OpenAI-Compatible API", "Custom compatible endpoint", undefined, "model-id", "openai_compatible", "api_key", "custom", [], 10, {
     supportsCustomBaseUrl: true,
+  }),
+  provider("tensormesh", "Tensormesh", "KV-cache inference for faster, lower-cost agents", "https://serverless.tensormesh.ai/v1", "MiniMaxAI/MiniMax-M2.5", "openai_compatible", "api_key", "aggregator", [
+    "MiniMaxAI/MiniMax-M2.5",
+    "Qwen/Qwen3.5-397B-A17B-FP8",
+    "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "moonshotai/Kimi-K2.6",
+    "deepseek-ai/DeepSeek-V4-Flash",
+    "lukealonso/GLM-5.1-NVFP4-MTP",
+    "google/gemma-4-31B-it",
+    "Qwen/Qwen3.6-27B-FP8",
+  ], 12, {
+    env: ["TENSORMESH_INFERENCE_API_KEY", "TENSORMESH_API_KEY"],
+    baseUrlEnv: "TENSORMESH_BASE_URL",
   }),
   provider("openai", "OpenAI", "First-party OpenAI API", "https://api.openai.com/v1", "gpt-4.1-mini", "openai_compatible", "api_key", "first_party", [
     "gpt-5.4",
@@ -367,6 +385,7 @@ export function externalProviderSetupOptions(states: ExternalProviderState[]): E
     .map((state) => ({
       provider: state.provider,
       discovered: state.discovered,
+      connected: state.discovered,
       description: providerOptionDescription(state),
       state,
     }))
@@ -385,7 +404,7 @@ export async function probeExternalProviderModels(
   const baseUrl = (options.baseUrl || provider.base_url || "").trim();
   const fallback = modelsFromHints(provider);
   if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
-    return { models: fallback, errors: baseUrl ? [`${provider.label} model discovery requires an HTTP endpoint.`] : [] };
+    return { models: fallback, errors: baseUrl ? [`${provider.label} model discovery requires an HTTP endpoint.`] : [], source: "fallback" };
   }
   const url = composeProviderUrl(baseUrl, provider.model_catalog_path ?? "/v1/models");
   try {
@@ -394,13 +413,13 @@ export async function probeExternalProviderModels(
       headers: externalProviderAuthHeaders(provider, options.apiKey),
     });
     if (!response.ok) {
-      return { models: fallback, errors: [`/models returned ${response.status}`] };
+      return { models: fallback, errors: [`/models returned ${response.status}`], source: "fallback" };
     }
     const json = (await response.json()) as Record<string, unknown>;
     const discovered = modelIdsFromPayload(provider, json);
-    return { models: mergeModels(discovered, fallback), errors: [] };
+    return { models: mergeModels(discovered, fallback), errors: [], source: discovered.length ? "live" : "fallback" };
   } catch (error) {
-    return { models: fallback, errors: [`/models unavailable: ${error instanceof Error ? error.message : String(error)}`] };
+    return { models: fallback, errors: [`/models unavailable: ${formatProviderProbeError(error)}`], source: "fallback" };
   }
 }
 
@@ -763,4 +782,16 @@ function mergeModels(primary: string[], fallback: string[]): string[] {
     output.push(normalized);
   }
   return output;
+}
+
+function formatProviderProbeError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const cause = error instanceof Error ? objectValue(error.cause) : undefined;
+  const causeCode = stringValue(cause?.code)?.trim();
+  const causeMessage = stringValue(cause?.message)?.trim();
+  const causeDetail = [causeCode, causeMessage].filter(Boolean).join(" ");
+  if (!causeDetail) {
+    return message;
+  }
+  return `${message} (${causeDetail})`;
 }

@@ -153,6 +153,22 @@ test("tokenmaxxing screen keeps summary sticky while paging details", () => {
   assert.match(secondPage, /page 2\/3/);
 });
 
+test("tokenmaxxing fullscreen title shows the provider name in blue", () => {
+  const body = [
+    { kind: "summary" as const, text: "saved 10 · cache 5 · rtk 1 · tokens 100/106" },
+    { kind: "turn" as const, text: "turn 1" },
+  ];
+
+  const screen = renderTokenmaxxingScreen(body, 100, 8, 0, { providerName: "OpenAI Codex" });
+  const ansi = screen.join("\n");
+  const plain = stripAnsi(ansi);
+
+  assert.match(plain, /Tokenmaxxing · OpenAI Codex/);
+  assert.doesNotMatch(plain, /run cache/);
+  assert.match(ansi, /\x1b\[38;5;87mTokenmaxxing\x1b\[0m/);
+  assert.match(ansi, /\x1b\[38;5;87mOpenAI Codex\x1b\[0m/);
+});
+
 test("tokenmaxxing view exposes model-call cache and RTK inside a long run", () => {
   const events: SessionEvent[] = [
     event("user.prompt", { prompt: "long task" }, "run_long"),
@@ -543,8 +559,29 @@ test("tokenmaxxing cache gap marks large provider cache gaps in red", () => {
   const plain = stripAnsi(lines.join("\n"));
 
   assert.match(plain, /45\.5%/);
-  assert.match(lines.join("\n"), /\x1b\[38;5;203m45\.5%\x1b\[0m\/\x1b\[38;5;48m90\.9%\x1b\[0m/);
+  assert.match(lines.join("\n"), /\x1b\[38;5;203m45\.5%\x1b\[0m\/\x1b\[38;5;203m90\.9%\x1b\[0m/);
   assert.match(lines.join("\n"), /\x1b\[38;5;203m45\.5%\x1b\[0m/);
+});
+
+test("tokenmaxxing cache A/O color follows the provider cache gap instead of absolute hit rate", () => {
+  const events: SessionEvent[] = [
+    event("user.prompt", { prompt: "warmup" }, "run_1"),
+    event("run.completed", { tool_calls: 0, tokens: 100 }, "run_1"),
+    event("user.prompt", { prompt: "provider cache capped" }, "run_2"),
+    event("run.completed", { tool_calls: 0, tokens: 100 }, "run_2"),
+  ];
+  const evidence: JsonObject[] = [
+    { run_id: "run_1", prompt_epoch_id: "pe_1", usage: { prompt_tokens: 500, cached_prompt_tokens: 0 } },
+    { run_id: "run_2", prompt_epoch_id: "pe_1", usage: { prompt_tokens: 1000, cached_prompt_tokens: 500 } },
+  ];
+
+  const lines = renderTokenmaxxingLines(events, evidence, 160);
+  const ansi = lines.join("\n");
+  const plain = stripAnsi(ansi);
+
+  assert.match(plain, /50\.0%\/50\.0% .*0\.0%/);
+  assert.match(ansi, /\x1b\[38;5;48m50\.0%\x1b\[0m\/\x1b\[38;5;48m50\.0%\x1b\[0m/);
+  assert.match(ansi, /\x1b\[38;5;48m0\.0%\x1b\[0m/);
 });
 
 function event(type: string, data: SessionEvent["data"], runId?: string): SessionEvent {

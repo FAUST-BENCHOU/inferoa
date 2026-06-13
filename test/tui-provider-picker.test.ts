@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { PROVIDER_PICKER_PAGE_SIZE, filterProviderPickerOptions, providerPickerPage } from "../src/tui/provider-picker.js";
+import { stripAnsi } from "../src/tui/ansi.js";
+import { PROVIDER_PICKER_PAGE_SIZE, filterProviderPickerOptions, providerPickerPage, renderProviderSetupOptionLine } from "../src/tui/provider-picker.js";
 import type { ExternalProviderSetupOption } from "../src/model/providers.js";
 
 const options: ExternalProviderSetupOption[] = Array.from({ length: 13 }, (_, index) => ({
@@ -28,8 +29,8 @@ test("provider picker pages five rows like resume selection", () => {
   const last = providerPickerPage(options, 99);
 
   assert.equal(PROVIDER_PICKER_PAGE_SIZE, 5);
-  assert.deepEqual(first.items.map((option) => option.provider.id), ["provider-1", "provider-2", "provider-3", "provider-4", "provider-5"]);
-  assert.deepEqual(second.items.map((option) => option.provider.id), ["provider-6", "provider-7", "provider-8", "provider-9", "provider-10"]);
+  assert.deepEqual(first.items.map((option) => option.provider.id), ["provider-10", "provider-1", "provider-2", "provider-3", "provider-4"]);
+  assert.deepEqual(second.items.map((option) => option.provider.id), ["provider-5", "provider-6", "provider-7", "provider-8", "provider-9"]);
   assert.deepEqual(last.items.map((option) => option.provider.id), ["provider-11", "provider-12", "provider-13"]);
 });
 
@@ -38,4 +39,25 @@ test("provider picker filters by provider text and keeps discovered matches", ()
 
   assert.deepEqual(filtered.map((option) => option.provider.id), ["provider-10"]);
   assert.equal(filtered[0]?.discovered, true);
+});
+
+test("provider picker prioritizes in-use providers before connected providers", () => {
+  const rankedOptions = [
+    options[0]!,
+    { ...options[4]!, connected: true } as ExternalProviderSetupOption,
+    { ...options[7]!, inUse: true, connected: true } as ExternalProviderSetupOption,
+    options[1]!,
+  ];
+
+  const first = providerPickerPage(rankedOptions, 0);
+
+  assert.deepEqual(first.items.map((option) => option.provider.id), ["provider-8", "provider-5", "provider-1", "provider-2"]);
+});
+
+test("provider picker marks in-use and connected providers distinctly", () => {
+  const inUse = { ...options[4], inUse: true, connected: true } as ExternalProviderSetupOption;
+  const connected = { ...options[5], connected: true } as ExternalProviderSetupOption;
+
+  assert.match(stripAnsi(renderProviderSetupOptionLine(inUse, true)), /\[in-use\] Provider 5/);
+  assert.match(stripAnsi(renderProviderSetupOptionLine(connected, false)), /\[connected\] Provider 6/);
 });

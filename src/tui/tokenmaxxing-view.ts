@@ -8,6 +8,10 @@ export interface TokenmaxxingRenderOptions {
   activityOnly?: boolean;
 }
 
+export interface TokenmaxxingScreenOptions {
+  providerName?: string;
+}
+
 export type TokenmaxxingRowKind = "summary" | "section" | "epoch" | "turn-header" | "turn" | "compact" | "trend" | "signal";
 
 export interface TokenmaxxingScreenRow {
@@ -230,6 +234,7 @@ export function renderTokenmaxxingScreen(
   width = terminalWidth(),
   height = terminalHeight(),
   pageIndex = 0,
+  options: TokenmaxxingScreenOptions = {},
 ): string[] {
   const safeWidth = Math.max(32, Math.floor(width));
   const safeHeight = Math.max(6, Math.floor(height));
@@ -244,7 +249,8 @@ export function renderTokenmaxxingScreen(
   const visible = pagedRows.slice(top, top + contentHeight);
   const firstVisible = total ? top + 1 : 0;
   const lastVisible = total ? Math.min(total, top + contentHeight) : 0;
-  const title = `${fg256(87, "Tokenmaxxing")} ${fg256(244, "run cache · RTK · session savings")}`;
+  const providerName = singleLine(options.providerName ?? "vLLM").trim() || "vLLM";
+  const title = `${fg256(87, "Tokenmaxxing")}${fg256(244, " · ")}${fg256(87, providerName)}`;
   const range = total ? `${firstVisible}-${lastVisible} / ${total}` : "0 / 0";
   const pageLabel = `page ${page + 1}/${pageCount}`;
   const headerRight = `${pageLabel} · ${range}`;
@@ -1618,9 +1624,10 @@ function turnCacheCells(cache?: CacheObservation): { cache: string; diff: string
   }
   if (cache.kind === "warmup") {
     if (cache.actualHit !== undefined && cache.oracleHit !== undefined) {
+      const diff = cache.cacheDiff ?? 0;
       return {
-        cache: fg256(244, `warm ${formatPlainPct(cache.actualHit)}/${formatPlainPct(cache.oracleHit)}`),
-        diff: fg256(244, formatPlainPct(cache.cacheDiff ?? 0)),
+        cache: `warm ${formatCacheHitForDiff(cache.actualHit, diff)}/${formatCacheHitForDiff(cache.oracleHit, diff)}`,
+        diff: formatCacheDiff(diff),
       };
     }
     if (cache.actualHit !== undefined) {
@@ -1629,9 +1636,10 @@ function turnCacheCells(cache?: CacheObservation): { cache: string; diff: string
     return { cache: fg256(244, "warm -"), diff: fg256(244, "-") };
   }
   if (cache.actualHit !== undefined && cache.oracleHit !== undefined) {
+    const diff = cache.cacheDiff ?? 0;
     return {
-      cache: `${formatCacheHit(cache.actualHit)}/${formatCacheHit(cache.oracleHit)}`,
-      diff: formatCacheDiff(cache.cacheDiff ?? 0),
+      cache: `${formatCacheHitForDiff(cache.actualHit, diff)}/${formatCacheHitForDiff(cache.oracleHit, diff)}`,
+      diff: formatCacheDiff(diff),
     };
   }
   if (cache.actualHit !== undefined) {
@@ -1989,6 +1997,10 @@ function formatPercent(value: number): string {
 
 function formatCacheHit(value: number): string {
   return fg256(cacheHitColor(value), formatPercent(value));
+}
+
+function formatCacheHitForDiff(value: number, diff: number): string {
+  return fg256(cacheDiffColor(diff), formatPercent(value));
 }
 
 function formatCacheDiff(value: number): string {
