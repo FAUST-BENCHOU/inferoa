@@ -1557,6 +1557,9 @@ function goalYieldEventAfterToolCall(
     }
     return undefined;
   }
+  if (requestClass === "verification") {
+    return undefined;
+  }
   if (!state?.enabled || state.goal.status !== "active" || !isGoalHorizonExhausted(state.goal)) {
     return undefined;
   }

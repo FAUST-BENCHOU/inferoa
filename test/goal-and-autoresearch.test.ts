@@ -73,11 +73,10 @@ test("goal decision prompt treats completed plans as a hypothesis, not a boundar
   assert.match(prompt, /goal op=reflect exactly once/i);
   assert.match(prompt, /completion gates are satisfied/i);
   assert.match(prompt, /no material frontier remains/i);
-  assert.match(prompt, /verification is weak/i);
-  assert.match(prompt, /local slice/i);
+  assert.match(prompt, /coverage, verification/i);
+  assert.match(prompt, /At least runtime remains/i);
   assert.doesNotMatch(prompt, /read-only/i);
   assert.doesNotMatch(prompt, /Do not edit files/i);
-  assert.doesNotMatch(prompt, /audit/i);
   assert.doesNotMatch(prompt, /Do not perform implementation work/i);
   assert.doesNotMatch(prompt, /Do not optimize endlessly/i);
   assert.doesNotMatch(prompt, /decision=continue/i);
@@ -87,14 +86,13 @@ test("deliver work prompt seeds a general frontier during bootstrap", () => {
   const prompt = buildGoalWorkPrompt("Improve a project end to end");
 
   assert.match(prompt, /Deliver loop/i);
-  assert.match(prompt, /highest-leverage next action/i);
+  assert.match(prompt, /highest-leverage action/i);
   assert.match(prompt, /top-level objective/i);
+  assert.match(prompt, /work surfaces/i);
   assert.match(prompt, /strongest practical evidence/i);
   assert.match(prompt, /update the loop step, ledger, or decomposition/i);
   assert.match(prompt, /next execution slice/i);
   assert.doesNotMatch(prompt, /bug hunting/i);
-  assert.doesNotMatch(prompt, /audit/i);
-  assert.doesNotMatch(prompt, /each turn/i);
 });
 
 test("goal creation starts with a visible Deliver bootstrap and no strategy fields", () => {
@@ -1563,6 +1561,106 @@ test("completing a horizon step reconciles the matching open ledger candidate", 
   }
 });
 
+test("completing a horizon step reconciles semantically matching ledger candidates", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-ledger-semantic-reconcile-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_goal_ledger_semantic_reconcile", root: dir, alias: "goal-ledger-semantic-reconcile" };
+    const session = store.createSession(workspace, "goal-ledger-semantic-reconcile");
+    const registry = new ToolRegistry(config(), workspace, store);
+    const state = replaceGoalPlanning(createGoalState({ objective: "Improve tests" }), {
+      summary: "Loop task 1 · Candidate work",
+      steps: [{ id: "tests", title: "Audit integration tests", status: "in_progress" }],
+    });
+    const goal = state.goal as any;
+    goal.ledger = {
+      open: [{ id: "legacy-candidate-id", title: "Audit integration tests", value: "high", status: "open", updated_at: new Date().toISOString() }],
+      done: [],
+      rejected: [],
+      updated_at: new Date().toISOString(),
+    };
+    writeGoalState(store, session.session_id, state, "run_seed");
+
+    const updated = await registry.call(
+      {
+        id: "complete_semantic_candidate_step",
+        name: "goal",
+        arguments: {
+          op: "update_step",
+          step_id: "tests",
+          status: "completed",
+          evidence: { tests: "passed" },
+        },
+      },
+      { session_id: session.session_id, run_id: "run_update_step" },
+    );
+
+    assert.equal(updated.ok, true, JSON.stringify(updated));
+    const current = readGoalState(store, session.session_id)?.goal;
+    assert.deepEqual(current?.ledger?.open.map((candidate) => candidate.id), []);
+    assert.deepEqual(current?.ledger?.done.map((candidate) => [candidate.id, candidate.status, candidate.evidence]), [
+      ["legacy-candidate-id", "done", { tests: "passed" }],
+    ]);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("done reflection reconciles completed steps against open ledger candidates", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-ledger-reflect-reconcile-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_goal_ledger_reflect_reconcile", root: dir, alias: "goal-ledger-reflect-reconcile" };
+    const session = store.createSession(workspace, "goal-ledger-reflect-reconcile");
+    const registry = new ToolRegistry(config(), workspace, store);
+    const state = createGoalState({ objective: "Improve validators" });
+    const goal = state.goal as any;
+    goal.ledger = {
+      open: [
+        { id: "legacy-validator-gap", title: "Add validator algorithm tests", value: "high", status: "open", updated_at: new Date().toISOString() },
+        { id: "docs", title: "Update docs", value: "low", status: "open", updated_at: new Date().toISOString() },
+      ],
+      done: [],
+      rejected: [],
+      updated_at: new Date().toISOString(),
+    };
+    writeGoalState(store, session.session_id, state, "run_seed");
+
+    const reflected = await registry.call(
+      {
+        id: "reflect_done_with_completed_step",
+        name: "goal",
+        arguments: {
+          op: "reflect",
+          decision: "done",
+          summary: "Validator algorithm tests were added and verified.",
+          verification_evidence: { tests: "passed" },
+          steps: [
+            {
+              id: "validator-tests",
+              title: "Add validator algorithm tests",
+              status: "completed",
+              evidence: { tests: "passed" },
+            },
+          ],
+        },
+      },
+      { session_id: session.session_id, run_id: "run_reflect", request_class: "reflection", visibility: "internal" },
+    );
+
+    assert.equal(reflected.ok, true, JSON.stringify(reflected));
+    const current = readGoalState(store, session.session_id)?.goal;
+    assert.deepEqual(current?.ledger?.open.map((candidate) => candidate.id), ["docs"]);
+    assert.deepEqual(current?.ledger?.done.map((candidate) => [candidate.id, candidate.status, candidate.evidence]), [
+      ["legacy-validator-gap", "done", { tests: "passed" }],
+    ]);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("at least runtime expands instead of completing before the minimum duration is reached", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-runtime-gate-"));
   const store = await SessionStore.open(path.join(dir, "state"));
@@ -1601,6 +1699,160 @@ test("at least runtime expands instead of completing before the minimum duration
     assert.equal(current?.horizon_generation, 1);
     assert.equal(current?.planning?.active_step_id, "runtime_reassess_scope_1");
     assert.equal(store.listEvents(session.session_id).some((event) => event.type === "goal.horizon.expanded" && event.data.reason === "runtime_minimum"), true);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("at least runtime continuation does not recycle stale duplicate ledger candidates", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-runtime-stale-ledger-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_goal_runtime_stale_ledger", root: dir, alias: "goal-runtime-stale-ledger" };
+    const session = store.createSession(workspace, "goal-runtime-stale-ledger");
+    const registry = new ToolRegistry(config(), workspace, store);
+    const state = replaceGoalPlanning(createGoalState({ objective: "Improve a large repo", runtime_policy: { mode: "at_least", min_duration_ms: 60_000 } }), {
+      summary: "Loop task 2 · Candidate work",
+      steps: [{ id: "signal-handler-race", title: "Investigate duplicate signal handler", status: "completed" }],
+    });
+    state.goal.horizon_generation = 2;
+    state.goal.time_used_ms = 10_000;
+    const goal = state.goal as any;
+    goal.ledger = {
+      open: [
+        {
+          id: "investigate-duplicate-signal-handler-",
+          title: "Investigate duplicate signal handler",
+          value: "medium",
+          status: "open",
+          updated_at: new Date().toISOString(),
+        },
+      ],
+      done: [
+        {
+          id: "investigate-duplicate-signal-handler",
+          title: "Investigate duplicate signal handler",
+          value: "medium",
+          status: "done",
+          reason: "Already fixed and verified.",
+          updated_at: new Date().toISOString(),
+        },
+      ],
+      rejected: [],
+      updated_at: new Date().toISOString(),
+    };
+    writeGoalState(store, session.session_id, state, "run_seed");
+    let reflectionCalls = 0;
+
+    const result = await runGoalSupervisor({
+      store,
+      sessionId: session.session_id,
+      supervisor: "test",
+      maxIterations: 3,
+      shouldContinue: () => reflectionCalls < 1,
+      runTurn: async (request) => {
+        reflectionCalls += 1;
+        const reflected = await registry.call(
+          { id: "runtime_stale_done_reflection", name: "goal", arguments: { op: "reflect", decision: "done", summary: "Current slice is done.", verification_evidence: { checked: true } } },
+          { session_id: session.session_id, run_id: request.runId ?? "run_reflection", request_class: "reflection", visibility: "internal" },
+        );
+        assert.equal(reflected.ok, true, JSON.stringify(reflected));
+        return { run_id: request.runId ?? "run_reflection" };
+      },
+    });
+
+    assert.equal(result.status, "stopped");
+    const current = readGoalState(store, session.session_id)?.goal;
+    assert.equal(current?.status, "active");
+    assert.equal(current?.horizon_generation, 3);
+    assert.equal(current?.planning?.summary, "Loop task 3 · Runtime continuation");
+    assert.equal(current?.planning?.active_step_id, "runtime_reassess_scope_3");
+    assert.equal(current?.planning?.steps.some((step) => /duplicate signal handler/i.test(step.title)), false);
+    assert.ok(store.listEvents(session.session_id).some((event) => event.type === "goal.horizon.expanded" && event.data.reason === "runtime_minimum"));
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("goal supervisor retries completion verification when the first checker turn only inspects state", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-verifier-retry-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_goal_verifier_retry", root: dir, alias: "goal-verifier-retry" };
+    const session = store.createSession(workspace, "goal-verifier-retry");
+    const registry = new ToolRegistry(config(), workspace, store);
+    const state = replaceGoalPlanning(createGoalState({ objective: "Finish with independent checker verification" }), {
+      steps: [{ id: "done", title: "Completed horizon", status: "completed" }],
+    });
+    writeGoalState(store, session.session_id, state, "run_seed");
+
+    const verificationPrompts: string[] = [];
+    const result = await runGoalSupervisor({
+      store,
+      sessionId: session.session_id,
+      supervisor: "test",
+      maxIterations: 3,
+      workRequestClass: "background",
+      autoVerifyCompletion: true,
+      runTurn: async (request) => {
+        if (request.requestClass === "reflection") {
+          const reflected = await registry.call(
+            {
+              id: "verifier_retry_reflect",
+              name: "goal",
+              arguments: {
+                op: "reflect",
+                decision: "done",
+                summary: "Reflection says the horizon is complete.",
+                verification_evidence: { reflection: true },
+              },
+            },
+            { session_id: session.session_id, run_id: request.runId ?? "run_reflection", request_class: "reflection", visibility: "internal" },
+          );
+          assert.equal(reflected.ok, true, JSON.stringify(reflected));
+          return { run_id: request.runId ?? "run_reflection", tool_calls: 1, tool_rounds: 1 };
+        }
+        if (request.requestClass === "verification") {
+          verificationPrompts.push(request.prompt);
+          if (verificationPrompts.length === 1) {
+            const inspected = await registry.call(
+              { id: "verifier_retry_get", name: "goal", arguments: { op: "get" } },
+              { session_id: session.session_id, run_id: request.runId ?? "run_verify_first", request_class: "verification", visibility: "internal" },
+            );
+            assert.equal(inspected.ok, true, JSON.stringify(inspected));
+            return { run_id: request.runId ?? "run_verify_first", tool_calls: 1, tool_rounds: 1 };
+          }
+          const verified = await registry.call(
+            {
+              id: "verifier_retry_verify",
+              name: "goal",
+              arguments: {
+                op: "verify",
+                provider: "checker",
+                verdict: "pass",
+                confidence: "hard",
+                summary: "Checker pass after retry.",
+                evidence: { checked: true },
+              },
+            },
+            { session_id: session.session_id, run_id: request.runId ?? "run_verify_retry", request_class: "verification", visibility: "internal" },
+          );
+          assert.equal(verified.ok, true, JSON.stringify(verified));
+          return { run_id: request.runId ?? "run_verify_retry", tool_calls: 1, tool_rounds: 1 };
+        }
+        throw new Error(`unexpected request class ${request.requestClass}`);
+      },
+    });
+
+    assert.equal(result.status, "complete");
+    assert.equal(readGoalState(store, session.session_id)?.goal.status, "complete");
+    assert.equal(verificationPrompts.length, 2);
+    assert.match(verificationPrompts[1] ?? "", /Verifier retry/);
+    assert.match(verificationPrompts[1] ?? "", /Do not call goal get first/);
+    const verifications = readGoalLoopView(store, session.session_id).verifications;
+    assert.ok(verifications.some((record) => record.provider === "checker" && record.verdict === "pass" && record.confidence === "hard"));
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });

@@ -96,8 +96,9 @@ test("loop prompt builders expose execution and decision contracts", () => {
     createGoalState({ objective: "Ship a hard feature" } as never).goal,
   );
   assert.match(deliverExecution, /Execution turn/i);
-  assert.match(deliverExecution, /highest-leverage next action/i);
+  assert.match(deliverExecution, /highest-leverage action/i);
   assert.match(deliverExecution, /top-level objective/i);
+  assert.match(deliverExecution, /work surfaces/i);
   assert.match(deliverExecution, /Verify/i);
   assert.match(deliverExecution, /loop step, ledger, or decomposition/i);
   assert.doesNotMatch(deliverExecution, /infer the loop approach|set_strategy|focus|timebox/i);
@@ -107,7 +108,7 @@ test("loop prompt builders expose execution and decision contracts", () => {
   );
   assert.match(decision, /Decision turn/i);
   assert.match(decision, /Independently judge/i);
-  assert.match(decision, /At least runtime is pending/i);
+  assert.match(decision, /At least runtime remains/i);
   assert.match(decision, /decision=expand, done, or blocked/i);
   assert.match(decision, /never use bare expand/i);
   assert.doesNotMatch(decision, /Do not optimize endlessly/i);

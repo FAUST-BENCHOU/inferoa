@@ -7,21 +7,22 @@ export function buildLoopExecutionPrompt(goalOrObjective: GoalRecord | string): 
     return [
       `Loop objective: ${objective}`,
       "Execution turn for a Discover loop.",
-      "Choose the highest-leverage research move for the objective: inspect, benchmark, compare, hypothesize, or run the experiment that best improves evidence.",
-      "The agent decides the benchmark, metric, harness, controls, and comparison shape from the workspace and task evidence.",
-      "Execute enough to produce concrete evidence, then interpret what changed and what remains uncertain.",
-      "Before ending, update the loop step, ledger, or decomposition with evidence and the next research slice.",
-      "Do not treat local checklist completion as research completion.",
+      "Treat the objective as an open investigation; map evidence surfaces when the current horizon is too local.",
+      "Choose the highest-information move: benchmark, compare, ablate, inspect, hypothesize, or run the experiment that best improves evidence.",
+      "The agent decides the benchmark, metric, harness, controls, and comparison shape from workspace evidence.",
+      "Record competing hypotheses, rejected branches, failures, metrics, and remaining uncertainty in the loop step, ledger, or decomposition.",
+      "Every execution turn must make structural loop progress; natural-language completion claims alone are not progress.",
     ].join("\n");
   }
   return [
     `Loop objective: ${objective}`,
     "Execution turn for a Deliver loop.",
-    "Choose the highest-leverage next action for the top-level objective: inspect, edit, test, compare, or plan only when it improves confidence.",
-    "Execute toward an end-to-end outcome, not just the current local checklist.",
-    "Verify the change or finding with the strongest practical evidence available this turn.",
-    "Before ending, update the loop step, ledger, or decomposition with evidence and the next execution slice.",
-    "Do not treat local checklist completion as objective completion.",
+    "Treat the top-level objective as broader than the current local task unless evidence proves the full scope is covered.",
+    "Map or refresh work surfaces when needed: code paths, tests, integrations, user-visible behavior, config, docs, risks, and rollback.",
+    "Choose the highest-leverage action across implementation, verification, comparison, polish, and risk reduction.",
+    "Execute and verify with the strongest practical evidence available this turn.",
+    "Before ending, update the loop step, ledger, or decomposition with evidence, frontier status, and the next execution slice.",
+    "Every execution turn must make structural loop progress; natural-language completion claims alone are not progress.",
   ].join("\n");
 }
 
@@ -32,21 +33,25 @@ export function buildLoopDecisionPrompt(goalOrObjective: GoalRecord | string): s
     return [
       `Loop objective: ${objective}`,
       "Decision turn for a Discover loop.",
-      "Independently judge whether to expand, complete, or block; inspect narrowly only if missing evidence can change the decision.",
+      "Independently judge whether to expand, complete, or block; treat the current plan as evidence, not as the boundary.",
+      "Inspect narrowly only if missing evidence can change the decision; do not perform broad execution in this turn.",
       "Call goal op=reflect exactly once with decision=expand, done, or blocked.",
       "If expanding, include concrete next steps in steps; never use bare expand.",
-      "Use done only when completion gates are satisfied and the conclusion follows from concrete evidence; use blocked only when meaningful progress requires user input or external state change.",
-      "Use expand when a benchmark, comparison, ablation, failure analysis, guardrail, or alternative hypothesis could materially change the conclusion; if At least runtime is pending, expand with meaningful research work, not filler.",
+      "Use done only when completion gates are satisfied and the conclusion follows from concrete evidence.",
+      "Use expand when a benchmark, comparison, ablation, failure analysis, guardrail, alternative hypothesis, or runtime minimum could materially improve the outcome.",
+      "When At least runtime remains, expand to new evidence surfaces or experiments; never repeat stale or duplicate work just to consume time.",
     ].join("\n");
   }
   return [
     `Loop objective: ${objective}`,
     "Decision turn for a Deliver loop.",
-    "Independently judge whether to expand, complete, or block; inspect narrowly only if missing evidence can change the decision.",
+    "Independently judge whether to expand, complete, or block; treat the current plan as evidence, not as the boundary.",
+    "Inspect narrowly only if missing evidence can change the decision; do not perform broad implementation in this turn.",
     "Call goal op=reflect exactly once with decision=expand, done, or blocked.",
     "If expanding, include concrete next steps in steps; never use bare expand.",
-    "Use done only when completion gates are satisfied and no material frontier remains; use blocked only when meaningful progress requires user input or external state change.",
-    "Use expand when verification is weak, integration or user-visible behavior is unproven, or the loop only solved a local slice; if At least runtime is pending, expand with meaningful delivery work, not filler.",
+    "Use done only when completion gates are satisfied and no material frontier remains.",
+    "Use expand when coverage, verification, integration, user-visible behavior, edge cases, docs/config, or runtime minimum could materially improve delivery.",
+    "When At least runtime remains, expand to a different high-value surface or stronger verification; never repeat stale or duplicate work just to consume time.",
   ].join("\n");
 }
 

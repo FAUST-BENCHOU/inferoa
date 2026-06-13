@@ -1152,6 +1152,112 @@ test("runtime yields immediately after an internal reflection decision is record
   }
 });
 
+test("runtime lets verification continue after goal get even when the horizon is exhausted", async () => {
+  let chatCalls = 0;
+  const verifyRunId = "run_runtime_verification_continue";
+  const modelServer = createServer((req, res) => {
+    if (serveEndpointSignal(req.url, res)) {
+      return;
+    }
+    req.resume();
+    req.on("end", () => {
+      chatCalls += 1;
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+      if (chatCalls === 1) {
+        writeSse(res, {
+          id: "resp_verify_get",
+          model: "long-horizon-test",
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    id: "call_verify_get",
+                    type: "function",
+                    function: { name: "goal", arguments: JSON.stringify({ op: "get" }) },
+                  },
+                ],
+              },
+            },
+          ],
+        });
+        writeSse(res, { choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 11, completion_tokens: 4 } });
+      } else if (chatCalls === 2) {
+        writeSse(res, {
+          id: "resp_verify_record",
+          model: "long-horizon-test",
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    id: "call_verify_record",
+                    type: "function",
+                    function: {
+                      name: "goal",
+                      arguments: JSON.stringify({
+                        op: "verify",
+                        provider: "checker",
+                        verdict: "pass",
+                        confidence: "hard",
+                        summary: "Checker inspected state after goal get.",
+                      }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        });
+        writeSse(res, { choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 12, completion_tokens: 4 } });
+      } else {
+        writeSse(res, {
+          id: "resp_verify_done",
+          model: "long-horizon-test",
+          choices: [{ delta: { content: "verification recorded" } }],
+        });
+        writeSse(res, { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 13, completion_tokens: 4 } });
+      }
+      res.end("data: [DONE]\n\n");
+    });
+  });
+  modelServer.listen(0, "127.0.0.1");
+  await once(modelServer, "listening");
+  const address = modelServer.address() as AddressInfo;
+
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-verification-continue-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_goal_verification_continue", root: dir, alias: "goal-verification-continue" };
+    const runtime = new Runtime(config(`http://127.0.0.1:${address.port}/v1`), workspace, store);
+    const session = store.createSession(workspace, "verification-continue");
+    const goal = replaceGoalPlanning(createGoalState({ objective: "Verify exhausted horizon" }), {
+      steps: [{ id: "done", title: "Done horizon", status: "completed" }],
+    });
+    writeGoalState(store, session.session_id, goal);
+
+    const result = await runtime.run({
+      prompt: "verify the completed horizon",
+      session_id: session.session_id,
+      request_class: "verification",
+      visibility: "internal",
+      run_id: verifyRunId,
+    });
+
+    assert.equal(chatCalls, 3);
+    assert.equal(result.tool_rounds, 2);
+    assert.equal(result.tool_calls, 2);
+    const verifications = readGoalLoopView(store, session.session_id).verifications;
+    assert.ok(verifications.some((record) => record.provider === "checker" && record.verdict === "pass" && record.confidence === "hard"));
+    const events = store.listEvents(session.session_id);
+    assert.equal(events.some((event) => event.type === "goal.horizon.exhausted" && event.run_id === verifyRunId), false);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+    await new Promise<void>((resolve) => modelServer.close(() => resolve()));
+  }
+});
+
 test("runtime rejects model-facing loop completion control-plane calls", async () => {
   let chatCalls = 0;
   const modelServer = createServer((req, res) => {

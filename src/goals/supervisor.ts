@@ -12,6 +12,7 @@ import {
   isGoalHorizonExhausted,
   loopRuntimeCompletionBlockMessage,
   loopRuntimeRemainingMs,
+  meaningfulOpenGoalCandidates,
   markGoalReflectionStarted,
   readGoalState,
   recordGoalCompletionReport,
@@ -25,7 +26,7 @@ import {
 import { buildLoopDecisionPrompt, buildLoopExecutionPrompt } from "./supervisor-prompts.js";
 import { buildGoalVerificationPrompt } from "./verifier.js";
 import { readAutoresearchState, researchCompletionBlockMessage, setAutoresearchMode } from "../autoresearch/state.js";
-import { goalVerifierPolicyCompletionBlockMessage } from "../loop/verification.js";
+import { goalVerifierPolicyCompletionBlockMessage, readGoalVerificationRecords } from "../loop/verification.js";
 
 export const DEFAULT_GOAL_SUPERVISOR_MAX_ITERATIONS = 1000;
 const AT_LEAST_NO_PROGRESS_LIMIT = 3;
@@ -211,7 +212,7 @@ async function runGoalReflection(options: GoalSupervisorOptions, state: GoalStat
     try {
       const runtimeBlock = loopRuntimeCompletionBlockMessage(reflected.goal);
       if (runtimeBlock) {
-        const expanded = expandGoalFromLedgerCandidates(reflected) ?? expandGoalForRuntimeMinimum(reflected, runtimeBlock);
+        const expanded = expandGoalForRuntimeMinimum(reflected, runtimeBlock);
         const saved = writeGoalState(options.store, options.sessionId, expanded, reflectionRunId);
         appendRuntimeMinimumExpansionEvent(options, saved, reflected, reflectionRunId, runtimeBlock);
         options.onReflectionExpanded?.(saved);
@@ -317,7 +318,7 @@ async function runGoalCompletionVerifier(
       role: "completion",
     },
   });
-  return await options.runTurn({
+  const firstRun = await options.runTurn({
     prompt: buildGoalVerificationPrompt(state.goal, { role: "completion", rubric: reason }),
     requestClass: "verification",
     visibility: "internal",
@@ -325,6 +326,51 @@ async function runGoalCompletionVerifier(
     activityLabel: goalHorizonActivityLabel("Verifying loop task", state.goal.horizon_generation),
     suppressTranscript: true,
   });
+  if (!firstRun || hasCompletionVerifierPass(options.store, options.sessionId, state.goal)) {
+    return firstRun;
+  }
+  if (options.shouldContinue && !options.shouldContinue()) {
+    return undefined;
+  }
+  const retryRunId = randomId("verify");
+  options.store.appendEvent({
+    session_id: options.sessionId,
+    run_id: retryRunId,
+    type: "goal.verification.requested",
+    data: {
+      goal_id: state.goal.id,
+      horizon_generation: state.goal.horizon_generation,
+      supervisor: options.supervisor,
+      reason: "completion verifier did not record a checker verdict",
+      retry_of_run_id: firstRun.run_id,
+      role: "completion",
+    },
+  });
+  return await options.runTurn({
+    prompt: buildGoalVerificationRetryPrompt(state, reason),
+    requestClass: "verification",
+    visibility: "internal",
+    runId: retryRunId,
+    activityLabel: goalHorizonActivityLabel("Verifying loop task", state.goal.horizon_generation),
+    suppressTranscript: true,
+  });
+}
+
+function hasCompletionVerifierPass(store: SessionStore, sessionId: string, goal: GoalState["goal"]): boolean {
+  return readGoalVerificationRecords(store, sessionId, goal.id).some((record) => {
+    return record.horizon_generation === goal.horizon_generation
+      && record.verdict === "pass"
+      && (record.provider === "checker" || record.provider === "command" || record.provider === "human");
+  });
+}
+
+function buildGoalVerificationRetryPrompt(state: GoalState, reason: string): string {
+  return [
+    buildGoalVerificationPrompt(state.goal, { role: "completion", rubric: reason }),
+    "",
+    "Verifier retry: the previous checker turn inspected state but did not record a verdict.",
+    "Do not call goal get first. Call goal op=verify exactly once now with provider=checker, verdict, confidence, summary, and concrete evidence or failure_reason.",
+  ].join("\n");
 }
 
 function isRunnableGoal(state: GoalState | undefined): state is GoalState {
@@ -435,7 +481,7 @@ function expandGoalFromLedgerCandidates(state: GoalState): GoalState | undefined
   if (!goal.ledger || goal.preference === "replay") {
     return undefined;
   }
-  const candidates = nextHorizonCandidates(goal.ledger.open);
+  const candidates = nextHorizonCandidates(goal);
   if (!candidates.length) {
     return undefined;
   }
@@ -470,7 +516,12 @@ function expandGoalForRuntimeMinimum(state: GoalState, blockedCompletion: string
 function runtimeMinimumPlanningInput(goal: GoalState["goal"], generation: number, blockedCompletion: string): GoalPlanningInput {
   const remaining = loopRuntimeRemainingMs(goal);
   const remainingNote = remaining === undefined ? "runtime minimum is still pending" : `${remaining}ms of minimum runtime remains`;
-  const notes = `${blockedCompletion} Continue because At least runtime is a lower bound, not a stop timer; ${remainingNote}.`;
+  const frontier = nextHorizonCandidates(goal)
+    .slice(0, 3)
+    .map((candidate) => `${candidate.value}: ${candidate.title}`)
+    .join("; ");
+  const frontierNote = frontier ? ` Existing unresolved frontier: ${frontier}.` : "";
+  const notes = `${blockedCompletion} Continue because At least runtime is a lower bound, not a stop timer; ${remainingNote}.${frontierNote}`;
   if (goal.preference === "discover") {
     return {
       summary: `Loop task ${generation} · Runtime continuation`,
@@ -478,7 +529,7 @@ function runtimeMinimumPlanningInput(goal: GoalState["goal"], generation: number
       steps: [
         {
           id: `runtime_reassess_research_${generation}`,
-          title: "Reassess research evidence and unresolved uncertainty",
+          title: "Reassess research coverage and unresolved uncertainty",
           status: "pending",
           notes,
         },
@@ -490,9 +541,9 @@ function runtimeMinimumPlanningInput(goal: GoalState["goal"], generation: number
         },
         {
           id: `runtime_compare_alternatives_${generation}`,
-          title: "Compare alternatives and update the evidence frontier",
+          title: "Explore a distinct hypothesis or evidence surface",
           status: "pending",
-          notes: "Record competing hypotheses, rejected branches, and remaining evidence gaps in the ledger.",
+          notes: "Avoid repeating stale candidates; record competing hypotheses, rejected branches, and remaining evidence gaps in the ledger.",
         },
         {
           id: `runtime_research_decision_ready_${generation}`,
@@ -509,15 +560,15 @@ function runtimeMinimumPlanningInput(goal: GoalState["goal"], generation: number
     steps: [
       {
         id: `runtime_reassess_scope_${generation}`,
-        title: "Reassess completion claims against the full objective",
+        title: "Reassess delivered scope against the full objective",
         status: "pending",
         notes,
       },
       {
         id: `runtime_audit_surfaces_${generation}`,
-        title: "Audit remaining high-risk surfaces and edge cases",
+        title: "Map and audit distinct remaining work surfaces",
         status: "pending",
-        notes: "Look beyond the last local fix: integrations, user-visible behavior, tests, docs, configuration, rollback, and omitted paths.",
+        notes: "Look beyond the last local fix: modules, integrations, user-visible behavior, tests, docs, configuration, rollback, and omitted paths.",
       },
       {
         id: `runtime_strengthen_verification_${generation}`,
@@ -529,14 +580,14 @@ function runtimeMinimumPlanningInput(goal: GoalState["goal"], generation: number
         id: `runtime_update_frontier_${generation}`,
         title: "Update frontier and prepare the next decision",
         status: "pending",
-        notes: "Record remaining candidates, completed evidence, and any risks that should affect the next decision.",
+        notes: "Reconcile stale candidates, record completed evidence, and leave concrete next steps or closure evidence for the decision turn.",
       },
     ],
   };
 }
 
-function nextHorizonCandidates(candidates: GoalCandidate[]): GoalCandidate[] {
-  return candidates
+function nextHorizonCandidates(goal: GoalState["goal"]): GoalCandidate[] {
+  return meaningfulOpenGoalCandidates(goal)
     .filter((candidate) => candidate.value === "high" || candidate.value === "medium")
     .slice()
     .sort((a, b) => candidateValueRank(b.value) - candidateValueRank(a.value))

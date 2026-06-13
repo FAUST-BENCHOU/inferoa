@@ -413,7 +413,7 @@ test("daemon run with an active goal pauses hidden supervision without strong ve
 
     assert.equal(backgroundCalls, 1);
     assert.equal(reflectionCalls, 1);
-    assert.equal(verificationCalls, 1);
+    assert.equal(verificationCalls, 2);
     const current = readGoalState(store, session.session_id)?.goal;
     assert.equal(current?.status, "paused");
     assert.equal(current?.last_reflection_decision, "done");
@@ -423,6 +423,7 @@ test("daemon run with an active goal pauses hidden supervision without strong ve
     const prompts = store.listEvents(session.session_id).filter((event) => event.type === "user.prompt");
     assert.ok(prompts.some((event) => event.data.prompt === "visible daemon work" && event.data.visibility === "normal"));
     assert.ok(prompts.some((event) => event.data.request_class === "reflection" && event.data.visibility === "internal"));
+    assert.ok(prompts.some((event) => typeof event.data.prompt === "string" && event.data.prompt.includes("Verifier retry")));
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });

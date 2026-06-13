@@ -618,6 +618,7 @@ export function completeGoalReflection(state: GoalState, input: GoalReflectionIn
       now,
     );
   }
+  reconcileLedgerCandidatesFromReflectionSteps(next.goal, input.steps ?? [], timestamp);
   next.goal.updated_at = timestamp;
   return next;
 }
@@ -1092,12 +1093,16 @@ export function goalCompletionCandidateBlockMessage(goal: GoalRecord): string | 
   if (runtimeMessage) {
     return runtimeMessage;
   }
-  const openCandidates = goal.ledger?.open ?? [];
+  const openCandidates = meaningfulOpenGoalCandidates(goal);
   const highMedium = openCandidates.filter((candidate) => candidate.value === "high" || candidate.value === "medium");
   if (highMedium.length > 0) {
     return `Cannot complete ${goal.preference} loop while open high/medium frontier candidates remain (${highMedium.length}).`;
   }
   return undefined;
+}
+
+export function meaningfulOpenGoalCandidates(goal: GoalRecord): GoalCandidate[] {
+  return meaningfulOpenLedgerCandidates(goal.ledger);
 }
 
 export function loopRuntimeCompletionBlockMessage(goal: GoalRecord): string | undefined {
@@ -1448,7 +1453,7 @@ function reconcileLedgerCandidateFromStep(goal: GoalRecord, step: GoalPlanningSt
   if (!goal.ledger || (step.status !== "completed" && step.status !== "skipped")) {
     return;
   }
-  const openIndex = goal.ledger.open.findIndex((candidate) => candidate.id === step.id);
+  const openIndex = goal.ledger.open.findIndex((candidate) => goalCandidateMatchesStep(candidate, step));
   if (openIndex < 0) {
     return;
   }
@@ -1456,22 +1461,51 @@ function reconcileLedgerCandidateFromStep(goal: GoalRecord, step: GoalPlanningSt
   if (!candidate) {
     return;
   }
+  goal.ledger.open = goal.ledger.open.filter((item) => !goalCandidatesMatch(item, candidate));
   const status: GoalCandidateStatus = step.status === "completed" ? "done" : "rejected";
   const moved: GoalCandidate = {
     ...candidate,
+    id: normalizeGoalStepId(candidate.id, candidate.title, 0, new Set()),
     status,
     reason: step.notes ?? candidate.reason,
     evidence: step.evidence ? cloneJsonObject(step.evidence) : candidate.evidence ? cloneJsonObject(candidate.evidence) : undefined,
     updated_at: timestamp,
   };
   if (status === "done") {
-    goal.ledger.done = [...goal.ledger.done.filter((item) => item.id !== moved.id), moved];
-    goal.ledger.rejected = goal.ledger.rejected.filter((item) => item.id !== moved.id);
+    goal.ledger.done = [...goal.ledger.done.filter((item) => !goalCandidatesMatch(item, moved)), moved];
+    goal.ledger.rejected = goal.ledger.rejected.filter((item) => !goalCandidatesMatch(item, moved));
   } else {
-    goal.ledger.rejected = [...goal.ledger.rejected.filter((item) => item.id !== moved.id), moved];
-    goal.ledger.done = goal.ledger.done.filter((item) => item.id !== moved.id);
+    goal.ledger.rejected = [...goal.ledger.rejected.filter((item) => !goalCandidatesMatch(item, moved)), moved];
+    goal.ledger.done = goal.ledger.done.filter((item) => !goalCandidatesMatch(item, moved));
   }
   goal.ledger.updated_at = timestamp;
+}
+
+function reconcileLedgerCandidatesFromReflectionSteps(goal: GoalRecord, steps: GoalPlanningStepInput[], timestamp: string): void {
+  if (!goal.ledger || !steps.length) {
+    return;
+  }
+  const used = new Set<string>();
+  for (const input of steps) {
+    const title = input.title.trim();
+    if (!title) {
+      continue;
+    }
+    const status = input.status ?? "pending";
+    if (status !== "completed" && status !== "skipped") {
+      continue;
+    }
+    const step: GoalPlanningStep = {
+      id: normalizeGoalStepId(input.id, title, used.size, used),
+      title,
+      status,
+      notes: cleanOptionalString(input.notes),
+      evidence: input.evidence ? cloneJsonObject(input.evidence) : undefined,
+      updated_at: timestamp,
+    };
+    used.add(step.id);
+    reconcileLedgerCandidateFromStep(goal, step, timestamp);
+  }
 }
 
 function compactEvidenceSummary(value: JsonObject): string {
@@ -1642,7 +1676,7 @@ function parseGoalCandidate(value: unknown, status: GoalCandidateStatus): GoalCa
     return undefined;
   }
   return {
-    id,
+    id: normalizeGoalStepId(id, title, 0, new Set()),
     title,
     source: optionalString(data.source),
     value: candidateValue,
@@ -1803,6 +1837,63 @@ function goalStepTitleKey(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+function meaningfulOpenLedgerCandidates(ledger: GoalLedger | undefined): GoalCandidate[] {
+  if (!ledger) {
+    return [];
+  }
+  const closedKeys = new Set([...ledger.done, ...ledger.rejected].flatMap(goalCandidateSemanticKeys));
+  const seenKeys = new Set<string>();
+  const output: GoalCandidate[] = [];
+  for (const candidate of ledger.open) {
+    const keys = goalCandidateSemanticKeys(candidate);
+    if (keys.some((key) => closedKeys.has(key))) {
+      continue;
+    }
+    if (keys.some((key) => seenKeys.has(key))) {
+      continue;
+    }
+    for (const key of keys) {
+      seenKeys.add(key);
+    }
+    output.push(candidate);
+  }
+  return output;
+}
+
+function goalCandidateMatchesStep(candidate: GoalCandidate, step: GoalPlanningStep): boolean {
+  const stepId = canonicalGoalIdentity(step.id);
+  const stepTitle = goalStepTitleKey(step.title);
+  return goalCandidateSemanticKeys(candidate).some((key) => key === `id:${stepId}` || key === `title:${stepTitle}`);
+}
+
+function goalCandidatesMatch(left: GoalCandidate, right: GoalCandidate): boolean {
+  const rightKeys = new Set(goalCandidateSemanticKeys(right));
+  return goalCandidateSemanticKeys(left).some((key) => rightKeys.has(key));
+}
+
+function goalCandidateSemanticKeys(candidate: GoalCandidate): string[] {
+  const keys: string[] = [];
+  const id = canonicalGoalIdentity(candidate.id);
+  if (id) {
+    keys.push(`id:${id}`);
+  }
+  const title = goalStepTitleKey(candidate.title);
+  if (title) {
+    keys.push(`title:${title}`);
+  }
+  return keys;
+}
+
+function canonicalGoalIdentity(value: string | undefined): string {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.:-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64)
+    .replace(/^-+|-+$/g, "");
+}
+
 function cloneGoalPlanning(planning: GoalPlanningState): GoalPlanningState {
   return {
     summary: planning.summary,
@@ -1864,7 +1955,8 @@ function normalizeGoalStepId(rawId: string | undefined, title: string, index: nu
     .toLowerCase()
     .replace(/[^a-z0-9_.:-]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 64) || `step-${index + 1}`;
+    .slice(0, 64)
+    .replace(/^-+|-+$/g, "") || `step-${index + 1}`;
   let candidate = base;
   let suffix = 2;
   while (used.has(candidate)) {
