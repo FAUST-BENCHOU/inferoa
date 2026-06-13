@@ -7,6 +7,7 @@ import type {
   ModelMessage,
   ModelRequest,
   ModelResponse,
+  ModelUsage,
   PermissionMode,
   RtkSavingsSummary,
   SessionEvent,
@@ -67,6 +68,7 @@ export interface RuntimeRunOptions {
   max_tool_rounds?: number;
   request_class?: ModelRequest["request_class"];
   visibility?: "normal" | "internal";
+  origin?: "loop";
   run_id?: string;
   signal?: AbortSignal;
   tool_names?: string[];
@@ -481,7 +483,7 @@ export class Runtime {
         session_id: session.session_id,
         run_id: runId,
         type: "user.prompt",
-        data: { prompt: options.prompt, request_class: requestClass, visibility },
+        data: { prompt: options.prompt, request_class: requestClass, visibility, origin: options.origin },
       });
       toolCalls += await this.prefetchPromptUrls(
         options.prompt,
@@ -527,6 +529,7 @@ export class Runtime {
               request_class: requestClass,
               visibility: "internal",
               synthetic: "tool-loop-continuation",
+              origin: options.origin,
             },
           });
         }
@@ -651,6 +654,7 @@ export class Runtime {
           messages: rebuilt.messages,
           tools: availableTools,
           request_class: requestClass,
+          request_origin: options.origin,
           prompt_hash: rebuilt.prompt_hash,
           tool_schema_hash: rebuilt.tool_schema_hash,
           prompt_epoch_id: rebuilt.epoch.prompt_epoch_id,
@@ -668,6 +672,7 @@ export class Runtime {
             mode: request.mode,
             model: request.model,
             request_class: request.request_class,
+            request_origin: request.request_origin,
             prompt_hash: request.prompt_hash,
             tool_schema_hash: request.tool_schema_hash,
             estimated_tokens: rebuilt.estimated_tokens,
@@ -678,8 +683,18 @@ export class Runtime {
           },
         });
         options.onStatus?.({ type: "model_start", model: request.model });
+        const modelCallStartedAt = Date.now();
+        let firstDeltaAt: number | undefined;
+        const onModelDelta = options.onDelta
+          ? (text: string) => {
+              if (firstDeltaAt === undefined && text.length > 0) {
+                firstDeltaAt = Date.now();
+              }
+              options.onDelta?.(text);
+            }
+          : undefined;
         try {
-          response = await this.streamModelWithRetry(request, options.onDelta, options.onStatus, options.signal);
+          response = await this.streamModelWithRetry(request, onModelDelta, options.onStatus, options.signal);
         } catch (error) {
           if (isContextLengthExceededError(error) && !compressedThisRun) {
             const reason = "provider-context-limit";
@@ -816,6 +831,8 @@ export class Runtime {
             prompt_epoch_id: request.prompt_epoch_id,
             request_class: requestClass,
             visibility,
+            request_origin: request.request_origin,
+            ...modelLatencyMetrics(modelCallStartedAt, firstDeltaAt, response.usage),
             raw: response.raw as never,
             diagnostics: response.diagnostics as never,
           },
@@ -1372,6 +1389,20 @@ function runMetrics(startedAt: number, tokens: number, toolRounds: number, toolC
     tool_rounds: toolRounds,
     tool_calls: toolCalls,
     duration_ms: durationMs,
+  };
+}
+
+function modelLatencyMetrics(startedAt: number, firstDeltaAt: number | undefined, usage: ModelUsage | undefined): JsonObject {
+  const durationMs = Math.max(0, Date.now() - startedAt);
+  const ttftMs = firstDeltaAt === undefined ? undefined : Math.max(0, firstDeltaAt - startedAt);
+  const completionTokens = optionalNumberField(usage?.completion_tokens);
+  const tpotMs = completionTokens && completionTokens > 0
+    ? Math.max(0, durationMs - (ttftMs ?? 0)) / completionTokens
+    : undefined;
+  return {
+    duration_ms: durationMs,
+    ttft_ms: ttftMs,
+    tpot_ms: tpotMs,
   };
 }
 

@@ -1,6 +1,7 @@
 export interface PromptQueueItem {
   prompt: string;
   renderPromptAtSubmission: boolean;
+  origin?: "loop";
 }
 
 export type PromptQueueState = PromptQueueItem[];
@@ -12,7 +13,7 @@ export function createPromptQueueState(): PromptQueueState {
 export function enqueuePromptForSubmission(
   state: PromptQueueState,
   prompt: string,
-  options: { busy: boolean; renderPrompt?: boolean },
+  options: { busy: boolean; renderPrompt?: boolean; origin?: "loop" },
 ): { state: PromptQueueState; renderSubmittedPromptNow: boolean } {
   const trimmed = prompt.trim();
   if (!trimmed) {
@@ -20,7 +21,7 @@ export function enqueuePromptForSubmission(
   }
   const renderPrompt = options.renderPrompt !== false;
   return {
-    state: [...state, { prompt: trimmed, renderPromptAtSubmission: renderPrompt && options.busy }],
+    state: [...state, { prompt: trimmed, renderPromptAtSubmission: renderPrompt && options.busy, origin: options.origin }],
     renderSubmittedPromptNow: renderPrompt && !options.busy,
   };
 }

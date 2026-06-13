@@ -78,6 +78,7 @@ interface RunSummary {
   rtk: RtkSavingsSummary;
   cache?: CacheObservation;
   prefixCacheStatus?: string;
+  latency: TurnLatency;
 }
 
 interface ModelCallSummary {
@@ -92,12 +93,14 @@ interface ModelCallSummary {
   promptEpochId?: string;
   isRunStart: boolean;
   requestClass?: string;
+  requestOrigin?: string;
   actualTokens: number;
   withoutRtkTokens: number;
   toolCalls: number;
   rtk: RtkSavingsSummary;
   cache?: CacheObservation;
   prefixCacheStatus?: string;
+  latency: TurnLatency;
 }
 
 interface CompactionCallSummary {
@@ -113,9 +116,16 @@ interface CompactionCallSummary {
   rtk: RtkSavingsSummary;
   cache?: CacheObservation;
   prefixCacheStatus?: string;
+  latency: TurnLatency;
 }
 
 type TurnSummary = RunSummary | ModelCallSummary | CompactionCallSummary;
+
+interface TurnLatency {
+  ttftMs?: number;
+  tpotMs?: number;
+  durationMs?: number;
+}
 
 interface EpochSummary {
   promptEpochId: string;
@@ -182,9 +192,10 @@ export function renderTokenmaxxingRows(
 ): TokenmaxxingScreenRow[] {
   const contentWidth = Math.max(20, width - 2);
   const cacheEvidence = buildCacheEvidence(endpointEvidence, events);
+  const latencyEvidence = buildLatencyEvidence(endpointEvidence, events);
   const runs = runSummaries(events, cacheEvidence.byRun);
-  const modelCalls = modelCallSummaries(events, cacheEvidence.byCall);
-  const compactionCalls = compactionCallSummaries(endpointEvidence, events, cacheEvidence.byCall);
+  const modelCalls = modelCallSummaries(events, cacheEvidence.byCall, latencyEvidence);
+  const compactionCalls = compactionCallSummaries(endpointEvidence, events, cacheEvidence.byCall, latencyEvidence);
   const modelDetailTurns = [...modelCalls, ...compactionCalls].sort((left, right) => left.order - right.order);
   const detailTurns: TurnSummary[] = modelDetailTurns.length ? modelDetailTurns : runs;
   const cache = cacheTotals(cacheEvidence.observations);
@@ -386,11 +397,12 @@ function runSummaries(events: SessionEvent[], cacheByRun: Map<string, CacheObser
         toolCalls: numberField(event.data.tool_calls) || rtk.tool_calls,
         rtk,
         cache: event.run_id ? cacheByRun.get(event.run_id) : undefined,
+        latency: latencyFromData(event.data),
       };
     });
 }
 
-function modelCallSummaries(events: SessionEvent[], cacheByCall: Map<string, CacheObservation>): ModelCallSummary[] {
+function modelCallSummaries(events: SessionEvent[], cacheByCall: Map<string, CacheObservation>, latencyByCall: Map<string, TurnLatency>): ModelCallSummary[] {
   const runOrdinals = runOrdinalMap(events);
   const requestByCall = modelRequestByCall(events);
   const seenRuns = new Set<string>();
@@ -407,6 +419,7 @@ function modelCallSummaries(events: SessionEvent[], cacheByCall: Map<string, Cac
       const callKey = cacheCallKey(runId, stepId, stepIndex);
       const request = requestByCall.get(callKey);
       const cache = cacheByCall.get(callKey);
+      const latency = mergeLatency(latencyFromData(event.data, usageField(event.data.usage)), latencyByCall.get(callKey), usageField(event.data.usage));
       const isRunStart = !seenRuns.has(runId);
       seenRuns.add(runId);
       return {
@@ -421,17 +434,19 @@ function modelCallSummaries(events: SessionEvent[], cacheByCall: Map<string, Cac
         promptEpochId: cache?.promptEpochId ?? stringField(event.data.prompt_epoch_id) ?? stringField(request?.prompt_epoch_id),
         isRunStart,
         requestClass: stringField(event.data.request_class) ?? stringField(request?.request_class),
+        requestOrigin: stringField(event.data.request_origin) ?? stringField(request?.request_origin),
         actualTokens,
         withoutRtkTokens: actualTokens + rtk.saved_tokens,
         toolCalls,
         rtk,
         cache,
         prefixCacheStatus: stringField(request?.prefix_cache_status),
+        latency,
       };
     });
 }
 
-function compactionCallSummaries(evidence: JsonObject[], events: SessionEvent[], cacheByCall: Map<string, CacheObservation>): CompactionCallSummary[] {
+function compactionCallSummaries(evidence: JsonObject[], events: SessionEvent[], cacheByCall: Map<string, CacheObservation>, latencyByCall: Map<string, TurnLatency>): CompactionCallSummary[] {
   const runOrdinals = runOrdinalMap(events);
   const eventOrder = endpointEvidenceEventOrder(events);
   return evidence
@@ -445,6 +460,7 @@ function compactionCallSummaries(evidence: JsonObject[], events: SessionEvent[],
       const actualTokens = modelUsageTokenCost(usage);
       const callKey = cacheCallKey(runId, stepId, stepIndex);
       const cache = cacheByCall.get(callKey);
+      const latency = mergeLatency(latencyFromData(item, usage), latencyByCall.get(callKey), usage);
       return {
         kind: "compaction" as const,
         order: eventOrder.get(endpointEvidenceKey(item)) ?? 1_000_000 + index,
@@ -458,6 +474,7 @@ function compactionCallSummaries(evidence: JsonObject[], events: SessionEvent[],
         rtk: rtkSummary(undefined),
         cache,
         prefixCacheStatus: stringField(item.prefix_cache_status),
+        latency,
       };
     });
 }
@@ -475,6 +492,75 @@ function endpointEvidenceEventOrder(events: SessionEvent[]): Map<string, number>
 
 function endpointEvidenceKey(data: JsonObject, fallbackRunId?: string): string {
   return [stringField(data.run_id) ?? fallbackRunId ?? "", stringField(data.request_id) ?? "", stringField(data.prompt_hash) ?? ""].join(":");
+}
+
+function buildLatencyEvidence(evidence: JsonObject[], events: readonly SessionEvent[]): Map<string, TurnLatency> {
+  const out = new Map<string, TurnLatency>();
+  const put = (runId: string | undefined, data: JsonObject, usage?: ModelUsage) => {
+    if (!runId) {
+      return;
+    }
+    const latency = latencyFromData(data, usage);
+    if (!hasLatency(latency)) {
+      return;
+    }
+    out.set(cacheCallKey(runId, stringField(data.step_id), optionalNumberField(data.step_index)), latency);
+  };
+  for (const event of events) {
+    if (event.type === "endpoint.evidence.recorded") {
+      put(event.run_id ?? stringField(event.data.run_id), event.data, usageField(event.data.usage));
+    }
+  }
+  for (const item of evidence) {
+    put(stringField(item.run_id), item, usageField(item.usage));
+  }
+  return out;
+}
+
+function latencyFromData(data: JsonObject, usage?: ModelUsage): TurnLatency {
+  const timings = objectField(data.timings);
+  return deriveLatency({
+    ttftMs: firstNumberField(data, timings, ["ttft_ms", "time_to_first_token_ms", "first_token_ms", "first_delta_ms"]),
+    tpotMs: firstNumberField(data, timings, ["tpot_ms", "time_per_output_token_ms", "time_per_token_ms", "ms_per_output_token"]),
+    durationMs: firstNumberField(data, timings, ["duration_ms", "latency_ms", "elapsed_ms", "total_ms"]),
+  }, usage);
+}
+
+function mergeLatency(primary: TurnLatency, fallback: TurnLatency | undefined, usage?: ModelUsage): TurnLatency {
+  return deriveLatency({
+    ttftMs: primary.ttftMs ?? fallback?.ttftMs,
+    tpotMs: primary.tpotMs ?? fallback?.tpotMs,
+    durationMs: primary.durationMs ?? fallback?.durationMs,
+  }, usage);
+}
+
+function deriveLatency(latency: TurnLatency, usage?: ModelUsage): TurnLatency {
+  if (latency.tpotMs !== undefined || latency.durationMs === undefined) {
+    return latency;
+  }
+  const completionTokens = optionalNumberField(usage?.completion_tokens);
+  if (completionTokens === undefined || completionTokens <= 0) {
+    return latency;
+  }
+  const generationMs = latency.ttftMs === undefined ? latency.durationMs : Math.max(0, latency.durationMs - latency.ttftMs);
+  return {
+    ...latency,
+    tpotMs: generationMs / completionTokens,
+  };
+}
+
+function hasLatency(latency: TurnLatency): boolean {
+  return latency.ttftMs !== undefined || latency.tpotMs !== undefined || latency.durationMs !== undefined;
+}
+
+function firstNumberField(primary: JsonObject, secondary: JsonObject, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = optionalNumberField(primary[key]) ?? optionalNumberField(secondary[key]);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 function modelRequestByCall(events: SessionEvent[]): Map<string, JsonObject> {
@@ -791,8 +877,9 @@ const TREND_PANELS: TrendPanelDefinition[] = [
 
 function tokenmaxxingTrendModel(events: SessionEvent[], endpointEvidence: JsonObject[]): TokenmaxxingTrendModel {
   const cacheEvidence = buildCacheEvidence(endpointEvidence, events);
-  const modelCalls = modelCallSummaries(events, cacheEvidence.byCall);
-  const compactionCalls = compactionCallSummaries(endpointEvidence, events, cacheEvidence.byCall);
+  const latencyEvidence = buildLatencyEvidence(endpointEvidence, events);
+  const modelCalls = modelCallSummaries(events, cacheEvidence.byCall, latencyEvidence);
+  const compactionCalls = compactionCallSummaries(endpointEvidence, events, cacheEvidence.byCall, latencyEvidence);
   const turns = [...modelCalls, ...compactionCalls].sort((left, right) => left.order - right.order);
   const runFallback = runSummaries(events, cacheEvidence.byRun);
   const detailTurns: TurnSummary[] = turns.length ? turns : runFallback;
@@ -1424,6 +1511,9 @@ function turnTableHeader(width: number): string {
     fg256(244, "prefix"),
     fg256(244, "tools"),
     fg256(244, "rtk"),
+    fg256(244, "TTFT"),
+    fg256(244, "TPOT"),
+    fg256(244, "Duration"),
   ], width);
 }
 
@@ -1438,6 +1528,9 @@ function turnLine(turn: TurnSummary, width: number): string {
     prefixSafetyCell(turn),
     `tools ${turn.toolCalls}`,
     turn.rtk.rtk_commands > 0 ? `rtk ${turn.rtk.saved_tokens}` : fg256(244, "-"),
+    formatLatencyCell(turn.latency.ttftMs),
+    formatLatencyCell(turn.latency.tpotMs),
+    formatLatencyCell(turn.latency.durationMs),
   ], width);
 }
 
@@ -1516,9 +1609,9 @@ function formatTurnTableRow(cells: Array<string | undefined>, width: number): st
 }
 
 function turnTableWidths(width: number): number[] {
-  const minimums = [10, 8, 15, 13, 9, 7, 7, 8];
-  const maximums = [18, 18, 36, 34, 24, 18, 18, 24];
-  const weights = [1.1, 1, 2, 2, 1.25, 1, 0.85, 0.85];
+  const minimums = [10, 8, 15, 13, 9, 7, 7, 8, 7, 7, 9];
+  const maximums = [18, 18, 36, 34, 24, 18, 18, 24, 10, 10, 12];
+  const weights = [1.1, 1, 2, 2, 1.25, 1, 0.85, 0.85, 0.7, 0.7, 0.9];
   const separatorWidth = 2 * (minimums.length - 1);
   const minimumSum = minimums.reduce((sum, value) => sum + value, 0);
   const maximumSum = maximums.reduce((sum, value) => sum + value, 0);
@@ -1597,6 +1690,9 @@ function turnEventLabel(turn: TurnSummary): string {
     if (name === "user") {
       return fg256(87, name);
     }
+    if (name === "loop") {
+      return fg256(111, name);
+    }
     if (name === "reflect" || name === "verify") {
       return fg256(111, name);
     }
@@ -1614,8 +1710,15 @@ function modelCallEventName(turn: ModelCallSummary): string {
     case "background":
       return "bg";
     default:
+      if (turn.requestOrigin === "loop" && turn.isRunStart) {
+        return "loop";
+      }
       return turn.isRunStart ? "user" : "tool-loop";
   }
+}
+
+function formatLatencyCell(value?: number): string {
+  return value === undefined ? fg256(244, "-") : formatDuration(value);
 }
 
 function turnCacheCells(cache?: CacheObservation): { cache: string; diff: string } {

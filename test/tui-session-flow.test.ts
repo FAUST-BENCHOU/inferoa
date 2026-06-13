@@ -281,20 +281,20 @@ test("repeat goal continuation renders each repeated prompt and decrements remai
         strategy: { mode: "repeat", inferred: false, target_runs: 3 },
       }),
     );
-    const queued: Array<{ prompt: string; renderPrompt?: boolean }> = [];
+    const queued: Array<{ prompt: string; renderPrompt?: boolean; origin?: string }> = [];
     const view = tui as unknown as {
       enqueueGoalContinuation: (state: ReturnType<typeof createGoalState>) => Promise<void>;
       optionalSession: () => { session_id: string } | undefined;
-      enqueuePrompt: (prompt: string, options?: { renderPrompt?: boolean }) => void;
+      enqueuePrompt: (prompt: string, options?: { renderPrompt?: boolean; origin?: string }) => void;
     };
     view.optionalSession = () => session;
     view.enqueuePrompt = (prompt, options = {}) => {
-      queued.push({ prompt, renderPrompt: options.renderPrompt });
+      queued.push({ prompt, renderPrompt: options.renderPrompt, origin: options.origin });
     };
 
     await view.enqueueGoalContinuation(state);
 
-    assert.deepEqual(queued, [{ prompt: "say hi", renderPrompt: true }]);
+    assert.deepEqual(queued, [{ prompt: "say hi", renderPrompt: true, origin: "loop" }]);
     assert.equal(readGoalState(store, session.session_id)?.goal.strategy?.remaining_runs, 2);
   } finally {
     store.close();

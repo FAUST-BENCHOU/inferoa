@@ -1298,6 +1298,7 @@ test("goal supervisor repeat strategy resends the original objective for the con
     );
     const prompts: string[] = [];
     const renderPromptFlags: Array<boolean | undefined> = [];
+    const origins: Array<string | undefined> = [];
 
     const result = await runGoalSupervisor({
       store,
@@ -1307,6 +1308,7 @@ test("goal supervisor repeat strategy resends the original objective for the con
       runTurn: async (request) => {
         prompts.push(request.prompt);
         renderPromptFlags.push(request.renderPrompt);
+        origins.push(request.origin);
         return { run_id: `run_repeat_${prompts.length}`, content: "done" };
       },
     });
@@ -1318,6 +1320,7 @@ test("goal supervisor repeat strategy resends the original objective for the con
       "Run the same cleanup prompt",
     ]);
     assert.deepEqual(renderPromptFlags, [true, true, true]);
+    assert.deepEqual(origins, ["loop", "loop", "loop"]);
     const current = readGoalState(store, session.session_id)?.goal;
     assert.equal(current?.status, "complete");
     assert.equal(current?.strategy?.remaining_runs, 0);

@@ -49,3 +49,14 @@ test("hidden prompts submit without transcript rendering or queue preview", () =
   assert.equal(second.item?.prompt, "internal approved plan execution");
   assert.equal(second.item?.renderPromptAtSubmission, false);
 });
+
+test("queued prompts preserve loop origin metadata for submission", () => {
+  let state = createPromptQueueState();
+
+  const queued = enqueuePromptForSubmission(state, "repeat prompt", { busy: true, renderPrompt: true, origin: "loop" });
+  state = queued.state;
+
+  const next = shiftPromptForSubmission(state);
+  assert.equal(next.item?.prompt, "repeat prompt");
+  assert.equal(next.item?.origin, "loop");
+});

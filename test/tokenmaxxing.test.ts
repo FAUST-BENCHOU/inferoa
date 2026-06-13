@@ -232,6 +232,30 @@ test("tokenmaxxing view exposes model-call cache and RTK inside a long run", () 
   assert.match(leftAlignedTurn ?? "", /^turn 1\.2\s+tool-loop\s+tokens 130\/130/);
 });
 
+test("tokenmaxxing marks loop-origin repeat prompts and shows model latency columns", () => {
+  const events: SessionEvent[] = [
+    event("user.prompt", { prompt: "repeat this", request_class: "interactive", visibility: "normal", origin: "loop" }, "run_loop"),
+    event("model.request.started", { step_id: "step_1", step_index: 1, prompt_epoch_id: "pe_loop", request_origin: "loop" }, "run_loop"),
+    event("model.response.settled", {
+      step_id: "step_1",
+      step_index: 1,
+      prompt_epoch_id: "pe_loop",
+      request_origin: "loop",
+      duration_ms: 1200,
+      ttft_ms: 300,
+      usage: { prompt_tokens: 900, cached_prompt_tokens: 810, completion_tokens: 30, total_tokens: 930 },
+      tool_calls: [],
+    }, "run_loop"),
+  ];
+
+  const plain = stripAnsi(renderTokenmaxxingLines(events, [], 220, { detailLimit: Number.POSITIVE_INFINITY }).join("\n"));
+
+  assert.match(plain, /TTFT\s+TPOT\s+Duration/);
+  assert.match(plain, /turn 1\.1\s+loop\s+tokens 930\/930/);
+  assert.match(plain, /300ms\s+30ms\s+1\.2s/);
+  assert.doesNotMatch(plain, /turn 1\.1\s+user/);
+});
+
 test("tokenmaxxing fullscreen renderer uses page-only horizontal navigation", () => {
   const body = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`);
   const screen = renderTokenmaxxingScreen(body, 50, 8, 1);

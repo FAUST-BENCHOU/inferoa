@@ -243,6 +243,7 @@ export interface ModelRequest {
   temperature?: number;
   max_tokens?: number;
   request_class?: "interactive" | "tool" | "verification" | "compaction" | "background" | "reflection";
+  request_origin?: "loop";
   prompt_hash?: string;
   tool_schema_hash?: string;
   prompt_epoch_id?: string;

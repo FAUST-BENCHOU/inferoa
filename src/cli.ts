@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { promises as fs } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 import { loadApp, type AppOptions } from "./app.js";
 import { userConfigPath } from "./config/config.js";
@@ -158,6 +159,7 @@ async function main(): Promise<void> {
       initialView: parsed.initialView,
       stateDir: parsed.stateDir,
       noAnimation: parsed.noAnimation,
+      appVersion: packageVersion(),
     }).run();
   } finally {
     closeApp(app);
@@ -167,6 +169,16 @@ async function main(): Promise<void> {
 function closeApp(app: Awaited<ReturnType<typeof loadApp>>): void {
   app.runtime.dispose();
   app.store.close();
+}
+
+function packageVersion(): string | undefined {
+  try {
+    const packageJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json");
+    const data = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { version?: unknown };
+    return typeof data.version === "string" && data.version.trim() ? data.version : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseArgs(argv: string[]): ParsedCli {

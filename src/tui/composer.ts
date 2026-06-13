@@ -31,8 +31,10 @@ export interface WelcomeComposerRenderOptions extends ComposerRenderOptions {
   workspaceRoot: string;
   mode: string;
   model: string;
+  providerName?: string;
   contextWindow?: number;
   codeIntelligence?: string;
+  appVersion?: string;
 }
 
 export interface ComposerRenderResult {
@@ -91,6 +93,7 @@ interface ComposerSuggestionWindow<T> {
 
 export const COMPOSER_SUGGESTION_PAGE_SIZE = 8;
 export const WELCOME_COMPOSER_SUGGESTION_PAGE_SIZE = 5;
+const WELCOME_META_SIDE_INSET = 2;
 
 export function resolveComposerSubmission(input: ComposerSubmissionInput): ComposerSubmissionDecision {
   const item = input.items[input.selected];
@@ -444,6 +447,7 @@ export function renderWelcomeComposerSurface(options: WelcomeComposerRenderOptio
     codeIntelligenceWidth = affordance.statusWidth;
     lines.push(affordance.line);
   }
+  appendWelcomeVersionLine(lines, width, height, options.appVersion);
   return { lines, cursorLine, cursorColumn: Math.max(0, Math.min(width - 1, cursorColumn)), codeIntelligenceLine, codeIntelligenceColumn, codeIntelligenceWidth };
 }
 
@@ -540,7 +544,26 @@ function welcomeMetaLine(options: WelcomeComposerRenderOptions, width: number): 
   const modelText = compactModelLabel(options.model);
   const contextText = options.contextWindow ? compactTokenWindow(options.contextWindow) : undefined;
   const left = [fg256(252, modelText), ...(contextText ? [fg256(244, contextText)] : [])].join(` ${fg256(244, "·")} `);
-  return renderComposerMetadataLine(left, undefined, width);
+  const provider = options.providerName?.trim()
+    ? fg256(252, `${ansi.bold}${options.providerName.trim()}${ansi.reset}`)
+    : undefined;
+  return padRight(renderComposerMetadataLine(left, provider, Math.max(1, width - WELCOME_META_SIDE_INSET)), width);
+}
+
+function appendWelcomeVersionLine(lines: string[], width: number, height: number, version: string | undefined): void {
+  const clean = version?.trim().replace(/^v/i, "");
+  if (!clean || lines.length >= height) {
+    return;
+  }
+  while (lines.length < height - 1) {
+    lines.push("");
+  }
+  lines.push(rightAlignedLine(fg256(244, `v${clean}`), width));
+}
+
+function rightAlignedLine(text: string, width: number): string {
+  const clipped = truncateToWidth(text, width);
+  return `${" ".repeat(Math.max(0, width - visibleWidth(clipped)))}${clipped}`;
 }
 
 function welcomeAffordanceLine(options: WelcomeComposerRenderOptions, width: number, inputLeft: number, inputWidth: number): { line: string; statusColumn?: number; statusWidth?: number } {

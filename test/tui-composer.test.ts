@@ -350,6 +350,36 @@ test("welcome composer centers Inferoa wordmark and keeps slash and skill afford
   assert.match(withSuggestions.lines.map((line) => stripAnsi(line)).join("\n"), /\/loop/);
 });
 
+test("welcome composer shows provider in the input box and version in the lower right", () => {
+  const width = 118;
+  const rendered = renderWelcomeComposerSurface({
+    buffer: "",
+    cursor: 0,
+    items: [],
+    selected: 0,
+    width,
+    height: 34,
+    workspaceRoot: "/tmp/workspace",
+    mode: "direct",
+    model: "moonshotai/Kimi-K2.6",
+    contextWindow: 256_000,
+    providerName: "Tensormesh",
+    appVersion: "9.8.7",
+  });
+  const plainLines = rendered.lines.map((line) => stripAnsi(line));
+  const metaLine = plainLines.find((line) => line.includes("Kimi-K2.6")) ?? "";
+  const versionLine = plainLines.at(-1) ?? "";
+
+  assert.match(metaLine, /Kimi-K2\.6 · 256k\s+Tensormesh/);
+  assert.match(metaLine, /Tensormesh\s{2}$/);
+  assert.match(rendered.lines.join("\n"), /\x1b\[38;5;252m\x1b\[1mTensormesh\x1b\[0m/);
+  assert.match(versionLine, /v9\.8\.7$/);
+  assert.ok(versionLine.indexOf("v9.8.7") > width - 16);
+  assert.match(rendered.lines.at(-1) ?? "", /\x1b\[38;5;244mv9\.8\.7\x1b\[0m$/);
+  assert.equal(rendered.lines.length, 34);
+  assert.equal(rendered.lines.every((line) => visibleWidth(line) <= width), true);
+});
+
 test("welcome slash launcher keeps a compact portrait hint", () => {
   const rendered = renderWelcomeComposerSurface({
     buffer: "/",

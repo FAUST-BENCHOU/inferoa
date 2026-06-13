@@ -277,6 +277,7 @@ export interface TuiLaunchOptions {
   initialView?: SlashCommandName;
   stateDir?: string;
   noAnimation?: boolean;
+  appVersion?: string;
 }
 
 interface ChatTurnEvidence extends CacheFooterInput {
@@ -316,6 +317,7 @@ interface SubmitPromptOptions {
   runId?: string;
   activityLabel?: string;
   suppressTranscript?: boolean;
+  origin?: RuntimeRunOptions["origin"];
 }
 
 interface ReadComposerOptions {
@@ -482,10 +484,10 @@ export class TuiApp {
     this.#inputHistory = recordComposerInputHistoryEntry(this.#inputHistory, text);
   }
 
-  private enqueuePrompt(prompt: string, options: { renderPrompt?: boolean } = {}): void {
+  private enqueuePrompt(prompt: string, options: { renderPrompt?: boolean; origin?: RuntimeRunOptions["origin"] } = {}): void {
     const busy = Boolean(this.#activeAbort || this.#promptWorker || this.#promptWorkerScheduled || this.#selfImproveWorker || this.#compactWorker || this.promptRequiresCodeIntelligenceGate());
     this.#composerFooter = undefined;
-    const queued = enqueuePromptForSubmission(this.#promptQueue, prompt, { busy, renderPrompt: options.renderPrompt });
+    const queued = enqueuePromptForSubmission(this.#promptQueue, prompt, { busy, renderPrompt: options.renderPrompt, origin: options.origin });
     this.#promptQueue = queued.state;
     if (queued.renderSubmittedPromptNow) {
       this.renderSubmittedPrompt(prompt);
@@ -533,7 +535,7 @@ export class TuiApp {
         continue;
       }
       this.updateQueueFooter();
-      await this.submitPrompt(item.prompt, { renderPrompt: item.renderPromptAtSubmission });
+      await this.submitPrompt(item.prompt, { renderPrompt: item.renderPromptAtSubmission, origin: item.origin });
       await this.drainForegroundGoalSupervisor();
     }
     this.clearQueueFooter();
@@ -567,6 +569,7 @@ export class TuiApp {
             runId: request.runId,
             activityLabel: request.activityLabel,
             suppressTranscript: request.suppressTranscript,
+            origin: request.origin,
           }),
         onReflectionExpanded: (state) => {
           this.renderGoalSupervisorRecord("Loop decision", reflectionDetail("expanded loop task", state.goal.last_reflection_summary, state.goal.horizon_generation), 75);
@@ -906,8 +909,10 @@ export class TuiApp {
               workspaceRoot: this.app.workspace.root,
               mode: this.app.config.model_setup.mode,
               model: this.app.config.model_setup.model ?? "unconfigured",
+              providerName: modelSetupProviderName(this.app.config.model_setup),
               contextWindow: this.configuredContextWindow(),
               codeIntelligence: this.welcomeCodeIntelligenceMeta(),
+              appVersion: this.options.appVersion,
               placeholder: options.placeholder,
             })
           : renderComposerSurface({
@@ -2909,7 +2914,7 @@ export class TuiApp {
       });
       clampPage();
       const screen = renderTokenmaxxingScreen(latestBody, width, height, pageIndex, {
-        providerName: tokenmaxxingProviderName(this.app.config.model_setup),
+        providerName: modelSetupProviderName(this.app.config.model_setup),
       });
       const sameFrame = renderedWidth === width && renderedLines.length === screen.length && renderedLines.every((line, index) => line === screen[index]);
       if (sameFrame) {
@@ -4198,7 +4203,7 @@ export class TuiApp {
         return;
       }
       writeGoalState(this.app.store, session.session_id, consumed);
-      this.enqueuePrompt(stateOrObjective.goal.objective, { renderPrompt: true });
+      this.enqueuePrompt(stateOrObjective.goal.objective, { renderPrompt: true, origin: "loop" });
       return;
     }
     const goal = typeof stateOrObjective === "string" ? stateOrObjective : stateOrObjective.goal;
@@ -6294,6 +6299,7 @@ export class TuiApp {
         request_class: options.requestClass,
         visibility: options.visibility,
         run_id: options.runId,
+        origin: options.origin,
         signal: abort.signal,
         onDelta: (text) => {
           if (!sawModelDelta) {
@@ -7874,7 +7880,7 @@ function modelSetupAuthSummary(setup: ModelSetup): string {
   return "not stored";
 }
 
-function tokenmaxxingProviderName(setup: ModelSetup): string {
+function modelSetupProviderName(setup: ModelSetup): string {
   const externalProvider = externalProviderById(setup.provider_id);
   if (externalProvider) {
     return externalProvider.label;

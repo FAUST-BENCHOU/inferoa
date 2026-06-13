@@ -449,6 +449,7 @@ async function runJob(store: SessionStore, job: SupervisorJob, stateDir?: string
             request_class: request.requestClass,
             visibility: request.visibility,
             run_id: request.runId,
+            origin: request.origin,
           }),
       });
     }
@@ -520,6 +521,7 @@ async function runGoalJob(store: SessionStore, job: SupervisorJob, stateDir?: st
           request_class: request.requestClass,
           visibility: request.visibility,
           run_id: request.runId,
+          origin: request.origin,
         });
         store.updateSupervisorJob(job.job_id, { run_id: run.run_id, iteration: currentIteration });
         return run;
