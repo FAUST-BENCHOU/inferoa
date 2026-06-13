@@ -3,6 +3,8 @@ import type { SessionStore } from "../session/store.js";
 import { randomId } from "../util/hash.js";
 import {
   cloneGoalState,
+  completeRepeatGoal,
+  consumeRepeatGoalRun,
   completeGoalAfterReflection,
   goalCompletionCandidateBlockMessage,
   goalDurationMs,
@@ -11,6 +13,7 @@ import {
   markGoalReflectionStarted,
   readGoalState,
   recordGoalCompletionReport,
+  repeatGoalRemainingRuns,
   replaceGoalPlanning,
   writeGoalState,
   type GoalCandidate,
@@ -77,6 +80,41 @@ export async function runGoalSupervisor(options: GoalSupervisorOptions): Promise
       return { status: "idle", iteration, goal_id: goalId(state) };
     }
     options.onIteration?.(iteration + 1);
+    if (state.goal.strategy?.mode === "repeat") {
+      const remaining = repeatGoalRemainingRuns(state.goal);
+      if (remaining <= 0) {
+        const runId = randomId("run");
+        const saved = writeGoalState(options.store, options.sessionId, completeRepeatGoal(state, "Repeat loop finished."), runId);
+        recordGoalCompletionReport(options.store, options.sessionId, runId);
+        options.onCompleted?.(saved, runId);
+        return { status: "complete", iteration: iteration + 1, run_id: runId, goal_id: saved.goal.id };
+      }
+      const consumed = consumeRepeatGoalRun(state);
+      if (!consumed) {
+        return { status: "waiting", iteration: iteration + 1, reason: "repeat loop has no remaining runs", goal_id: state.goal.id };
+      }
+      writeGoalState(options.store, options.sessionId, consumed);
+      const run = await options.runTurn({
+        prompt: state.goal.objective,
+        requestClass: options.workRequestClass ?? "background",
+        activityLabel: repeatGoalActivityLabel(consumed.goal),
+      });
+      if (!run) {
+        options.onWaiting?.("repeat loop turn did not complete");
+        return { status: "waiting", iteration: iteration + 1, reason: "repeat loop turn did not complete", goal_id: state.goal.id };
+      }
+      const afterRepeat = readGoalState(options.store, options.sessionId);
+      if (!isRunnableGoal(afterRepeat)) {
+        return { status: "idle", iteration: iteration + 1, run_id: run.run_id, goal_id: goalId(afterRepeat) };
+      }
+      if (afterRepeat.goal.strategy?.mode === "repeat" && repeatGoalRemainingRuns(afterRepeat.goal) <= 0) {
+        const saved = writeGoalState(options.store, options.sessionId, completeRepeatGoal(afterRepeat, "Repeat loop finished."), run.run_id);
+        recordGoalCompletionReport(options.store, options.sessionId, run.run_id);
+        options.onCompleted?.(saved, run.run_id);
+        return { status: "complete", iteration: iteration + 1, run_id: run.run_id, goal_id: saved.goal.id };
+      }
+      continue;
+    }
     if (isGoalHorizonExhausted(state.goal)) {
       const result = await runGoalReflection(options, state, iteration + 1);
       if (result.status === "waiting") {
@@ -270,6 +308,13 @@ function goalHorizonActivityLabel(prefix: string, generation: number): string {
   return `${prefix} ${generation}`;
 }
 
+function repeatGoalActivityLabel(goal: GoalState["goal"]): string {
+  const target = goal.strategy?.target_runs ?? 1;
+  const remaining = repeatGoalRemainingRuns(goal);
+  const current = Math.max(1, target - remaining);
+  return `Repeating loop ${current}/${target}`;
+}
+
 function isCompletedReflectionForRun(state: GoalState, reflectionRunId: string): boolean {
   return state.goal.last_reflection_run_id === reflectionRunId && state.goal.reflection_status === "completed";
 }
@@ -300,7 +345,7 @@ function appendLedgerExpansionEvent(
 function expandGoalFromLedgerCandidates(state: GoalState): GoalState | undefined {
   const goal = state.goal;
   const strategy = goal.strategy;
-  if (!goal.ledger || strategy?.mode === "surgical") {
+  if (!goal.ledger || strategy?.mode === "surgical" || strategy?.mode === "repeat") {
     return undefined;
   }
   if (strategy?.mode === "campaign" && strategy.target_hours !== undefined && goalDurationMs(goal) >= strategy.target_hours * 60 * 60 * 1000) {

@@ -180,7 +180,7 @@ function createGoal(args: JsonObject, context: ToolExecutionContext): ToolResult
   validateTokenBudget(tokenBudget);
   const mode = parseGoalStrategyModeArg(args.approach ?? args.mode);
   if ((args.approach !== undefined || args.mode !== undefined) && !mode) {
-    return fail("goal_strategy_mode_invalid", "approach must be focus, explore, or timebox");
+    return fail("goal_strategy_mode_invalid", "approach must be focus, explore, timebox, or repeat");
   }
   const kind = parseGoalKindArg(args.kind);
   if (args.kind !== undefined && !kind) {
@@ -202,6 +202,7 @@ function createGoal(args: JsonObject, context: ToolExecutionContext): ToolResult
           mode,
           inferred: booleanArg(args.inferred),
           target_hours: numberArg(args.target_hours),
+          target_runs: numberArg(args.target_runs),
           rationale: stringArg(args.rationale),
         }
       : undefined,
@@ -310,12 +311,13 @@ function updateGoalStrategy(args: JsonObject, context: ToolExecutionContext): To
   }
   const mode = parseGoalStrategyModeArg(args.approach ?? args.mode);
   if (!mode) {
-    return failGoalWithState(state, "goal_strategy_mode_required", "approach is required and must be focus, explore, or timebox");
+    return failGoalWithState(state, "goal_strategy_mode_required", "approach is required and must be focus, explore, timebox, or repeat");
   }
   const next = setGoalStrategy(state, {
     mode,
     inferred: args.inferred === undefined ? true : booleanArg(args.inferred),
     target_hours: numberArg(args.target_hours),
+    target_runs: numberArg(args.target_runs),
     rationale: stringArg(args.rationale),
   });
   return describeGoal(writeGoalState(context.store, context.session_id, next, context.run_id), "Goal strategy updated", context);
@@ -1090,7 +1092,7 @@ function parseGoalStrategyModeArg(value: unknown): GoalStrategyMode | undefined 
   if (publicMode) {
     return publicMode;
   }
-  return value === "surgical" || value === "opportunistic" || value === "campaign" ? value : undefined;
+  return value === "surgical" || value === "opportunistic" || value === "campaign" || value === "repeat" ? value : undefined;
 }
 
 function parseGoalKindArg(value: unknown): GoalKind | undefined {

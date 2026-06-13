@@ -2,7 +2,7 @@ import { resumeSessionPage, type ResumeSessionPage } from "./session-picker.js";
 import { fg256 } from "./ansi.js";
 import type { ExternalProviderSetupOption } from "../model/providers.js";
 
-export const PROVIDER_PICKER_PAGE_SIZE = 5;
+export const PROVIDER_PICKER_PAGE_SIZE = 10;
 
 export function providerPickerPage(
   options: readonly ExternalProviderSetupOption[],

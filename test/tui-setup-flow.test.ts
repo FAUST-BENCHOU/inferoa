@@ -140,3 +140,28 @@ test("external provider auth reuses the provider vault key without prompting aga
     await rm(stateDir, { recursive: true, force: true });
   }
 });
+
+test("setup keeps the current external provider id while opening external provider picker", () => {
+  const config = structuredClone(DEFAULT_CONFIG);
+  config.model_setup.provider = "external";
+  config.model_setup.provider_id = "tensormesh";
+  config.model_setup.base_url = "https://serverless.tensormesh.ai/v1";
+
+  const tui = new TuiApp(
+    {
+      config,
+      configFiles: [],
+      workspace: { id: "w_setup_external_current", root: os.tmpdir(), alias: "setup-external-current" },
+      store: { close() {} },
+      runtime: {},
+    } as never,
+  );
+  const view = tui as unknown as {
+    applyProviderChoice: (setup: typeof config.model_setup, provider: "external") => void;
+  };
+
+  view.applyProviderChoice(config.model_setup, "external");
+
+  assert.equal(config.model_setup.provider, "external");
+  assert.equal(config.model_setup.provider_id, "tensormesh");
+});

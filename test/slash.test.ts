@@ -178,6 +178,7 @@ test("slash registry exposes chat subcommands for completion", () => {
       "/loop mode focus",
       "/loop mode explore",
       "/loop mode timebox",
+      "/loop mode repeat",
       "/loop review",
       "/loop verify",
       "/loop pause",

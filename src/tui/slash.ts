@@ -76,6 +76,7 @@ export const SLASH_SUBCOMMANDS: SlashSubcommandSpec[] = [
   { command: "loop", name: "mode focus", value: "/loop mode focus", description: "Start a focused loop" },
   { command: "loop", name: "mode explore", value: "/loop mode explore", description: "Start an exploratory loop" },
   { command: "loop", name: "mode timebox", value: "/loop mode timebox", description: "Start a timeboxed loop" },
+  { command: "loop", name: "mode repeat", value: "/loop mode repeat", description: "Repeat the original prompt for a fixed count" },
   { command: "loop", name: "review", value: "/loop review", description: "Review a pending loop decision" },
   { command: "loop", name: "verify", value: "/loop verify", description: "Run an independent loop verification pass" },
   { command: "loop", name: "pause", value: "/loop pause", description: "Pause the current loop" },

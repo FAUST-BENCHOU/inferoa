@@ -28,6 +28,7 @@ const TRIMMED_COMPACTION_STRING_LIMIT = 3_000;
 const DEFAULT_CONTINUITY_RECENT_FILE_LIMIT = 5;
 const DEFAULT_CONTINUITY_FILE_TOKEN_LIMIT = 5_000;
 const DEFAULT_CONTINUITY_TOTAL_TOKEN_LIMIT = 25_000;
+const COMPACTION_FALLBACK_ERROR_LIMIT = 800;
 const COMPACTION_NO_TOOLS_INSTRUCTION = [
   "CRITICAL: Respond with text only. Do not call tools.",
   "You already have the relevant conversation and lifecycle evidence in this request.",
@@ -252,9 +253,8 @@ export class ContextCompressor {
         }
       }
       if (summaryStrategy === "deterministic" && lastError) {
-        summary += `\n\nErrors And Fixes\n- Model compaction unavailable; used deterministic summary. Error: ${
-          lastError instanceof Error ? lastError.message : String(lastError)
-        }`;
+        const errorText = lastError instanceof Error ? lastError.message : String(lastError);
+        summary += `\n\nErrors And Fixes\n- Model compaction unavailable; used deterministic summary. Error: ${truncateText(errorText, COMPACTION_FALLBACK_ERROR_LIMIT).text}`;
       }
     }
     const continuityContext = continuityContextForCompaction(this.store, session, events, this.config, new Set(preserved.tailIds));

@@ -23,14 +23,25 @@ const options: ExternalProviderSetupOption[] = Array.from({ length: 13 }, (_, in
   description: index === 9 ? "auto · env:PROVIDER_10_API_KEY" : "key required",
 }));
 
-test("provider picker pages five rows like resume selection", () => {
+test("provider picker pages ten rows like model selection", () => {
   const first = providerPickerPage(options, 0);
   const second = providerPickerPage(options, 1);
   const last = providerPickerPage(options, 99);
 
-  assert.equal(PROVIDER_PICKER_PAGE_SIZE, 5);
-  assert.deepEqual(first.items.map((option) => option.provider.id), ["provider-10", "provider-1", "provider-2", "provider-3", "provider-4"]);
-  assert.deepEqual(second.items.map((option) => option.provider.id), ["provider-5", "provider-6", "provider-7", "provider-8", "provider-9"]);
+  assert.equal(PROVIDER_PICKER_PAGE_SIZE, 10);
+  assert.deepEqual(first.items.map((option) => option.provider.id), [
+    "provider-10",
+    "provider-1",
+    "provider-2",
+    "provider-3",
+    "provider-4",
+    "provider-5",
+    "provider-6",
+    "provider-7",
+    "provider-8",
+    "provider-9",
+  ]);
+  assert.deepEqual(second.items.map((option) => option.provider.id), ["provider-11", "provider-12", "provider-13"]);
   assert.deepEqual(last.items.map((option) => option.provider.id), ["provider-11", "provider-12", "provider-13"]);
 });
 

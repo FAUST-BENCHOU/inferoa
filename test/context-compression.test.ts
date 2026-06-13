@@ -343,6 +343,77 @@ test("runtime retries compact payloads from prefix to standalone to trimmed stan
   }
 });
 
+test("runtime bounds provider error text in deterministic compaction fallback summaries", async () => {
+  const serverCalls: { request_class?: string; body: unknown }[] = [];
+  const hugeProviderDetail = "Z".repeat(30_000);
+  const server = createServer((req, res) => {
+    if (req.method === "GET" && req.url === "/v1/models") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "compression-test" }] }));
+      return;
+    }
+    if (req.method === "GET" && req.url === "/load") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ waiting: 0, running: 0 }));
+      return;
+    }
+    if (req.method === "GET" && req.url === "/metrics") {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("");
+      return;
+    }
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      const requestClass = typeof req.headers["x-inferoa-request-class"] === "string" ? req.headers["x-inferoa-request-class"] : undefined;
+      serverCalls.push({ request_class: requestClass, body: JSON.parse(body) as unknown });
+      if (requestClass === "compaction") {
+        res.writeHead(400, { "content-type": "application/json", "x-request-id": `req_compact_fail_${serverCalls.length}` });
+        res.end(JSON.stringify({ error: { code: "bad_request", message: hugeProviderDetail } }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", "x-request-id": "req_interactive" });
+      writeSse(res, { id: "resp_interactive", model: "compression-test", choices: [{ delta: { content: "continued after deterministic compact" } }] });
+      writeSse(res, { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 128, completion_tokens: 8, total_tokens: 136 } });
+      res.end("data: [DONE]\n\n");
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address() as AddressInfo;
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-compact-error-bound-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const config = compressionConfig(`http://127.0.0.1:${address.port}/v1`);
+    const workspace: WorkspaceIdentity = { id: "w_compact_error_bound", root: dir, alias: "compact-error-bound" };
+    const session = store.createSession(workspace, "compact error bound");
+    store.appendEvent({
+      session_id: session.session_id,
+      run_id: "seed",
+      type: "tool.result",
+      data: { tool_name: "read_file", tool_call_id: "seed", result: { ok: true, content: "seed".repeat(2000) } },
+    });
+
+    const runtime = new Runtime(config, workspace, store);
+    const result = await runtime.run({ session_id: session.session_id, prompt: "continue after bounded deterministic compact", max_tool_rounds: 0 });
+
+    assert.equal(result.content, "continued after deterministic compact");
+    assert.equal(serverCalls.filter((call) => call.request_class === "compaction").length, 3);
+    const compacted = store.listEvents(session.session_id).find((event) => event.type === "context.compacted");
+    const summary = String(compacted?.data.summary ?? "");
+    assert.equal(compacted?.data.model_summary_failed, true);
+    assert.ok(summary.length < 12_000, `summary should be bounded, got ${summary.length}`);
+    assert.doesNotMatch(summary, /Z{1000}/);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test("runtime pauses automatic compact after repeated model-summary failures", async () => {
   const serverCalls: { request_class?: string; body: unknown }[] = [];
   const server = createServer((req, res) => {

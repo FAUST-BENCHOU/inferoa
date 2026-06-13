@@ -352,6 +352,36 @@ test("composer metadata does not scan long session history while typing", async 
   }
 });
 
+test("composer metadata left shows compact context window beside the model", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-composer-window-metadata-"));
+  const store = await SessionStore.open(stateDir);
+  try {
+    const config = structuredClone(DEFAULT_CONFIG);
+    config.model_setup.model = "moonshotai/Kimi-K2.6";
+    config.model_setup.context_window = 256_000;
+    const workspace = { id: "w_composer_window_metadata", root: stateDir, alias: "composer-window-metadata" };
+    const tui = new TuiApp(
+      {
+        config,
+        configFiles: [],
+        workspace,
+        store,
+        runtime: {},
+      } as never,
+    );
+    const view = tui as unknown as {
+      composerMetadataLeft: () => string;
+    };
+
+    const plain = stripAnsi(view.composerMetadataLeft());
+
+    assert.match(plain, /Kimi-K2\.6 · 256k$/);
+  } finally {
+    store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("bare loop command asks objective before goal type and approach setup", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-setup-order-"));
   const store = await SessionStore.open(stateDir);
@@ -541,9 +571,9 @@ test("mode objective composer cancels on interrupt instead of submitting exit te
     );
     const view = tui as unknown as {
       askModeObjective: (label: string) => Promise<string>;
-      readComposer: (options: { suggestions?: boolean; cancelOnInterrupt?: boolean }) => Promise<string>;
+      readComposer: (options: { suggestions?: boolean; cancelOnInterrupt?: boolean; placeholder?: string }) => Promise<string>;
     };
-    let composerOptions: { suggestions?: boolean; cancelOnInterrupt?: boolean } | undefined;
+    let composerOptions: { suggestions?: boolean; cancelOnInterrupt?: boolean; placeholder?: string } | undefined;
     view.readComposer = async (options) => {
       composerOptions = options;
       throw new Error("Input cancelled");
@@ -553,6 +583,49 @@ test("mode objective composer cancels on interrupt instead of submitting exit te
 
     assert.equal(composerOptions?.suggestions, false);
     assert.equal(composerOptions?.cancelOnInterrupt, true);
+    assert.equal(composerOptions?.placeholder, "Describe what Inferoa should keep working on");
+  } finally {
+    store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("repeat loop setup asks for a count and skips human-in-the-loop setup", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-repeat-setup-"));
+  const store = await SessionStore.open(stateDir);
+  try {
+    const workspace = { id: "w_goal_repeat_setup", root: stateDir, alias: "goal-repeat-setup" };
+    const tui = new TuiApp(
+      {
+        config: structuredClone(DEFAULT_CONFIG),
+        configFiles: [],
+        workspace,
+        store,
+        runtime: {},
+      } as never,
+    );
+    const titles: string[] = [];
+    const choices = ["task", "repeat", "start"];
+    const view = tui as unknown as {
+      chooseGoalSetup: (objective?: string) => Promise<{ hil_policy?: string; strategy?: { mode?: string; target_runs?: number } }>;
+      chooseGoalSetupOption: <T extends string>(title: string) => Promise<T>;
+      askGoalSetupValue: (title: string) => Promise<string>;
+    };
+    view.chooseGoalSetupOption = async (title) => {
+      titles.push(title);
+      return choices.shift() as string as never;
+    };
+    view.askGoalSetupValue = async (title) => {
+      titles.push(title);
+      return "3";
+    };
+
+    const setup = await view.chooseGoalSetup("Repeat the cleanup pass");
+
+    assert.deepEqual(titles, ["Loop Type", "Loop Approach", "Repeat Count", "Start Loop"]);
+    assert.equal(setup.hil_policy, "auto");
+    assert.equal(setup.strategy?.mode, "repeat");
+    assert.equal(setup.strategy?.target_runs, 3);
   } finally {
     store.close();
     await rm(stateDir, { recursive: true, force: true });

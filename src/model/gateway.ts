@@ -92,11 +92,11 @@ export class ModelGateway {
     if (request.request_class) {
       headers.set("x-inferoa-request-class", request.request_class);
     }
+    const tools = sortedTools(request.tools).map(toOpenAiTool);
     const body = {
       model: request.model || setup.model,
       messages: request.messages.map(toOpenAiMessage),
-      tools: sortedTools(request.tools).map(toOpenAiTool),
-      tool_choice: "auto",
+      ...(tools.length > 0 ? { tools, tool_choice: "auto" } : {}),
       stream: true,
       stream_options: { include_usage: true },
       temperature: request.temperature ?? 0.2,

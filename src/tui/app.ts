@@ -26,6 +26,8 @@ import {
   attachGoalPlanSnapshot,
   cloneGoalState,
   completionBudgetReport,
+  completeRepeatGoal,
+  consumeRepeatGoalRun,
   createGoalState,
   incompleteGoalPlanningMessage,
   goalCompletionCandidateBlockMessage,
@@ -35,6 +37,7 @@ import {
   goalStrategyModeFromPublicName,
   readGoalState,
   recordGoalCompletionReport,
+  repeatGoalRemainingRuns,
   setGoalOwner,
   setGoalReviewOwner,
   writeGoalState,
@@ -143,7 +146,7 @@ import {
 } from "./tokenmaxxing-view.js";
 import { composerEraseRowsForResize } from "./resize.js";
 import { RESUME_SESSION_PAGE_SIZE, resumeSessionPage } from "./session-picker.js";
-import { filterProviderPickerOptions, prioritizeProviderSetupOptions, providerPickerPage, renderProviderSetupOptionLine } from "./provider-picker.js";
+import { filterProviderPickerOptions, prioritizeProviderSetupOptions, providerPickerPage, PROVIDER_PICKER_PAGE_SIZE, renderProviderSetupOptionLine } from "./provider-picker.js";
 import { modelPickerHint, type ModelProbeSource } from "./model-picker.js";
 import { renderSessionTranscript } from "./session-transcript.js";
 import { renderUnknownSlashCommandNotice } from "./slash-notice.js";
@@ -171,6 +174,7 @@ import {
   type ComposerPanel,
   type ComposerCompactRange,
   compactModelLabel,
+  compactTokenWindow,
   COMPOSER_SUGGESTION_PAGE_SIZE,
   WELCOME_COMPOSER_SUGGESTION_PAGE_SIZE,
   normalizeComposerPastedInput,
@@ -211,7 +215,7 @@ type WorktreeAction = "status" | "list" | "health" | "create" | "run" | "adopt" 
 type DoctorAction = "status" | "run" | "tools";
 type ToolTraceMode = "compact" | "expanded";
 type GoalKindChoice = "task" | "research";
-type GoalApproachChoice = "auto" | "focus" | "explore" | "timebox";
+type GoalApproachChoice = "auto" | "focus" | "explore" | "timebox" | "repeat";
 type GoalCampaignHoursChoice = "auto" | "30m" | "2h" | "4h" | "custom";
 type GoalReviewPolicyChoice = "auto" | "review";
 type GoalReviewChoice = GoalReviewDecision;
@@ -1423,8 +1427,9 @@ export class TuiApp {
       ],
     };
     try {
+      const placeholder = label === "Loop objective" ? "Describe what Inferoa should keep working on" : label;
       return await this.readComposer({
-        placeholder: label,
+        placeholder,
         initialBuffer: defaultValue,
         suggestions: false,
         cancelOnInterrupt: true,
@@ -1436,11 +1441,14 @@ export class TuiApp {
 
   private composerMetadataLeft(): string {
     const model = compactModelLabel(this.app.config.model_setup.model ?? "unconfigured");
+    const contextWindow = this.configuredContextWindow();
     return [
       fg256(75, compactWorkspacePath(this.app.workspace.root)),
       fg256(238, "·"),
       fg256(252, model),
-    ].join(" ");
+      contextWindow ? fg256(244, "·") : undefined,
+      contextWindow ? fg256(244, compactTokenWindow(contextWindow).toLowerCase()) : undefined,
+    ].filter((part): part is string => Boolean(part)).join(" ");
   }
 
   private composerMetadataRight(): string | undefined {
@@ -1705,8 +1713,8 @@ export class TuiApp {
     let query = "";
     let filtered = prioritizeProviderSetupOptions(filterProviderPickerOptions(options, query));
     let defaultIndex = Math.max(0, filtered.findIndex((option) => option.provider.id === currentProviderId));
-    let pageIndex = Math.floor(defaultIndex / 5);
-    let selected = defaultIndex % 5;
+    let pageIndex = Math.floor(defaultIndex / PROVIDER_PICKER_PAGE_SIZE);
+    let selected = defaultIndex % PROVIDER_PICKER_PAGE_SIZE;
     this.#rl?.pause();
 
     const clampSelection = () => {
@@ -1858,9 +1866,11 @@ export class TuiApp {
     }
     setup.mode = "direct";
     delete setup.router;
-    delete setup.provider_id;
     setup.profile = "openai_compatible";
     setup.provider = provider === "external" ? "external" : "vllm";
+    if (provider !== "external") {
+      delete setup.provider_id;
+    }
     setup.base_url = setup.base_url ?? defaultBaseUrl(provider);
   }
 
@@ -3947,6 +3957,7 @@ export class TuiApp {
         { value: "focus", label: "Focus", description: "Finish this objective only." },
         { value: "explore", label: "Explore", description: "Explore related high-value directions." },
         { value: "timebox", label: "Timebox", description: "Work until a checkpoint, then review progress." },
+        { value: "repeat", label: "Repeat", description: "Repeat the original prompt for a fixed number of runs." },
       ],
       0,
       [],
@@ -3963,22 +3974,31 @@ export class TuiApp {
           selections: { type: typeLabel, approach: goalApproachSetupLabel(approach) },
         })
       : undefined;
-    const approachLabel = goalApproachSetupLabel(approach, targetHours);
-    const reviewPolicy = await this.chooseGoalSetupOption<GoalReviewPolicyChoice>(
-      "Human in the Loop",
-      [
-        { value: "auto", label: "Auto", description: "Continue after internal reflection." },
-        { value: "review", label: "Review", description: "Pause before applying major loop decisions." },
-      ],
-      0,
-      [],
-      {
-        objective,
-        currentStep: "Human in the Loop",
-        selections: { type: typeLabel, approach: approachLabel },
-      },
-    );
-    const hilLabel = goalHilSetupLabel(reviewPolicy);
+    const targetRuns = approach === "repeat"
+      ? await this.chooseRepeatRuns({
+          objective,
+          currentStep: "Approach",
+          selections: { type: typeLabel, approach: goalApproachSetupLabel(approach) },
+        })
+      : undefined;
+    const approachLabel = goalApproachSetupLabel(approach, targetHours, targetRuns);
+    const reviewPolicy = approach === "repeat"
+      ? "auto"
+      : await this.chooseGoalSetupOption<GoalReviewPolicyChoice>(
+          "Human in the Loop",
+          [
+            { value: "auto", label: "Auto", description: "Continue after internal reflection." },
+            { value: "review", label: "Review", description: "Pause before applying major loop decisions." },
+          ],
+          0,
+          [],
+          {
+            objective,
+            currentStep: "Human in the Loop",
+            selections: { type: typeLabel, approach: approachLabel },
+          },
+        );
+    const hilLabel = approach === "repeat" ? undefined : goalHilSetupLabel(reviewPolicy);
     await this.chooseGoalSetupOption<"start">(
       "Start Loop",
       [
@@ -3995,9 +4015,22 @@ export class TuiApp {
     );
     return {
       kind,
-      strategy: goalStrategyInputForApproach(approach, targetHours),
+      strategy: goalStrategyInputForApproach(approach, { targetHours, targetRuns }),
       hil_policy: reviewPolicy,
     };
+  }
+
+  private async chooseRepeatRuns(wizard?: GoalSetupWizardContext): Promise<number> {
+    void wizard;
+    let error: string | undefined;
+    for (;;) {
+      const raw = (await this.askGoalSetupValue("Repeat Count", "3", ["Repeat the original loop prompt this many times."], error)).trim();
+      const value = parseGoalRepeatRuns(raw);
+      if (value !== undefined) {
+        return value;
+      }
+      error = "Use a positive whole number like 3.";
+    }
   }
 
   private async chooseCampaignHours(wizard?: GoalSetupWizardContext): Promise<number | undefined> {
@@ -4138,6 +4171,19 @@ export class TuiApp {
     }
     const session = this.optionalSession();
     if (!session) {
+      return;
+    }
+    if (typeof stateOrObjective !== "string" && stateOrObjective.goal.strategy?.mode === "repeat") {
+      const consumed = consumeRepeatGoalRun(stateOrObjective);
+      if (!consumed) {
+        const runId = randomId("run");
+        const saved = writeGoalState(this.app.store, session.session_id, completeRepeatGoal(stateOrObjective, "Repeat loop finished."), runId);
+        recordGoalCompletionReport(this.app.store, session.session_id, runId);
+        this.renderGoalPanel(saved);
+        return;
+      }
+      writeGoalState(this.app.store, session.session_id, consumed);
+      this.enqueuePrompt(stateOrObjective.goal.objective, { renderPrompt: false });
       return;
     }
     const goal = typeof stateOrObjective === "string" ? stateOrObjective : stateOrObjective.goal;
@@ -6192,7 +6238,7 @@ export class TuiApp {
       "",
       fg256(39, "Subcommands"),
       `  /skills    list · manage`,
-      `  /loop      status · mode auto|research|focus|explore|timebox · health · review · verify · pause · resume · drop`,
+      `  /loop      status · mode auto|research|focus|explore|timebox|repeat · health · review · verify · pause · resume · drop`,
       `  /inbox     show · all · resolve · dismiss · promote`,
       `  /self-improve status · learn · adopt`,
       `  /plan      show · set · pause · resume · approve · drop`,
@@ -7109,7 +7155,7 @@ function parseGoalModeArgs(args: string): ParsedGoalModeOptions | undefined {
     if (parts[0]?.toLowerCase() === "auto") {
       parts.shift();
     }
-  } else if (first === "focus" || first === "explore" || first === "timebox") {
+  } else if (first === "focus" || first === "explore" || first === "timebox" || first === "repeat") {
     approach = first;
     parts.shift();
   } else {
@@ -7123,7 +7169,7 @@ function parseGoalModeArgs(args: string): ParsedGoalModeOptions | undefined {
     };
   }
   const maybeApproach = parts[0]?.toLowerCase();
-  if (kind === "research" && (maybeApproach === "focus" || maybeApproach === "explore" || maybeApproach === "timebox")) {
+  if (kind === "research" && (maybeApproach === "focus" || maybeApproach === "explore" || maybeApproach === "timebox" || maybeApproach === "repeat")) {
     approach = maybeApproach;
     parts.shift();
   }
@@ -7134,9 +7180,17 @@ function parseGoalModeArgs(args: string): ParsedGoalModeOptions | undefined {
       parts.shift();
     }
   }
+  let targetRuns: number | undefined;
+  if (approach === "repeat" && parts[0]) {
+    const parsed = parseGoalRepeatRuns(parts[0]);
+    if (parsed !== undefined) {
+      targetRuns = parsed;
+      parts.shift();
+    }
+  }
   return {
     kind,
-    strategy: goalStrategyInputForApproach(approach, targetHours),
+    strategy: goalStrategyInputForApproach(approach, { targetHours, targetRuns }),
     objective: parts.join(" ").trim(),
     hil_policy: parsedFlags.hil_policy,
     owner: parsedFlags.owner,
@@ -7146,10 +7200,13 @@ function parseGoalModeArgs(args: string): ParsedGoalModeOptions | undefined {
 
 function legacyGoalModeShortcut(args: string): string | undefined {
   const head = args.trim().split(/\s+/)[0]?.toLowerCase();
-  return head === "auto" || head === "research" || head === "focus" || head === "explore" || head === "timebox" ? head : undefined;
+  return head === "auto" || head === "research" || head === "focus" || head === "explore" || head === "timebox" || head === "repeat" ? head : undefined;
 }
 
-function goalStrategyInputForApproach(approach: GoalApproachChoice, targetHours?: number): GoalStrategyInput | undefined {
+function goalStrategyInputForApproach(
+  approach: GoalApproachChoice,
+  options: { targetHours?: number; targetRuns?: number } = {},
+): GoalStrategyInput | undefined {
   if (approach === "auto") {
     return undefined;
   }
@@ -7160,7 +7217,8 @@ function goalStrategyInputForApproach(approach: GoalApproachChoice, targetHours?
   return {
     mode,
     inferred: false,
-    target_hours: mode === "campaign" ? targetHours : undefined,
+    target_hours: mode === "campaign" ? options.targetHours : undefined,
+    target_runs: mode === "repeat" ? options.targetRuns ?? 1 : undefined,
     rationale: `User selected ${approach} approach.`,
   };
 }
@@ -7169,7 +7227,7 @@ function goalKindSetupLabel(kind: GoalKindChoice): string {
   return kind === "research" ? "Research" : "Task";
 }
 
-function goalApproachSetupLabel(approach: GoalApproachChoice, targetHours?: number): string {
+function goalApproachSetupLabel(approach: GoalApproachChoice, targetHours?: number, targetRuns?: number): string {
   switch (approach) {
     case "auto":
       return "Auto";
@@ -7179,6 +7237,8 @@ function goalApproachSetupLabel(approach: GoalApproachChoice, targetHours?: numb
       return "Explore";
     case "timebox":
       return targetHours === undefined ? "Timebox" : `Timebox ${formatGoalSetupHours(targetHours)}`;
+    case "repeat":
+      return targetRuns === undefined ? "Repeat" : `Repeat ${targetRuns}x`;
   }
 }
 
@@ -7215,6 +7275,7 @@ function goalPanelStrategy(goal: GoalRecord): string {
   return [
     goalApproachName(strategy),
     strategy.target_hours !== undefined ? formatGoalCampaignHours(strategy.target_hours) : undefined,
+    strategy.mode === "repeat" ? `${repeatGoalRemainingRuns(goal)}/${strategy.target_runs ?? 1} left` : undefined,
   ].filter((part): part is string => Boolean(part)).join(" · ");
 }
 
@@ -8027,6 +8088,16 @@ function parseGoalCampaignHours(input: string): number | undefined {
     return value;
   }
   return value / 60;
+}
+
+function parseGoalRepeatRuns(input: string): number | undefined {
+  const normalized = input.trim().toLowerCase();
+  const match = /^(\d+)\s*(x|run|runs|loop|loops)?$/.exec(normalized);
+  if (!match?.[1]) {
+    return undefined;
+  }
+  const value = Number.parseInt(match[1], 10);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 function formatGoalCampaignHours(hours: number): string {

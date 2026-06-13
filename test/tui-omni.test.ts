@@ -34,6 +34,8 @@ test("TUI setup exposes every Omni capability, with final-acceptance requirement
 
 test("TUI setup supports explicit model context window configuration", () => {
   assert.equal(normalizeContextWindowInput("128k", 32_768), 128_000);
+  assert.equal(normalizeContextWindowInput("256K", 32_768), 256_000);
+  assert.equal(normalizeContextWindowInput("1M", 32_768), 1_000_000);
   assert.equal(normalizeContextWindowInput("131072", 32_768), 131_072);
   assert.equal(normalizeContextWindowInput("", 65_536), 65_536);
   assert.throws(() => normalizeContextWindowInput("512", 32_768), /at least 1024/);

@@ -10,7 +10,7 @@ export type GoalReflectionStatus = "running" | "completed";
 export type GoalKind = "task" | "research";
 export type GoalHilPolicy = "auto" | "review";
 export type GoalReviewDecision = "approve" | "reject" | "revise" | "block";
-export type GoalStrategyMode = "surgical" | "opportunistic" | "campaign";
+export type GoalStrategyMode = "surgical" | "opportunistic" | "campaign" | "repeat";
 export type GoalCandidateValue = "high" | "medium" | "low";
 export type GoalCandidateStatus = "open" | "done" | "rejected";
 
@@ -79,6 +79,8 @@ export interface GoalStrategy {
   mode: GoalStrategyMode;
   inferred: boolean;
   target_hours?: number;
+  target_runs?: number;
+  remaining_runs?: number;
   rationale?: string;
 }
 
@@ -201,6 +203,8 @@ export interface GoalStrategyInput {
   mode: GoalStrategyMode;
   inferred?: boolean;
   target_hours?: number;
+  target_runs?: number;
+  remaining_runs?: number;
   rationale?: string;
 }
 
@@ -392,10 +396,22 @@ function createGoalStrategy(input?: GoalStrategyInput): GoalStrategy {
     };
   }
   const targetHours = input.target_hours === undefined ? undefined : Math.max(0, input.target_hours);
+  const targetRuns = input.mode === "repeat"
+    ? Math.max(1, Math.trunc(input.target_runs ?? 1))
+    : input.target_runs === undefined
+      ? undefined
+      : Math.max(1, Math.trunc(input.target_runs));
+  const remainingRuns = input.mode === "repeat"
+    ? Math.max(0, Math.trunc(input.remaining_runs ?? targetRuns ?? 1))
+    : input.remaining_runs === undefined
+      ? undefined
+      : Math.max(0, Math.trunc(input.remaining_runs));
   return {
     mode: input.mode,
     inferred: input.inferred ?? true,
     target_hours: targetHours && Number.isFinite(targetHours) ? targetHours : undefined,
+    target_runs: targetRuns !== undefined && Number.isFinite(targetRuns) ? targetRuns : undefined,
+    remaining_runs: remainingRuns !== undefined && Number.isFinite(remainingRuns) ? remainingRuns : undefined,
     rationale: cleanOptionalString(input.rationale),
   };
 }
@@ -474,6 +490,45 @@ export function setGoalStrategy(state: GoalState, input: GoalStrategyInput, now 
   next.goal.strategy = createGoalStrategy(input);
   next.goal.updated_at = now.toISOString();
   return next;
+}
+
+export function consumeRepeatGoalRun(state: GoalState, now = new Date()): GoalState | undefined {
+  const strategy = state.goal.strategy;
+  if (strategy?.mode !== "repeat") {
+    return undefined;
+  }
+  const remaining = repeatGoalRemainingRuns(state.goal);
+  if (remaining <= 0) {
+    return undefined;
+  }
+  const next = cloneGoalState(state);
+  next.goal.strategy = {
+    ...strategy,
+    remaining_runs: remaining - 1,
+  };
+  next.goal.updated_at = now.toISOString();
+  return next;
+}
+
+export function completeRepeatGoal(state: GoalState, summary: string | undefined, now = new Date()): GoalState {
+  const next = cloneGoalState(state);
+  const trimmed = summary?.trim();
+  if (trimmed) {
+    next.goal.summary = trimmed;
+  }
+  next.enabled = false;
+  next.goal.status = "complete";
+  next.goal.updated_at = now.toISOString();
+  return next;
+}
+
+export function repeatGoalRemainingRuns(goal: GoalRecord): number {
+  const strategy = goal.strategy;
+  if (strategy?.mode !== "repeat") {
+    return 0;
+  }
+  const target = strategy.target_runs ?? 1;
+  return Math.max(0, Math.trunc(strategy.remaining_runs ?? target));
 }
 
 export function setGoalOwner(state: GoalState, owner: string | undefined, now = new Date()): GoalState {
@@ -943,7 +998,7 @@ export function renderGoalModeSection(state: GoalState | undefined): string | un
     .join("\n");
 }
 
-export function goalApproachName(strategy: GoalStrategy | undefined): "auto" | "focus" | "explore" | "timebox" {
+export function goalApproachName(strategy: GoalStrategy | undefined): "auto" | "focus" | "explore" | "timebox" | "repeat" {
   const current = strategy ?? createGoalStrategy();
   if (current.inferred) {
     return "auto";
@@ -951,9 +1006,10 @@ export function goalApproachName(strategy: GoalStrategy | undefined): "auto" | "
   return goalStrategyModePublicName(current.mode);
 }
 
-export function goalStrategyModePublicName(mode: GoalStrategyMode): "focus" | "explore" | "timebox" {
+export function goalStrategyModePublicName(mode: GoalStrategyMode): "focus" | "explore" | "timebox" | "repeat" {
   if (mode === "surgical") return "focus";
   if (mode === "campaign") return "timebox";
+  if (mode === "repeat") return "repeat";
   return "explore";
 }
 
@@ -961,6 +1017,7 @@ export function goalStrategyModeFromPublicName(value: unknown): GoalStrategyMode
   if (value === "focus") return "surgical";
   if (value === "explore") return "opportunistic";
   if (value === "timebox") return "campaign";
+  if (value === "repeat") return "repeat";
   return undefined;
 }
 
@@ -1041,6 +1098,9 @@ export function goalCompletionCandidateBlockMessage(goal: GoalRecord): string | 
   const strategy = goal.strategy ?? createGoalStrategy();
   const openCandidates = goal.ledger?.open ?? [];
   if (strategy.mode === "surgical") {
+    return undefined;
+  }
+  if (strategy.mode === "repeat") {
     return undefined;
   }
   if (strategy.mode === "opportunistic") {
@@ -1304,6 +1364,8 @@ function renderGoalStrategy(strategy: GoalStrategy | undefined): string {
     `mode: ${goalApproachName(current)}`,
     `source: ${current.inferred ? "auto" : "selected"}`,
     current.target_hours !== undefined ? `target hours: ${formatGoalTargetHours(current.target_hours)}` : undefined,
+    current.target_runs !== undefined ? `target runs: ${current.target_runs}` : undefined,
+    current.mode === "repeat" ? `remaining runs: ${Math.max(0, Math.trunc(current.remaining_runs ?? current.target_runs ?? 1))}` : undefined,
     current.rationale ? `rationale: ${escapeXmlText(truncateEvidenceText(current.rationale, 500))}` : undefined,
   ]
     .filter((line): line is string => Boolean(line))
@@ -1517,6 +1579,8 @@ function parseGoalStrategy(value: unknown): GoalStrategy | undefined {
     mode,
     inferred: data.inferred === undefined ? true : data.inferred === true,
     target_hours: positiveNumberOrUndefined(data.target_hours),
+    target_runs: positiveNumberOrUndefined(data.target_runs),
+    remaining_runs: numericValue(data.remaining_runs),
     rationale: optionalString(data.rationale),
   });
 }
@@ -1668,7 +1732,7 @@ function parseGoalStatus(value: unknown): GoalStatus | undefined {
 }
 
 function parseGoalStrategyMode(value: unknown): GoalStrategyMode | undefined {
-  return value === "surgical" || value === "opportunistic" || value === "campaign" ? value : undefined;
+  return value === "surgical" || value === "opportunistic" || value === "campaign" || value === "repeat" ? value : undefined;
 }
 
 function parseGoalCandidateValue(value: unknown): GoalCandidateValue | undefined {

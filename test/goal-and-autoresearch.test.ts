@@ -1279,6 +1279,50 @@ test("goal supervisor treats accounting-only updates as no horizon progress", as
   }
 });
 
+test("goal supervisor repeat strategy resends the original objective for the configured count", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-repeat-supervisor-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_goal_repeat_supervisor", root: dir, alias: "goal-repeat-supervisor" };
+    const session = store.createSession(workspace, "goal-repeat-supervisor");
+    writeGoalState(
+      store,
+      session.session_id,
+      createGoalState({
+        objective: "Run the same cleanup prompt",
+        hil_policy: "auto",
+        strategy: { mode: "repeat", inferred: false, target_runs: 3 },
+      }),
+      "run_seed",
+    );
+    const prompts: string[] = [];
+
+    const result = await runGoalSupervisor({
+      store,
+      sessionId: session.session_id,
+      supervisor: "test",
+      maxIterations: 5,
+      runTurn: async (request) => {
+        prompts.push(request.prompt);
+        return { run_id: `run_repeat_${prompts.length}`, content: "done" };
+      },
+    });
+
+    assert.equal(result.status, "complete");
+    assert.deepEqual(prompts, [
+      "Run the same cleanup prompt",
+      "Run the same cleanup prompt",
+      "Run the same cleanup prompt",
+    ]);
+    const current = readGoalState(store, session.session_id)?.goal;
+    assert.equal(current?.status, "complete");
+    assert.equal(current?.strategy?.remaining_runs, 0);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("goal supervisor explains empty model turns as no goal progress", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-empty-turn-progress-"));
   const store = await SessionStore.open(path.join(dir, "state"));

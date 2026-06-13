@@ -457,6 +457,48 @@ test("OpenAI-compatible streaming tool calls survive chunks without index fields
   }
 });
 
+test("OpenAI-compatible requests omit empty top-level tools", async () => {
+  let requestBody: Record<string, unknown> | undefined;
+  const server = createServer((req, res) => {
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      requestBody = JSON.parse(body) as Record<string, unknown>;
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+      });
+      writeSse(res, { id: "resp_empty_tools", model: "tool-stream-test", choices: [{ delta: { content: "ok" } }] });
+      writeSse(res, { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 1 } });
+      res.end("data: [DONE]\n\n");
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address() as AddressInfo;
+  try {
+    const gateway = new ModelGateway(config(`http://127.0.0.1:${address!.port}/v1`));
+    const response = await gateway.stream({
+      session_id: "s",
+      run_id: "r",
+      mode: "direct",
+      provider_id: "vllm:test",
+      model: "tool-stream-test",
+      messages: [{ role: "user", content: "continue" }],
+      tools: [],
+    });
+
+    assert.equal(response.content, "ok");
+    assert.equal(Object.hasOwn(requestBody ?? {}, "tools"), false);
+    assert.equal(Object.hasOwn(requestBody ?? {}, "tool_choice"), false);
+  } finally {
+    server.close();
+  }
+});
+
 test("OpenAI-compatible requests serialize assistant tool-call arguments stably", async () => {
   let requestBody: Record<string, unknown> | undefined;
   const server = createServer((req, res) => {
