@@ -818,7 +818,7 @@ export class Runtime {
           data: {
             step_id: stepId,
             step_index: stepIndex,
-            content: response.content,
+            content: response.content.trimEnd(),
             tool_calls: response.tool_calls as never,
             usage: response.usage as never,
             http_status: response.http_status,

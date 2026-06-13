@@ -22,7 +22,7 @@ export function renderSessionTranscript(events: readonly SessionEvent[], width =
       continue;
     }
     if (event.type === "model.response.settled") {
-      const content = stringField(event.data.content);
+      const content = stringField(event.data.content)?.trimEnd();
       if (content?.trim()) {
         blocks.push(renderMarkdown(content, { width: Math.max(20, safeWidth - 1) }));
       }

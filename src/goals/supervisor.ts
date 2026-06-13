@@ -129,6 +129,7 @@ export async function runGoalSupervisor(options: GoalSupervisorOptions): Promise
       prompt: buildLoopExecutionPrompt(state.goal),
       requestClass: options.workRequestClass ?? "background",
       activityLabel: goalHorizonActivityLabel("Continuing loop task", state.goal.horizon_generation),
+      origin: "loop",
     });
     if (!workRun || !goalProgressUpdatedDuringRun(options.store, options.sessionId, workRun.run_id, state)) {
       const reason = goalWorkNoProgressReason(workRun);
@@ -168,6 +169,7 @@ async function runGoalReflection(options: GoalSupervisorOptions, state: GoalStat
     runId: reflectionRunId,
     activityLabel: goalHorizonActivityLabel("Reflecting loop task", state.goal.horizon_generation),
     suppressTranscript: true,
+    origin: "loop",
   });
   const reflected = readGoalState(options.store, options.sessionId);
   if (!reflected || reflected.goal.status === "complete" || reflected.goal.status === "dropped") {

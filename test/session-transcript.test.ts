@@ -86,6 +86,18 @@ test("session transcript restores visible tool traces after a fullscreen redraw"
   }
 });
 
+test("session transcript trims stored assistant trailing blank lines", () => {
+  const events: SessionEvent[] = [
+    { session_id: "s1", run_id: "r1", type: "model.response.settled", data: { content: "I will inspect it.\n\n\n\n" } },
+    { session_id: "s1", run_id: "r1", type: "model.response.settled", data: { content: "Done." } },
+  ];
+
+  const plain = stripAnsi(renderSessionTranscript(events, 96));
+
+  assert.match(plain, /I will inspect it\.\n\nDone\./);
+  assert.doesNotMatch(plain, /I will inspect it\.\n\n\nDone\./);
+});
+
 test("session transcript hides internal loop prompts and tool traces on redraw", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-session-transcript-internal-"));
   const store = await SessionStore.open(path.join(dir, "state"));

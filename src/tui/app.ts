@@ -4211,7 +4211,7 @@ export class TuiApp {
       return;
     }
     const goal = typeof stateOrObjective === "string" ? stateOrObjective : stateOrObjective.goal;
-    this.enqueuePrompt(buildLoopExecutionPrompt(goal), { renderPrompt: false });
+    this.enqueuePrompt(buildLoopExecutionPrompt(goal), { renderPrompt: false, origin: "loop" });
   }
 
   private enqueueGoalPlanningContinuation(objective: string): void {

@@ -232,7 +232,7 @@ test("tokenmaxxing view exposes model-call cache and RTK inside a long run", () 
   assert.match(leftAlignedTurn ?? "", /^turn 1\.2\s+tool-loop\s+tokens 130\/130/);
 });
 
-test("tokenmaxxing marks loop-origin repeat prompts and shows model latency columns", () => {
+test("tokenmaxxing marks loop-origin execution prompts and shows model latency columns", () => {
   const events: SessionEvent[] = [
     event("user.prompt", { prompt: "repeat this", request_class: "interactive", visibility: "normal", origin: "loop" }, "run_loop"),
     event("model.request.started", { step_id: "step_1", step_index: 1, prompt_epoch_id: "pe_loop", request_origin: "loop" }, "run_loop"),
@@ -244,6 +244,15 @@ test("tokenmaxxing marks loop-origin repeat prompts and shows model latency colu
       duration_ms: 1200,
       ttft_ms: 300,
       usage: { prompt_tokens: 900, cached_prompt_tokens: 810, completion_tokens: 30, total_tokens: 930 },
+      tool_calls: [{ id: "tool_1", name: "goal", arguments: {} }],
+    }, "run_loop"),
+    event("model.request.started", { step_id: "step_2", step_index: 2, prompt_epoch_id: "pe_loop", request_origin: "loop" }, "run_loop"),
+    event("model.response.settled", {
+      step_id: "step_2",
+      step_index: 2,
+      prompt_epoch_id: "pe_loop",
+      request_origin: "loop",
+      usage: { prompt_tokens: 940, cached_prompt_tokens: 880, completion_tokens: 10, total_tokens: 950 },
       tool_calls: [],
     }, "run_loop"),
   ];
@@ -251,8 +260,45 @@ test("tokenmaxxing marks loop-origin repeat prompts and shows model latency colu
   const plain = stripAnsi(renderTokenmaxxingLines(events, [], 220, { detailLimit: Number.POSITIVE_INFINITY }).join("\n"));
 
   assert.match(plain, /TTFT\s+TPOT\s+Duration/);
-  assert.match(plain, /turn 1\.1\s+loop\s+tokens 930\/930/);
+  assert.match(plain, /turn 1\.1\s+execution\s+tokens 930\/930/);
+  assert.match(plain, /turn 1\.2\s+tool-loop\s+tokens 950\/950/);
   assert.match(plain, /300ms\s+30ms\s+1\.2s/);
+  assert.doesNotMatch(plain, /turn 1\.1\s+user/);
+});
+
+test("tokenmaxxing infers hidden loop execution prompts without origin metadata", () => {
+  const events: SessionEvent[] = [
+    event(
+      "user.prompt",
+      {
+        prompt: "Loop objective: ship the task\n\nExecution turn for a Deliver loop.\nKeep making concrete progress.",
+        request_class: "interactive",
+        visibility: "internal",
+      },
+      "run_loop_hidden",
+    ),
+    event("model.request.started", { step_id: "step_1", step_index: 1, prompt_epoch_id: "pe_loop" }, "run_loop_hidden"),
+    event("model.response.settled", {
+      step_id: "step_1",
+      step_index: 1,
+      prompt_epoch_id: "pe_loop",
+      usage: { prompt_tokens: 900, cached_prompt_tokens: 800, completion_tokens: 20, total_tokens: 920 },
+      tool_calls: [{ id: "tool_1", name: "read_file", arguments: {} }],
+    }, "run_loop_hidden"),
+    event("model.request.started", { step_id: "step_2", step_index: 2, prompt_epoch_id: "pe_loop" }, "run_loop_hidden"),
+    event("model.response.settled", {
+      step_id: "step_2",
+      step_index: 2,
+      prompt_epoch_id: "pe_loop",
+      usage: { prompt_tokens: 940, cached_prompt_tokens: 860, completion_tokens: 20, total_tokens: 960 },
+      tool_calls: [],
+    }, "run_loop_hidden"),
+  ];
+
+  const plain = stripAnsi(renderTokenmaxxingLines(events, [], 220, { detailLimit: Number.POSITIVE_INFINITY }).join("\n"));
+
+  assert.match(plain, /turn 1\.1\s+execution\s+tokens 920\/920/);
+  assert.match(plain, /turn 1\.2\s+tool-loop\s+tokens 960\/960/);
   assert.doesNotMatch(plain, /turn 1\.1\s+user/);
 });
 
@@ -431,7 +477,7 @@ test("tokenmaxxing marks each turn with prefix safety", () => {
   assert.match(plain, /turn 3\.1 .*user .*58\.3% .*break/);
 });
 
-test("tokenmaxxing labels hidden reflection turns distinctly from user turns", () => {
+test("tokenmaxxing labels hidden reflection starts as decision and tool continuations as tool-loop", () => {
   const events: SessionEvent[] = [
     event("user.prompt", { prompt: "reflect", request_class: "reflection", visibility: "internal" }, "run_reflect"),
     event("model.request.started", {
@@ -449,14 +495,33 @@ test("tokenmaxxing labels hidden reflection turns distinctly from user turns", (
       visibility: "internal",
       prompt_epoch_id: "pe_1",
       usage: { prompt_tokens: 1000, cached_prompt_tokens: 900, completion_tokens: 10, total_tokens: 1010 },
+      tool_calls: [{ id: "goal_reflect", name: "goal", arguments: { op: "reflect" } }],
+    }, "run_reflect"),
+    event("model.request.started", {
+      step_id: "step_reflect_2",
+      step_index: 2,
+      request_class: "reflection",
+      visibility: "internal",
+      prompt_epoch_id: "pe_1",
+      prefix_cache_status: "safe",
+    }, "run_reflect"),
+    event("model.response.settled", {
+      step_id: "step_reflect_2",
+      step_index: 2,
+      request_class: "reflection",
+      visibility: "internal",
+      prompt_epoch_id: "pe_1",
+      usage: { prompt_tokens: 1010, cached_prompt_tokens: 920, completion_tokens: 10, total_tokens: 1020 },
       tool_calls: [],
     }, "run_reflect"),
   ];
 
   const plain = stripAnsi(renderTokenmaxxingLines(events, [], 160, { detailLimit: Number.POSITIVE_INFINITY }).join("\n"));
 
-  assert.match(plain, /turn 1\.1 .*reflect .*safe/);
+  assert.match(plain, /turn 1\.1 .*decision .*safe/);
+  assert.match(plain, /turn 1\.2 .*tool-loop .*safe/);
   assert.doesNotMatch(plain, /turn 1\.1 .*user/);
+  assert.doesNotMatch(plain, /decision-loop/);
 });
 
 test("tokenmaxxing shows compact failure and breaker lifecycle signals", () => {

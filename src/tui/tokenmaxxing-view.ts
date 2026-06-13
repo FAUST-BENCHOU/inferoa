@@ -422,6 +422,7 @@ function runSummaries(events: SessionEvent[], cacheByRun: Map<string, CacheObser
 function modelCallSummaries(events: SessionEvent[], cacheByCall: Map<string, CacheObservation>, latencyByCall: Map<string, TurnLatency>): ModelCallSummary[] {
   const runOrdinals = runOrdinalMap(events);
   const requestByCall = modelRequestByCall(events);
+  const loopOriginByRun = loopOriginByRunPrompt(events);
   const seenRuns = new Set<string>();
   return events
     .map((event, order) => ({ event, order }))
@@ -451,7 +452,7 @@ function modelCallSummaries(events: SessionEvent[], cacheByCall: Map<string, Cac
         promptEpochId: cache?.promptEpochId ?? stringField(event.data.prompt_epoch_id) ?? stringField(request?.prompt_epoch_id),
         isRunStart,
         requestClass: stringField(event.data.request_class) ?? stringField(request?.request_class),
-        requestOrigin: stringField(event.data.request_origin) ?? stringField(request?.request_origin),
+        requestOrigin: stringField(event.data.request_origin) ?? stringField(request?.request_origin) ?? loopOriginByRun.get(runId),
         actualTokens,
         withoutRtkTokens: actualTokens + rtk.saved_tokens,
         toolCalls,
@@ -1684,7 +1685,7 @@ function formatTurnTableRow(cells: Array<string | undefined>, width: number): st
 }
 
 function turnTableWidths(width: number): number[] {
-  const minimums = [10, 8, 15, 13, 9, 7, 7, 8, 7, 7, 9];
+  const minimums = [10, 10, 15, 13, 9, 7, 7, 8, 7, 7, 9];
   const maximums = [18, 18, 36, 34, 24, 18, 18, 24, 10, 10, 12];
   const weights = [1.1, 1, 2, 2, 1.25, 1, 0.85, 0.85, 0.7, 0.7, 0.9];
   const separatorWidth = 2 * (minimums.length - 1);
@@ -1765,10 +1766,10 @@ function turnEventLabel(turn: TurnSummary): string {
     if (name === "user") {
       return fg256(87, name);
     }
-    if (name === "loop") {
+    if (name === "execution") {
       return fg256(111, name);
     }
-    if (name === "reflect" || name === "verify") {
+    if (name === "decision" || name === "verify") {
       return fg256(111, name);
     }
     return name;
@@ -1777,19 +1778,46 @@ function turnEventLabel(turn: TurnSummary): string {
 }
 
 function modelCallEventName(turn: ModelCallSummary): string {
+  if (!turn.isRunStart) {
+    return "tool-loop";
+  }
   switch (turn.requestClass) {
     case "reflection":
-      return "reflect";
+      return "decision";
     case "verification":
       return "verify";
     case "background":
+      if (turn.requestOrigin === "loop") {
+        return "execution";
+      }
       return "bg";
     default:
-      if (turn.requestOrigin === "loop" && turn.isRunStart) {
-        return "loop";
+      if (turn.requestOrigin === "loop") {
+        return "execution";
       }
       return turn.isRunStart ? "user" : "tool-loop";
   }
+}
+
+function loopOriginByRunPrompt(events: readonly SessionEvent[]): Map<string, "loop"> {
+  const out = new Map<string, "loop">();
+  for (const event of events) {
+    if (!event.run_id || event.type !== "user.prompt") {
+      continue;
+    }
+    const prompt = stringField(event.data.prompt) ?? "";
+    if (isLoopExecutionPrompt(prompt)) {
+      out.set(event.run_id, "loop");
+    }
+  }
+  return out;
+}
+
+function isLoopExecutionPrompt(prompt: string): boolean {
+  return (
+    /^Loop objective:/m.test(prompt) &&
+    (/Execution turn for a (?:Deliver|Discover) loop\./.test(prompt) || /Continue the active loop task\./.test(prompt))
+  );
 }
 
 function formatLatencyCell(value?: number): string {

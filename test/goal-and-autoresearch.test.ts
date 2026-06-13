@@ -1204,6 +1204,7 @@ test("goal supervisor activity labels include the current horizon generation", a
       }),
     );
     const workLabels: string[] = [];
+    const workOrigins: Array<string | undefined> = [];
     await runGoalSupervisor({
       store,
       sessionId: workSession.session_id,
@@ -1211,10 +1212,12 @@ test("goal supervisor activity labels include the current horizon generation", a
       maxIterations: 1,
       runTurn: async (request) => {
         workLabels.push(request.activityLabel ?? "");
+        workOrigins.push(request.origin);
         return { run_id: "run_work" };
       },
     });
     assert.deepEqual(workLabels, ["Continuing loop task 0"]);
+    assert.deepEqual(workOrigins, ["loop"]);
 
     const reflectionSession = store.createSession(workspace, "goal-reflection-horizon");
     writeGoalState(
@@ -1225,6 +1228,7 @@ test("goal supervisor activity labels include the current horizon generation", a
       }),
     );
     const reflectionLabels: string[] = [];
+    const reflectionOrigins: Array<string | undefined> = [];
     await runGoalSupervisor({
       store,
       sessionId: reflectionSession.session_id,
@@ -1232,10 +1236,12 @@ test("goal supervisor activity labels include the current horizon generation", a
       maxIterations: 1,
       runTurn: async (request) => {
         reflectionLabels.push(request.activityLabel ?? "");
+        reflectionOrigins.push(request.origin);
         return { run_id: request.runId ?? "run_reflection" };
       },
     });
     assert.deepEqual(reflectionLabels, ["Reflecting loop task 0"]);
+    assert.deepEqual(reflectionOrigins, ["loop"]);
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });
