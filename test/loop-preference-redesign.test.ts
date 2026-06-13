@@ -56,6 +56,20 @@ test("discover preference gets research bootstrap without forcing a script harne
   assert.doesNotMatch(context, /strategy|approach|focus|explore|timebox/i);
 });
 
+test("at least runtime progress is visible only in loop context", () => {
+  const state = createGoalState({
+    objective: "Run for a meaningful minimum",
+    runtime_policy: { mode: "at_least", min_duration_ms: 3_600_000 },
+  } as never);
+  state.goal.time_used_ms = 900_000;
+  state.goal.time_used_seconds = 900;
+
+  const context = plain(renderGoalModeSection(state));
+
+  assert.match(context, /runtime: At least 1h/);
+  assert.match(context, /runtime progress: elapsed 15m; minimum 1h; remaining 45m/);
+});
+
 test("replay preference has attempts but no bootstrap or hidden model context", () => {
   const state = createGoalState({
     objective: "say hi to me",

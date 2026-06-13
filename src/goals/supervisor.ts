@@ -7,8 +7,11 @@ import {
   consumeRepeatGoalRun,
   completeGoalAfterReflection,
   goalCompletionCandidateBlockMessage,
+  goalDurationMs,
   incompleteGoalPlanningSteps,
   isGoalHorizonExhausted,
+  loopRuntimeCompletionBlockMessage,
+  loopRuntimeRemainingMs,
   markGoalReflectionStarted,
   readGoalState,
   recordGoalCompletionReport,
@@ -16,6 +19,7 @@ import {
   replaceGoalPlanning,
   writeGoalState,
   type GoalCandidate,
+  type GoalPlanningInput,
   type GoalState,
 } from "./state.js";
 import { buildLoopDecisionPrompt, buildLoopExecutionPrompt } from "./supervisor-prompts.js";
@@ -24,6 +28,7 @@ import { readAutoresearchState, researchCompletionBlockMessage, setAutoresearchM
 import { goalVerifierPolicyCompletionBlockMessage } from "../loop/verification.js";
 
 export const DEFAULT_GOAL_SUPERVISOR_MAX_ITERATIONS = 1000;
+const AT_LEAST_NO_PROGRESS_LIMIT = 3;
 
 export interface GoalSupervisorTurnRequest {
   prompt: string;
@@ -72,6 +77,7 @@ export interface GoalSupervisorOptions {
 export async function runGoalSupervisor(options: GoalSupervisorOptions): Promise<GoalSupervisorResult> {
   const maxIterations = Math.max(1, Math.trunc(options.maxIterations ?? DEFAULT_GOAL_SUPERVISOR_MAX_ITERATIONS));
   let iteration = 0;
+  let consecutiveAtLeastNoProgressTurns = 0;
   for (; iteration < maxIterations; iteration += 1) {
     if (options.shouldContinue && !options.shouldContinue()) {
       return { status: "stopped", iteration };
@@ -133,9 +139,21 @@ export async function runGoalSupervisor(options: GoalSupervisorOptions): Promise
     });
     if (!workRun || !goalProgressUpdatedDuringRun(options.store, options.sessionId, workRun.run_id, state)) {
       const reason = goalWorkNoProgressReason(workRun);
+      const latest = readGoalState(options.store, options.sessionId) ?? state;
+      if (isAtLeastRuntimePending(latest)) {
+        consecutiveAtLeastNoProgressTurns += 1;
+        appendAtLeastNoProgressEvent(options, latest, workRun?.run_id, reason, consecutiveAtLeastNoProgressTurns);
+        if (consecutiveAtLeastNoProgressTurns >= AT_LEAST_NO_PROGRESS_LIMIT) {
+          const pauseReason = `stalled before At least runtime was satisfied after ${consecutiveAtLeastNoProgressTurns} no-progress turns: ${reason}`;
+          const paused = pauseGoal(options, latest, workRun?.run_id, pauseReason);
+          return { status: "paused", iteration: iteration + 1, reason: pauseReason, run_id: workRun?.run_id, goal_id: paused.goal.id };
+        }
+        continue;
+      }
       options.onWaiting?.(reason);
       return { status: "waiting", iteration: iteration + 1, reason, run_id: workRun?.run_id, goal_id: state.goal.id };
     }
+    consecutiveAtLeastNoProgressTurns = 0;
     const afterWork = readGoalState(options.store, options.sessionId);
     if (afterWork && afterWork.goal.planning && incompleteGoalPlanningSteps(afterWork.goal).length === 0) {
       continue;
@@ -191,6 +209,14 @@ async function runGoalReflection(options: GoalSupervisorOptions, state: GoalStat
   // concrete and substantively tied to the original objective, otherwise done.
   if (reflected.goal.last_reflection_decision === "done") {
     try {
+      const runtimeBlock = loopRuntimeCompletionBlockMessage(reflected.goal);
+      if (runtimeBlock) {
+        const expanded = expandGoalFromLedgerCandidates(reflected) ?? expandGoalForRuntimeMinimum(reflected, runtimeBlock);
+        const saved = writeGoalState(options.store, options.sessionId, expanded, reflectionRunId);
+        appendRuntimeMinimumExpansionEvent(options, saved, reflected, reflectionRunId, runtimeBlock);
+        options.onReflectionExpanded?.(saved);
+        return { status: "waiting", iteration, reason: "expanded_for_runtime_minimum", run_id: reflectionRunId, goal_id: saved.goal.id };
+      }
       const candidateBlock = goalCompletionCandidateBlockMessage(reflected.goal);
       if (candidateBlock) {
         const expanded = expandGoalFromLedgerCandidates(reflected);
@@ -313,6 +339,13 @@ function goalHorizonActivityLabel(prefix: string, generation: number): string {
   return `${prefix} ${generation}`;
 }
 
+function isAtLeastRuntimePending(state: GoalState | undefined): state is GoalState {
+  if (!state || state.goal.preference === "replay") {
+    return false;
+  }
+  return (loopRuntimeRemainingMs(state.goal) ?? 0) > 0;
+}
+
 function repeatGoalActivityLabel(goal: GoalState["goal"]): string {
   const target = goal.replay?.target_attempts ?? 1;
   const remaining = repeatGoalRemainingRuns(goal);
@@ -347,6 +380,56 @@ function appendLedgerExpansionEvent(
   });
 }
 
+function appendRuntimeMinimumExpansionEvent(
+  options: GoalSupervisorOptions,
+  saved: GoalState,
+  previous: GoalState,
+  runId: string,
+  blockedCompletion: string,
+): void {
+  options.store.appendEvent({
+    session_id: options.sessionId,
+    run_id: runId,
+    type: "goal.horizon.expanded",
+    data: {
+      goal_id: saved.goal.id,
+      previous_horizon_generation: previous.goal.horizon_generation,
+      horizon_generation: saved.goal.horizon_generation,
+      step_count: saved.goal.planning?.steps.length ?? 0,
+      active_step_id: saved.goal.planning?.active_step_id,
+      reason: "runtime_minimum",
+      blocked_completion: blockedCompletion,
+      elapsed_ms: goalDurationMs(saved.goal),
+      min_duration_ms: saved.goal.runtime_policy.mode === "at_least" ? saved.goal.runtime_policy.min_duration_ms : undefined,
+      remaining_ms: loopRuntimeRemainingMs(saved.goal),
+    },
+  });
+}
+
+function appendAtLeastNoProgressEvent(
+  options: GoalSupervisorOptions,
+  state: GoalState,
+  runId: string | undefined,
+  reason: string,
+  consecutive: number,
+): void {
+  options.store.appendEvent({
+    session_id: options.sessionId,
+    run_id: runId,
+    type: "goal.runtime.no_progress",
+    data: {
+      goal_id: state.goal.id,
+      horizon_generation: state.goal.horizon_generation,
+      reason,
+      consecutive,
+      elapsed_ms: goalDurationMs(state.goal),
+      min_duration_ms: state.goal.runtime_policy.mode === "at_least" ? state.goal.runtime_policy.min_duration_ms : undefined,
+      remaining_ms: loopRuntimeRemainingMs(state.goal),
+      supervisor: options.supervisor,
+    },
+  });
+}
+
 function expandGoalFromLedgerCandidates(state: GoalState): GoalState | undefined {
   const goal = state.goal;
   if (!goal.ledger || goal.preference === "replay") {
@@ -372,6 +455,84 @@ function expandGoalFromLedgerCandidates(state: GoalState): GoalState | undefined
   planned.enabled = true;
   planned.goal.status = "active";
   return planned;
+}
+
+function expandGoalForRuntimeMinimum(state: GoalState, blockedCompletion: string): GoalState {
+  const goal = state.goal;
+  const next = cloneGoalState(state);
+  next.goal.horizon_generation += 1;
+  const planned = replaceGoalPlanning(next, runtimeMinimumPlanningInput(goal, next.goal.horizon_generation, blockedCompletion));
+  planned.enabled = true;
+  planned.goal.status = "active";
+  return planned;
+}
+
+function runtimeMinimumPlanningInput(goal: GoalState["goal"], generation: number, blockedCompletion: string): GoalPlanningInput {
+  const remaining = loopRuntimeRemainingMs(goal);
+  const remainingNote = remaining === undefined ? "runtime minimum is still pending" : `${remaining}ms of minimum runtime remains`;
+  const notes = `${blockedCompletion} Continue because At least runtime is a lower bound, not a stop timer; ${remainingNote}.`;
+  if (goal.preference === "discover") {
+    return {
+      summary: `Loop task ${generation} · Runtime continuation`,
+      active_step_id: `runtime_reassess_research_${generation}`,
+      steps: [
+        {
+          id: `runtime_reassess_research_${generation}`,
+          title: "Reassess research evidence and unresolved uncertainty",
+          status: "pending",
+          notes,
+        },
+        {
+          id: `runtime_next_experiment_${generation}`,
+          title: "Run or design the next highest-information experiment",
+          status: "pending",
+          notes: "Prefer a benchmark, comparison, ablation, failure analysis, or guardrail that could materially change the conclusion.",
+        },
+        {
+          id: `runtime_compare_alternatives_${generation}`,
+          title: "Compare alternatives and update the evidence frontier",
+          status: "pending",
+          notes: "Record competing hypotheses, rejected branches, and remaining evidence gaps in the ledger.",
+        },
+        {
+          id: `runtime_research_decision_ready_${generation}`,
+          title: "Prepare decisive research evidence for the next decision",
+          status: "pending",
+          notes: "Leave metrics, caveats, and the next slice visible before the decision turn.",
+        },
+      ],
+    };
+  }
+  return {
+    summary: `Loop task ${generation} · Runtime continuation`,
+    active_step_id: `runtime_reassess_scope_${generation}`,
+    steps: [
+      {
+        id: `runtime_reassess_scope_${generation}`,
+        title: "Reassess completion claims against the full objective",
+        status: "pending",
+        notes,
+      },
+      {
+        id: `runtime_audit_surfaces_${generation}`,
+        title: "Audit remaining high-risk surfaces and edge cases",
+        status: "pending",
+        notes: "Look beyond the last local fix: integrations, user-visible behavior, tests, docs, configuration, rollback, and omitted paths.",
+      },
+      {
+        id: `runtime_strengthen_verification_${generation}`,
+        title: "Strengthen verification with targeted checks",
+        status: "pending",
+        notes: "Run, add, or justify focused verification that can raise confidence in end-to-end completion.",
+      },
+      {
+        id: `runtime_update_frontier_${generation}`,
+        title: "Update frontier and prepare the next decision",
+        status: "pending",
+        notes: "Record remaining candidates, completed evidence, and any risks that should affect the next decision.",
+      },
+    ],
+  };
 }
 
 function nextHorizonCandidates(candidates: GoalCandidate[]): GoalCandidate[] {

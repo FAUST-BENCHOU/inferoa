@@ -957,6 +957,7 @@ export function renderLoopContext(state: GoalState | undefined): string | undefi
     goal.review_owner ? `loop review owner: ${escapeXmlText(goal.review_owner)}` : undefined,
     `preference: ${loopPreferenceLabel(goal.preference)}`,
     `runtime: ${renderLoopRuntimePolicy(goal.runtime_policy)}`,
+    renderLoopRuntimeProgress(goal),
     `review policy: ${goal.hil_policy}`,
     statusLine,
     budgetLine,
@@ -1029,6 +1030,19 @@ export function completionBudgetReport(goal: GoalRecord): string | undefined {
 
 export function goalDurationMs(goal: GoalRecord): number {
   return Math.max(0, Math.trunc(goal.time_used_ms ?? goal.time_used_seconds * 1000));
+}
+
+export function loopRuntimeRemainingMs(goal: GoalRecord): number | undefined {
+  const runtime = goal.runtime_policy;
+  if (runtime.mode !== "at_least") {
+    return undefined;
+  }
+  return Math.max(0, runtime.min_duration_ms - goalDurationMs(goal));
+}
+
+export function isLoopRuntimeSatisfied(goal: GoalRecord): boolean {
+  const remaining = loopRuntimeRemainingMs(goal);
+  return remaining === undefined || remaining <= 0;
 }
 
 export function formatGoalDuration(goal: GoalRecord): string {
@@ -1115,11 +1129,20 @@ export function loopRuntimeCompletionBlockMessage(goal: GoalRecord): string | un
   if (runtime.mode !== "at_least") {
     return undefined;
   }
-  const elapsed = goalDurationMs(goal);
-  if (elapsed >= runtime.min_duration_ms) {
+  if (isLoopRuntimeSatisfied(goal)) {
     return undefined;
   }
+  const elapsed = goalDurationMs(goal);
   return `Cannot complete loop before At least runtime is satisfied (${formatDurationMs(elapsed)} elapsed of ${formatDurationMs(runtime.min_duration_ms)}).`;
+}
+
+function renderLoopRuntimeProgress(goal: GoalRecord): string | undefined {
+  const runtime = goal.runtime_policy;
+  if (runtime.mode !== "at_least") {
+    return undefined;
+  }
+  const remaining = loopRuntimeRemainingMs(goal) ?? 0;
+  return `runtime progress: elapsed ${formatDurationMs(goalDurationMs(goal))}; minimum ${formatDurationMs(runtime.min_duration_ms)}; remaining ${formatDurationMs(remaining)}`;
 }
 
 export function goalPlanningProgressSummary(planning: GoalPlanningState): string {

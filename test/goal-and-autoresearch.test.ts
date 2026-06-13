@@ -1287,6 +1287,98 @@ test("goal supervisor treats accounting-only updates as no horizon progress", as
   }
 });
 
+test("at least runtime continues through transient accounting-only turns", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-atleast-no-progress-retry-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_goal_atleast_no_progress_retry", root: dir, alias: "goal-atleast-no-progress-retry" };
+    const session = store.createSession(workspace, "goal-atleast-no-progress-retry");
+    const registry = new ToolRegistry(config(), workspace, store);
+    const state = replaceGoalPlanning(createGoalState({ objective: "Keep working until the minimum runtime", runtime_policy: { mode: "at_least", min_duration_ms: 60_000 } }), {
+      steps: [{ id: "active", title: "Active horizon work", status: "in_progress" }],
+    });
+    state.goal.time_used_ms = 10_000;
+    writeGoalState(store, session.session_id, state, "run_seed");
+    const runIds: string[] = [];
+    const waitingReasons: string[] = [];
+
+    const result = await runGoalSupervisor({
+      store,
+      sessionId: session.session_id,
+      supervisor: "test",
+      maxIterations: 5,
+      shouldContinue: () => runIds.length < 2,
+      onWaiting: (reason) => waitingReasons.push(reason),
+      runTurn: async () => {
+        const runId = runIds.length === 0 ? "run_usage_only" : "run_structural_update";
+        runIds.push(runId);
+        if (runId === "run_usage_only") {
+          applyGoalUsage(store, session.session_id, { duration_ms: 500 }, runId);
+        } else {
+          const updated = await registry.call(
+            { id: "atleast_structural_update", name: "goal", arguments: { op: "update_step", step_id: "active", status: "completed", notes: "Structural progress after a transient empty turn." } },
+            { session_id: session.session_id, run_id: runId },
+          );
+          assert.equal(updated.ok, true, JSON.stringify(updated));
+        }
+        return { run_id: runId };
+      },
+    });
+
+    assert.equal(result.status, "stopped");
+    assert.deepEqual(runIds, ["run_usage_only", "run_structural_update"]);
+    assert.deepEqual(waitingReasons, []);
+    assert.equal(readGoalState(store, session.session_id)?.goal.status, "active");
+    assert.equal(readGoalState(store, session.session_id)?.goal.planning?.steps[0]?.status, "completed");
+    const events = store.listEvents(session.session_id).filter((event) => event.type === "goal.runtime.no_progress");
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.data.consecutive, 1);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("at least runtime pauses after repeated no-progress turns instead of spinning forever", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-atleast-no-progress-cap-"));
+  const store = await SessionStore.open(path.join(dir, "state"));
+  try {
+    const workspace: WorkspaceIdentity = { id: "w_goal_atleast_no_progress_cap", root: dir, alias: "goal-atleast-no-progress-cap" };
+    const session = store.createSession(workspace, "goal-atleast-no-progress-cap");
+    const state = replaceGoalPlanning(createGoalState({ objective: "Do useful work for the minimum runtime", runtime_policy: { mode: "at_least", min_duration_ms: 60_000 } }), {
+      steps: [{ id: "active", title: "Active horizon work", status: "in_progress" }],
+    });
+    state.goal.time_used_ms = 10_000;
+    writeGoalState(store, session.session_id, state, "run_seed");
+    const runIds: string[] = [];
+
+    const result = await runGoalSupervisor({
+      store,
+      sessionId: session.session_id,
+      supervisor: "test",
+      maxIterations: 5,
+      runTurn: async () => {
+        const runId = `run_usage_${runIds.length}`;
+        runIds.push(runId);
+        applyGoalUsage(store, session.session_id, { duration_ms: 500 }, runId);
+        return { run_id: runId };
+      },
+    });
+
+    assert.equal(result.status, "paused");
+    assert.match(result.reason ?? "", /stalled before At least runtime/);
+    assert.deepEqual(runIds, ["run_usage_0", "run_usage_1", "run_usage_2"]);
+    const current = readGoalState(store, session.session_id)?.goal;
+    assert.equal(current?.status, "paused");
+    assert.equal(current?.planning?.active_step_id, "active");
+    const events = store.listEvents(session.session_id).filter((event) => event.type === "goal.runtime.no_progress");
+    assert.deepEqual(events.map((event) => event.data.consecutive), [1, 2, 3]);
+  } finally {
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("goal supervisor replay preference resends the original objective for the configured count", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-repeat-supervisor-"));
   const store = await SessionStore.open(path.join(dir, "state"));
@@ -1478,7 +1570,7 @@ test("completing a horizon step reconciles the matching open ledger candidate", 
   }
 });
 
-test("at least runtime blocks completion before the minimum duration is reached", async () => {
+test("at least runtime expands instead of completing before the minimum duration is reached", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-runtime-gate-"));
   const store = await SessionStore.open(path.join(dir, "state"));
   try {
@@ -1491,13 +1583,16 @@ test("at least runtime blocks completion before the minimum duration is reached"
     });
     state.goal.time_used_ms = 10_000;
     writeGoalState(store, session.session_id, state, "run_seed");
+    let reflectionCalls = 0;
 
     const result = await runGoalSupervisor({
       store,
       sessionId: session.session_id,
       supervisor: "test",
-      maxIterations: 1,
+      maxIterations: 3,
+      shouldContinue: () => reflectionCalls < 1,
       runTurn: async (request) => {
+        reflectionCalls += 1;
         const reflected = await registry.call(
           { id: "runtime_done_reflection", name: "goal", arguments: { op: "reflect", decision: "done", summary: "Runtime should block.", verification_evidence: { checked: true } } },
           { session_id: session.session_id, run_id: request.runId ?? "run_reflection", request_class: "reflection", visibility: "internal" },
@@ -1507,12 +1602,12 @@ test("at least runtime blocks completion before the minimum duration is reached"
       },
     });
 
-    assert.equal(result.status, "paused");
-    assert.match(result.reason ?? "", /At least runtime/);
+    assert.equal(result.status, "stopped");
     const current = readGoalState(store, session.session_id)?.goal;
-    assert.equal(current?.status, "paused");
-    assert.equal(current?.horizon_generation, 0);
-    assert.equal(store.listEvents(session.session_id).some((event) => event.type === "goal.horizon.expanded"), false);
+    assert.equal(current?.status, "active");
+    assert.equal(current?.horizon_generation, 1);
+    assert.equal(current?.planning?.active_step_id, "runtime_reassess_scope_1");
+    assert.equal(store.listEvents(session.session_id).some((event) => event.type === "goal.horizon.expanded" && event.data.reason === "runtime_minimum"), true);
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });
