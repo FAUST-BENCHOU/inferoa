@@ -254,6 +254,54 @@ test("goal continuation queues a hidden foreground prompt instead of a daemon jo
   }
 });
 
+test("repeat goal continuation renders each repeated prompt and decrements remaining count", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-repeat-goal-visible-"));
+  const store = await SessionStore.open(stateDir);
+  try {
+    const config = structuredClone(DEFAULT_CONFIG);
+    config.model_setup.base_url = "http://127.0.0.1:9999/v1";
+    config.model_setup.model = "repeat-goal-test";
+    const workspace = { id: "w_repeat_goal_visible", root: stateDir, alias: "repeat-goal-visible" };
+    const tui = new TuiApp(
+      {
+        config,
+        configFiles: [],
+        workspace,
+        store,
+        runtime: {},
+      } as never,
+    );
+    const session = store.createSession(workspace, "repeat goal visible");
+    const state = writeGoalState(
+      store,
+      session.session_id,
+      createGoalState({
+        objective: "say hi",
+        hil_policy: "auto",
+        strategy: { mode: "repeat", inferred: false, target_runs: 3 },
+      }),
+    );
+    const queued: Array<{ prompt: string; renderPrompt?: boolean }> = [];
+    const view = tui as unknown as {
+      enqueueGoalContinuation: (state: ReturnType<typeof createGoalState>) => Promise<void>;
+      optionalSession: () => { session_id: string } | undefined;
+      enqueuePrompt: (prompt: string, options?: { renderPrompt?: boolean }) => void;
+    };
+    view.optionalSession = () => session;
+    view.enqueuePrompt = (prompt, options = {}) => {
+      queued.push({ prompt, renderPrompt: options.renderPrompt });
+    };
+
+    await view.enqueueGoalContinuation(state);
+
+    assert.deepEqual(queued, [{ prompt: "say hi", renderPrompt: true }]);
+    assert.equal(readGoalState(store, session.session_id)?.goal.strategy?.remaining_runs, 2);
+  } finally {
+    store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("composer metadata reuses mode state while session events are unchanged", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-composer-metadata-cache-"));
   const store = await SessionStore.open(stateDir);
@@ -494,19 +542,24 @@ test("goal setup labels human review as human in the loop", async () => {
       } as never,
     );
     const titles: string[] = [];
+    const typeLabels: string[] = [];
     const choices = ["task", "auto", "auto", "start"];
     const view = tui as unknown as {
       chooseGoalSetup: () => Promise<{ hil_policy?: string }>;
-      chooseGoalSetupOption: <T extends string>(title: string) => Promise<T>;
+      chooseGoalSetupOption: <T extends string>(title: string, options: Array<{ label: string }>) => Promise<T>;
     };
-    view.chooseGoalSetupOption = async (title) => {
+    view.chooseGoalSetupOption = async (title, options) => {
       titles.push(title);
+      if (title === "Loop Type") {
+        typeLabels.push(...options.map((option) => option.label));
+      }
       return choices.shift() as string as never;
     };
 
     const setup = await view.chooseGoalSetup();
 
     assert.deepEqual(titles, ["Loop Type", "Loop Approach", "Human in the Loop", "Start Loop"]);
+    assert.deepEqual(typeLabels, ["Goal", "Research"]);
     assert.equal(setup.hil_policy, "auto");
   } finally {
     store.close();
@@ -605,7 +658,7 @@ test("repeat loop setup asks for a count and skips human-in-the-loop setup", asy
       } as never,
     );
     const titles: string[] = [];
-    const choices = ["task", "repeat", "start"];
+    const choices = ["task", "repeat", "100", "start"];
     const view = tui as unknown as {
       chooseGoalSetup: (objective?: string) => Promise<{ hil_policy?: string; strategy?: { mode?: string; target_runs?: number } }>;
       chooseGoalSetupOption: <T extends string>(title: string) => Promise<T>;
@@ -616,8 +669,7 @@ test("repeat loop setup asks for a count and skips human-in-the-loop setup", asy
       return choices.shift() as string as never;
     };
     view.askGoalSetupValue = async (title) => {
-      titles.push(title);
-      return "3";
+      throw new Error(`${title} should only be used for custom repeat counts`);
     };
 
     const setup = await view.chooseGoalSetup("Repeat the cleanup pass");
@@ -625,7 +677,7 @@ test("repeat loop setup asks for a count and skips human-in-the-loop setup", asy
     assert.deepEqual(titles, ["Loop Type", "Loop Approach", "Repeat Count", "Start Loop"]);
     assert.equal(setup.hil_policy, "auto");
     assert.equal(setup.strategy?.mode, "repeat");
-    assert.equal(setup.strategy?.target_runs, 3);
+    assert.equal(setup.strategy?.target_runs, 100);
   } finally {
     store.close();
     await rm(stateDir, { recursive: true, force: true });

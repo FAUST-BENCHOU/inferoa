@@ -17,6 +17,7 @@ import {
   readGoalHorizons,
   readGoalState,
   recordGoalCompletionReport,
+  renderGoalModeSection,
   replaceGoalPlanning,
   writeGoalState,
 } from "../src/goals/state.js";
@@ -1296,6 +1297,7 @@ test("goal supervisor repeat strategy resends the original objective for the con
       "run_seed",
     );
     const prompts: string[] = [];
+    const renderPromptFlags: Array<boolean | undefined> = [];
 
     const result = await runGoalSupervisor({
       store,
@@ -1304,6 +1306,7 @@ test("goal supervisor repeat strategy resends the original objective for the con
       maxIterations: 5,
       runTurn: async (request) => {
         prompts.push(request.prompt);
+        renderPromptFlags.push(request.renderPrompt);
         return { run_id: `run_repeat_${prompts.length}`, content: "done" };
       },
     });
@@ -1314,6 +1317,7 @@ test("goal supervisor repeat strategy resends the original objective for the con
       "Run the same cleanup prompt",
       "Run the same cleanup prompt",
     ]);
+    assert.deepEqual(renderPromptFlags, [true, true, true]);
     const current = readGoalState(store, session.session_id)?.goal;
     assert.equal(current?.status, "complete");
     assert.equal(current?.strategy?.remaining_runs, 0);
@@ -1321,6 +1325,22 @@ test("goal supervisor repeat strategy resends the original objective for the con
     store.close();
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("repeat loop prompt context stays mechanical without setup or reflection instructions", () => {
+  const state = createGoalState({
+    objective: "Say hi repeatedly",
+    hil_policy: "auto",
+    strategy: { mode: "repeat", inferred: false, target_runs: 10 },
+  });
+
+  const prompt = renderGoalModeSection(state) ?? "";
+
+  assert.match(prompt, /Repeat loop is active/);
+  assert.match(prompt, /remaining repeat runs: 10/);
+  assert.doesNotMatch(prompt, /Internal loop task plan/i);
+  assert.doesNotMatch(prompt, /goal op=reflect/i);
+  assert.doesNotMatch(prompt, /Read objective and constraints/i);
 });
 
 test("goal supervisor explains empty model turns as no goal progress", async () => {

@@ -33,6 +33,7 @@ export interface GoalSupervisorTurnRequest {
   runId?: string;
   activityLabel?: string;
   suppressTranscript?: boolean;
+  renderPrompt?: boolean;
 }
 
 export interface GoalSupervisorTurnResult {
@@ -98,6 +99,7 @@ export async function runGoalSupervisor(options: GoalSupervisorOptions): Promise
         prompt: state.goal.objective,
         requestClass: options.workRequestClass ?? "background",
         activityLabel: repeatGoalActivityLabel(consumed.goal),
+        renderPrompt: true,
       });
       if (!run) {
         options.onWaiting?.("repeat loop turn did not complete");

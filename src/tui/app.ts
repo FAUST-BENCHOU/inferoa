@@ -217,6 +217,7 @@ type ToolTraceMode = "compact" | "expanded";
 type GoalKindChoice = "task" | "research";
 type GoalApproachChoice = "auto" | "focus" | "explore" | "timebox" | "repeat";
 type GoalCampaignHoursChoice = "auto" | "30m" | "2h" | "4h" | "custom";
+type GoalRepeatRunsChoice = "10" | "100" | "1000" | "custom";
 type GoalReviewPolicyChoice = "auto" | "review";
 type GoalReviewChoice = GoalReviewDecision;
 type GoalSetupWizardStep = "Type" | "Approach" | "Human in the Loop" | "Review";
@@ -560,7 +561,7 @@ export class TuiApp {
         shouldContinue: () => this.#running && !this.#promptQueue.length,
         runTurn: async (request) =>
           await this.submitPrompt(request.prompt, {
-            renderPrompt: false,
+            renderPrompt: request.renderPrompt === true,
             requestClass: request.requestClass,
             visibility: request.visibility,
             runId: request.runId,
@@ -3939,7 +3940,7 @@ export class TuiApp {
     const kind = await this.chooseGoalSetupOption<GoalKindChoice>(
       "Loop Type",
       [
-        { value: "task", label: "Task", description: "Implementation, investigation, or operational work." },
+        { value: "task", label: "Goal", description: "Implementation, investigation, or operational work." },
         { value: "research", label: "Research", description: "Metric-driven experiment with tracked evidence." },
       ],
       0,
@@ -4021,15 +4022,29 @@ export class TuiApp {
   }
 
   private async chooseRepeatRuns(wizard?: GoalSetupWizardContext): Promise<number> {
-    void wizard;
+    const choice = await this.chooseGoalSetupOption<GoalRepeatRunsChoice>(
+      "Repeat Count",
+      [
+        { value: "10", label: "10", description: "10 repeat runs." },
+        { value: "100", label: "100", description: "100 repeat runs." },
+        { value: "1000", label: "1000", description: "1000 repeat runs." },
+        { value: "custom", label: "Custom", description: "Enter a whole number like 25." },
+      ],
+      0,
+      [],
+      wizard,
+    );
+    if (choice !== "custom") {
+      return Number.parseInt(choice, 10);
+    }
     let error: string | undefined;
     for (;;) {
-      const raw = (await this.askGoalSetupValue("Repeat Count", "3", ["Repeat the original loop prompt this many times."], error)).trim();
+      const raw = (await this.askGoalSetupValue("Custom Repeat Count", "25", ["Use a positive whole number like 25."], error)).trim();
       const value = parseGoalRepeatRuns(raw);
       if (value !== undefined) {
         return value;
       }
-      error = "Use a positive whole number like 3.";
+      error = "Use a positive whole number like 25.";
     }
   }
 
@@ -4183,7 +4198,7 @@ export class TuiApp {
         return;
       }
       writeGoalState(this.app.store, session.session_id, consumed);
-      this.enqueuePrompt(stateOrObjective.goal.objective, { renderPrompt: false });
+      this.enqueuePrompt(stateOrObjective.goal.objective, { renderPrompt: true });
       return;
     }
     const goal = typeof stateOrObjective === "string" ? stateOrObjective : stateOrObjective.goal;
@@ -7224,7 +7239,7 @@ function goalStrategyInputForApproach(
 }
 
 function goalKindSetupLabel(kind: GoalKindChoice): string {
-  return kind === "research" ? "Research" : "Task";
+  return kind === "research" ? "Research" : "Goal";
 }
 
 function goalApproachSetupLabel(approach: GoalApproachChoice, targetHours?: number, targetRuns?: number): string {

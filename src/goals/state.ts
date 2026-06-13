@@ -335,6 +335,7 @@ export function createGoalState(input: GoalCreateInput, now = new Date()): GoalS
   const timestamp = now.toISOString();
   const kind = input.kind ?? "task";
   const strategy = createGoalStrategy(input.strategy);
+  const planning = strategy.mode === "repeat" ? undefined : createGoalPlanning(horizonZeroPlanningInput(kind), now);
   return {
     enabled: true,
     goal: {
@@ -354,7 +355,7 @@ export function createGoalState(input: GoalCreateInput, now = new Date()): GoalS
       horizon_generation: 0,
       strategy,
       ledger: emptyGoalLedger(timestamp),
-      planning: createGoalPlanning(horizonZeroPlanningInput(kind), now),
+      planning,
       created_at: timestamp,
       updated_at: timestamp,
     },
@@ -956,6 +957,23 @@ export function renderGoalModeSection(state: GoalState | undefined): string | un
     return undefined;
   }
   const goal = state.goal;
+  if (goal.strategy?.mode === "repeat") {
+    return [
+      "Repeat loop is active for this session.",
+      renderTrustedObjective(goal.objective),
+      goal.owner ? `loop owner: ${escapeXmlText(goal.owner)}` : undefined,
+      goal.review_owner ? `loop review owner: ${escapeXmlText(goal.review_owner)}` : undefined,
+      `status: ${goal.status}`,
+      `repeat runs: ${goal.strategy.target_runs ?? 1}`,
+      `remaining repeat runs: ${repeatGoalRemainingRuns(goal)}`,
+      `tool loops used: ${goal.tool_rounds_used}; tool calls used: ${goal.tool_calls_used}`,
+      `time used seconds: ${goal.time_used_seconds}`,
+      "For this run, answer the repeated user prompt directly.",
+      "Do not decompose loop work, update loop planning, or record loop decisions; repeat count and completion are handled outside the model.",
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join("\n");
+  }
   const budgetLine =
     goal.token_budget === undefined
       ? "token budget: none"
