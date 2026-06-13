@@ -21,6 +21,11 @@ test("home banner omits border title without recent sessions or tagline", () => 
   assert.match(plain, />_ Inferoa/);
   assert.match(plain, /Welcome back!/);
   assert.match(plain, /Inference-native Tokenmaxxing Loop Agent Harness/);
+  assert.match(rendered, /\x1b\[1m\x1b\[38;5;252mI\x1b\[0m\x1b\[38;5;244mnference-native/);
+  assert.match(rendered, /\x1b\[1m\x1b\[38;5;252mT\x1b\[0m\x1b\[38;5;244mokenmaxxing/);
+  assert.match(rendered, /\x1b\[1m\x1b\[38;5;252mL\x1b\[0m\x1b\[38;5;244moop/);
+  assert.match(rendered, /\x1b\[1m\x1b\[38;5;252mA\x1b\[0m\x1b\[38;5;244mgent/);
+  assert.match(rendered, /\x1b\[1m\x1b\[38;5;252mH\x1b\[0m\x1b\[38;5;244marness/);
   assert.doesNotMatch(plain, /Loop Engineering Agent Harness/);
   assert.match(plain, /Tips for getting started/);
   assert.match(plain, /vLLM native · tke\/deepseek-v4-pro-tokenhub/);

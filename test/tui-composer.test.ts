@@ -313,6 +313,11 @@ test("welcome composer centers Inferoa wordmark and keeps slash and skill afford
 
   assert.match(plain, /██████╗  ██████╗  █████╗/);
   assert.match(plain, /Inference-native Tokenmaxxing Loop Agent Harness/);
+  assert.match(rendered.lines.join("\n"), /\x1b\[1m\x1b\[38;5;252mI\x1b\[0m\x1b\[38;5;244mnference-native/);
+  assert.match(rendered.lines.join("\n"), /\x1b\[1m\x1b\[38;5;252mT\x1b\[0m\x1b\[38;5;244mokenmaxxing/);
+  assert.match(rendered.lines.join("\n"), /\x1b\[1m\x1b\[38;5;252mL\x1b\[0m\x1b\[38;5;244moop/);
+  assert.match(rendered.lines.join("\n"), /\x1b\[1m\x1b\[38;5;252mA\x1b\[0m\x1b\[38;5;244mgent/);
+  assert.match(rendered.lines.join("\n"), /\x1b\[1m\x1b\[38;5;252mH\x1b\[0m\x1b\[38;5;244marness/);
   assert.doesNotMatch(plain, /Loop Engineering Agent Harness/);
   assert.doesNotMatch(plain, /vLLM agent/);
   assert.doesNotMatch(plain, /▟▙/);
@@ -372,7 +377,8 @@ test("welcome composer shows provider in the input box and version in the lower 
 
   assert.match(metaLine, /Kimi-K2\.6 · 256k\s+Tensormesh/);
   assert.match(metaLine, /Tensormesh\s{2}$/);
-  assert.match(rendered.lines.join("\n"), /\x1b\[38;5;252m\x1b\[1mTensormesh\x1b\[0m/);
+  assert.match(rendered.lines.join("\n"), /\x1b\[38;5;252mTensormesh\x1b\[0m/);
+  assert.doesNotMatch(rendered.lines.join("\n"), /\x1b\[1mTensormesh/);
   assert.match(versionLine, /v9\.8\.7$/);
   assert.ok(versionLine.indexOf("v9.8.7") > width - 16);
   assert.match(rendered.lines.at(-1) ?? "", /\x1b\[38;5;244mv9\.8\.7\x1b\[0m$/);

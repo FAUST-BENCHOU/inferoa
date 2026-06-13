@@ -13,6 +13,7 @@ test("splash renders the inference-native identity without the old tagline", () 
   assert.doesNotMatch(plain, /Agent inference-native coding/);
   assert.match(plain, /██████╗  ██████╗  █████╗/);
   assert.match(rendered, /\x1b\[38;5;39m/);
+  assert.match(rendered, /\x1b\[1m\x1b\[38;5;252mI\x1b\[0m\x1b\[38;5;244mnference-native/);
   assert.doesNotMatch(rendered, /\x1b\[38;5;214m/);
 
   const lines = plain.split("\n");

@@ -1,4 +1,5 @@
 import { ansi, fg256, padRight, terminalHeight, terminalWidth, visibleWidth } from "./ansi.js";
+import { renderInferoaTagline } from "./brand.js";
 
 const TICK_MS = 33;
 const SPLASH_MS = 1300;
@@ -26,7 +27,7 @@ export function renderInferoaSplash(elapsedMs: number, width = terminalWidth(), 
     "",
     centerInline(logoMeter(phase, meterWidth), contentWidth),
     "",
-    centerInline(fg256(244, "Inferoa · Inference-native Tokenmaxxing Loop Agent Harness"), contentWidth),
+    centerInline(`${fg256(244, "Inferoa · ")}${renderInferoaTagline()}`, contentWidth),
   ];
   const top = Math.max(1, Math.floor((h - body.length) / 2));
   const left = Math.max(0, Math.floor((w - contentWidth) / 2));

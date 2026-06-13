@@ -1,4 +1,5 @@
 import { ansi, bgLine, center, fg256, padRight, truncateToWidth, visibleWidth } from "./ansi.js";
+import { renderInferoaTagline } from "./brand.js";
 import { parseSlashCommand } from "./slash.js";
 import { renderUnknownSlashCommandNotice } from "./slash-notice.js";
 import { isPathListInput, pathListEntries } from "../util/path-input.js";
@@ -527,7 +528,7 @@ function renderWelcomeMark(): string[] {
   ];
   return [
     ...logo.map((line, index) => colorWelcomeLogoRow(line, index)),
-    center(fg256(244, "Inference-native Tokenmaxxing Loop Agent Harness"), visibleWidth(logo[0] ?? "")),
+    center(renderInferoaTagline(), visibleWidth(logo[0] ?? "")),
   ];
 }
 
@@ -544,9 +545,7 @@ function welcomeMetaLine(options: WelcomeComposerRenderOptions, width: number): 
   const modelText = compactModelLabel(options.model);
   const contextText = options.contextWindow ? compactTokenWindow(options.contextWindow) : undefined;
   const left = [fg256(252, modelText), ...(contextText ? [fg256(244, contextText)] : [])].join(` ${fg256(244, "·")} `);
-  const provider = options.providerName?.trim()
-    ? fg256(252, `${ansi.bold}${options.providerName.trim()}${ansi.reset}`)
-    : undefined;
+  const provider = options.providerName?.trim() ? fg256(252, options.providerName.trim()) : undefined;
   return padRight(renderComposerMetadataLine(left, provider, Math.max(1, width - WELCOME_META_SIDE_INSET)), width);
 }
 

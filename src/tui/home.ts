@@ -1,4 +1,5 @@
 import { ansi, fg256, padRight, truncateToWidth, visibleWidth } from "./ansi.js";
+import { renderInferoaTagline } from "./brand.js";
 
 export interface HomeRenderOptions {
   workspaceRoot: string;
@@ -46,7 +47,7 @@ function renderInferoaWordmark(): string[] {
   const main = `${fg256(244, ">_")} ${ansi.bold}${fg256(252, "Infer")}${fg256(75, "oa")}${ansi.reset}`;
   return [
     main,
-    fg256(244, "Inference-native Tokenmaxxing Loop Agent Harness"),
+    renderInferoaTagline(),
   ];
 }
 
