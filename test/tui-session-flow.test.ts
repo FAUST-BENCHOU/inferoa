@@ -278,7 +278,8 @@ test("repeat goal continuation renders each repeated prompt and decrements remai
       createGoalState({
         objective: "say hi",
         hil_policy: "auto",
-        strategy: { mode: "repeat", inferred: false, target_runs: 3 },
+        preference: "replay",
+        replay: { target_attempts: 3 },
       }),
     );
     const queued: Array<{ prompt: string; renderPrompt?: boolean; origin?: string }> = [];
@@ -295,7 +296,7 @@ test("repeat goal continuation renders each repeated prompt and decrements remai
     await view.enqueueGoalContinuation(state);
 
     assert.deepEqual(queued, [{ prompt: "say hi", renderPrompt: true, origin: "loop" }]);
-    assert.equal(readGoalState(store, session.session_id)?.goal.strategy?.remaining_runs, 2);
+    assert.equal(readGoalState(store, session.session_id)?.goal.replay?.remaining_attempts, 2);
   } finally {
     store.close();
     await rm(stateDir, { recursive: true, force: true });
@@ -430,7 +431,7 @@ test("composer metadata left shows compact context window beside the model", asy
   }
 });
 
-test("bare loop command asks objective before goal type and approach setup", async () => {
+test("bare loop command asks objective before preference and runtime setup", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-setup-order-"));
   const store = await SessionStore.open(stateDir);
   try {
@@ -492,20 +493,20 @@ test("bare loop command with objective still walks goal setup steps", async () =
       } as never,
     );
     const session = store.createSession(workspace, "loop objective setup");
-    const calls: Array<string | { objective: string; options?: { kind?: string; strategy?: { mode?: string }; hil_policy?: string } }> = [];
+    const calls: Array<string | { objective: string; options?: { preference?: string; runtime_policy?: { mode?: string }; hil_policy?: string } }> = [];
     const view = tui as unknown as {
       renderLoopControlView: (args: string) => Promise<void>;
       optionalSession: () => { session_id: string } | undefined;
       createModeSession: (title: string) => { session_id: string };
-      chooseGoalSetup: () => Promise<{ kind?: string; strategy?: { mode?: string }; hil_policy?: string }>;
+      chooseGoalSetup: () => Promise<{ preference?: string; runtime_policy?: { mode?: string }; hil_policy?: string }>;
       askModeObjective: (label: string) => Promise<string>;
-      startGoal: (session: { session_id: string }, objective: string, options?: { kind?: string; strategy?: { mode?: string }; hil_policy?: string }) => Promise<void>;
+      startGoal: (session: { session_id: string }, objective: string, options?: { preference?: string; runtime_policy?: { mode?: string }; hil_policy?: string }) => Promise<void>;
     };
     view.optionalSession = () => undefined;
     view.createModeSession = () => session;
     view.chooseGoalSetup = async () => {
       calls.push("setup");
-      return { kind: "research", strategy: { mode: "focused" }, hil_policy: "review" };
+      return { preference: "discover", runtime_policy: { mode: "auto" }, hil_policy: "review" };
     };
     view.askModeObjective = async () => {
       calls.push("objective");
@@ -519,7 +520,7 @@ test("bare loop command with objective still walks goal setup steps", async () =
 
     assert.deepEqual(calls, [
       "setup",
-      { objective: "Improve codebase quality", options: { kind: "research", strategy: { mode: "focused" }, hil_policy: "review" } },
+      { objective: "Improve codebase quality", options: { preference: "discover", runtime_policy: { mode: "auto" }, hil_policy: "review" } },
     ]);
   } finally {
     store.close();
@@ -542,24 +543,24 @@ test("goal setup labels human review as human in the loop", async () => {
       } as never,
     );
     const titles: string[] = [];
-    const typeLabels: string[] = [];
-    const choices = ["task", "auto", "auto", "start"];
+    const preferenceLabels: string[] = [];
+    const choices = ["deliver", "auto", "auto", "start"];
     const view = tui as unknown as {
       chooseGoalSetup: () => Promise<{ hil_policy?: string }>;
       chooseGoalSetupOption: <T extends string>(title: string, options: Array<{ label: string }>) => Promise<T>;
     };
     view.chooseGoalSetupOption = async (title, options) => {
       titles.push(title);
-      if (title === "Loop Type") {
-        typeLabels.push(...options.map((option) => option.label));
+      if (title === "Preference") {
+        preferenceLabels.push(...options.map((option) => option.label));
       }
       return choices.shift() as string as never;
     };
 
     const setup = await view.chooseGoalSetup();
 
-    assert.deepEqual(titles, ["Loop Type", "Loop Approach", "Human in the Loop", "Start Loop"]);
-    assert.deepEqual(typeLabels, ["Goal", "Research"]);
+    assert.deepEqual(titles, ["Preference", "Runtime", "Human in the Loop", "Start Loop"]);
+    assert.deepEqual(preferenceLabels, ["Deliver", "Discover", "Replay"]);
     assert.equal(setup.hil_policy, "auto");
   } finally {
     store.close();
@@ -567,7 +568,7 @@ test("goal setup labels human review as human in the loop", async () => {
   }
 });
 
-test("loop mode command starts a typed research approach with review policy", async () => {
+test("loop run command starts a Discover loop with review policy and runtime", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-mode-command-"));
   const store = await SessionStore.open(stateDir);
   try {
@@ -582,12 +583,12 @@ test("loop mode command starts a typed research approach with review policy", as
         runtime: {},
       } as never,
     );
-    const calls: Array<{ objective: string; options?: { kind?: string; strategy?: { mode?: string }; hil_policy?: string } }> = [];
+    const calls: Array<{ objective: string; options?: { preference?: string; runtime_policy?: { mode?: string; min_duration_ms?: number }; hil_policy?: string } }> = [];
     const view = tui as unknown as {
       renderLoopControlView: (args: string) => Promise<void>;
       optionalSession: () => { session_id: string } | undefined;
       createModeSession: (title: string) => { session_id: string };
-      startGoal: (session: { session_id: string }, objective: string, options?: { kind?: string; strategy?: { mode?: string }; hil_policy?: string }) => Promise<void>;
+      startGoal: (session: { session_id: string }, objective: string, options?: { preference?: string; runtime_policy?: { mode?: string; min_duration_ms?: number }; hil_policy?: string }) => Promise<void>;
     };
     view.optionalSession = () => undefined;
     view.createModeSession = () => session;
@@ -595,12 +596,13 @@ test("loop mode command starts a typed research approach with review policy", as
       calls.push({ objective, options });
     };
 
-    await view.renderLoopControlView("mode research --review explore Improve scheduler latency");
+    await view.renderLoopControlView("run discover --review --at-least 6h Improve scheduler latency");
 
     assert.equal(calls.length, 1);
     assert.equal(calls[0]?.objective, "Improve scheduler latency");
-    assert.equal(calls[0]?.options?.kind, "research");
-    assert.equal(calls[0]?.options?.strategy?.mode, "opportunistic");
+    assert.equal(calls[0]?.options?.preference, "discover");
+    assert.equal(calls[0]?.options?.runtime_policy?.mode, "at_least");
+    assert.equal(calls[0]?.options?.runtime_policy?.min_duration_ms, 6 * 60 * 60 * 1000);
     assert.equal(calls[0]?.options?.hil_policy, "review");
   } finally {
     store.close();
@@ -658,9 +660,9 @@ test("repeat loop setup asks for a count and skips human-in-the-loop setup", asy
       } as never,
     );
     const titles: string[] = [];
-    const choices = ["task", "repeat", "100", "start"];
+    const choices = ["replay", "100", "start"];
     const view = tui as unknown as {
-      chooseGoalSetup: (objective?: string) => Promise<{ hil_policy?: string; strategy?: { mode?: string; target_runs?: number } }>;
+      chooseGoalSetup: (objective?: string) => Promise<{ preference?: string; hil_policy?: string; replay?: { target_attempts?: number } }>;
       chooseGoalSetupOption: <T extends string>(title: string) => Promise<T>;
       askGoalSetupValue: (title: string) => Promise<string>;
     };
@@ -674,10 +676,10 @@ test("repeat loop setup asks for a count and skips human-in-the-loop setup", asy
 
     const setup = await view.chooseGoalSetup("Repeat the cleanup pass");
 
-    assert.deepEqual(titles, ["Loop Type", "Loop Approach", "Repeat Count", "Start Loop"]);
+    assert.deepEqual(titles, ["Preference", "Attempts", "Start Loop"]);
     assert.equal(setup.hil_policy, "auto");
-    assert.equal(setup.strategy?.mode, "repeat");
-    assert.equal(setup.strategy?.target_runs, 100);
+    assert.equal(setup.preference, "replay");
+    assert.equal(setup.replay?.target_attempts, 100);
   } finally {
     store.close();
     await rm(stateDir, { recursive: true, force: true });
@@ -699,17 +701,17 @@ test("bare loop command flags do not bypass human-in-the-loop setup", async () =
         runtime: {},
       } as never,
     );
-    const calls: Array<{ objective: string; options?: { kind?: string; hil_policy?: string } }> = [];
+    const calls: Array<{ objective: string; options?: { preference?: string; hil_policy?: string } }> = [];
     const view = tui as unknown as {
       renderLoopControlView: (args: string) => Promise<void>;
       optionalSession: () => { session_id: string } | undefined;
       createModeSession: (title: string) => { session_id: string };
-      chooseGoalSetup: () => Promise<{ kind?: string; hil_policy?: string }>;
-      startGoal: (session: { session_id: string }, objective: string, options?: { kind?: string; hil_policy?: string }) => Promise<void>;
+      chooseGoalSetup: () => Promise<{ preference?: string; hil_policy?: string }>;
+      startGoal: (session: { session_id: string }, objective: string, options?: { preference?: string; hil_policy?: string }) => Promise<void>;
     };
     view.optionalSession = () => undefined;
     view.createModeSession = () => session;
-    view.chooseGoalSetup = async () => ({ kind: "research", hil_policy: "auto" });
+    view.chooseGoalSetup = async () => ({ preference: "discover", hil_policy: "auto" });
     view.startGoal = async (_session, objective, options) => {
       calls.push({ objective, options });
     };
@@ -718,7 +720,7 @@ test("bare loop command flags do not bypass human-in-the-loop setup", async () =
 
     assert.equal(calls.length, 1);
     assert.equal(calls[0]?.objective, "Improve codebase quality");
-    assert.equal(calls[0]?.options?.kind, "research");
+    assert.equal(calls[0]?.options?.preference, "discover");
     assert.equal(calls[0]?.options?.hil_policy, "auto");
   } finally {
     store.close();
@@ -1597,7 +1599,7 @@ test("goal panel surfaces research metrics as verification", async () => {
         runtime: {},
       } as never,
     );
-    const goal = createGoalState({ objective: "Reduce latency", kind: "research" });
+    const goal = createGoalState({ objective: "Reduce latency", preference: "discover" });
     writeGoalState(store, session.session_id, goal, "run_goal");
     let experiment = createExperiment({ name: "latency", goal: goal.goal.objective, primary_metric: "latency_ms", direction: "lower" });
     experiment = recordRun(experiment, {
@@ -1798,8 +1800,8 @@ test("goal show renders wrapped tree horizons without repeated command hints", a
     assert.match(plain, /^complete improve codebase/m);
     assert.doesNotMatch(plain, /complete \(paused\)/);
     assert.match(plain, /decisions 2 recorded .*latest done/);
-    assert.match(plain, /type task/);
-    assert.match(plain, /approach auto/);
+    assert.match(plain, /preference Deliver .* Auto/);
+    assert.match(plain, /runtime Auto/);
     assert.match(plain, /candidates 0 open .*0 done .*0 dismissed/);
     assert.match(plain, /◇ Loop task 0 .*Initial audit and repair horizon/);
     assert.match(plain, /◆ Loop task 1 current .*Found a second horizon/);

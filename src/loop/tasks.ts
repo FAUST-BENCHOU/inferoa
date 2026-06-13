@@ -1,4 +1,4 @@
-import type { GoalKind, GoalStatus, GoalStepStatus } from "../goals/state.js";
+import type { GoalStatus, GoalStepStatus, LoopPreference } from "../goals/state.js";
 import type { SessionStore } from "../session/store.js";
 import type { JsonObject, SessionEvent, WorkspaceIdentity } from "../types.js";
 import { readGoalLoopView } from "./projection.js";
@@ -54,7 +54,7 @@ export interface LoopTaskItem {
   session_title: string;
   goal_id: string;
   goal_objective: string;
-  goal_kind: GoalKind;
+  goal_preference: LoopPreference;
   goal_status: GoalStatus;
   owner?: string;
   review_owner?: string;
@@ -77,7 +77,7 @@ export interface LoopTaskReport {
     total: number;
     current: number;
     by_state: Record<LoopTaskState, number>;
-    by_kind: Record<GoalKind, number>;
+    by_preference: Record<LoopPreference, number>;
     pending_review: number;
     blocked: number;
     ready_for_verification: number;
@@ -99,7 +99,7 @@ const LOOP_TASK_STATES: LoopTaskState[] = [
   "dropped",
 ];
 
-const GOAL_KINDS: GoalKind[] = ["task", "research"];
+const LOOP_PREFERENCES: LoopPreference[] = ["deliver", "discover", "replay"];
 const STEP_STATUSES: GoalStepStatus[] = ["pending", "in_progress", "completed", "blocked", "skipped"];
 
 export function readLoopTasks(store: SessionStore, workspace: WorkspaceIdentity): LoopTaskReport {
@@ -131,7 +131,7 @@ export function readLoopTasks(store: SessionStore, workspace: WorkspaceIdentity)
         session_title: session.title,
         goal_id: view.goal.id,
         goal_objective: view.goal.objective,
-        goal_kind: view.goal.kind,
+        goal_preference: view.goal.preference,
         goal_status: view.goal.status,
         owner: view.goal.owner,
         review_owner: view.goal.review_owner,
@@ -151,10 +151,10 @@ export function readLoopTasks(store: SessionStore, workspace: WorkspaceIdentity)
   }
   tasks.sort(compareLoopTasks);
   const byState = zeroRecord(LOOP_TASK_STATES);
-  const byKind = zeroRecord(GOAL_KINDS);
+  const byPreference = zeroRecord(LOOP_PREFERENCES);
   for (const task of tasks) {
     byState[task.state] += 1;
-    byKind[task.goal_kind] += 1;
+    byPreference[task.goal_preference] += 1;
   }
   return {
     generated_at: new Date().toISOString(),
@@ -162,7 +162,7 @@ export function readLoopTasks(store: SessionStore, workspace: WorkspaceIdentity)
       total: tasks.length,
       current: tasks.filter((task) => task.current).length,
       by_state: byState,
-      by_kind: byKind,
+      by_preference: byPreference,
       pending_review: byState.pending_review,
       blocked: byState.blocked,
       ready_for_verification: byState.ready_for_verification,

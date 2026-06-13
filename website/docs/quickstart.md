@@ -63,7 +63,7 @@ Slash commands live inside the TUI. See
   runtime status.
 - Run [`/loop`](./workflows/loop-mode.md) to start a recursive long-horizon
   loop.
-- Run `/loop mode research` for experiment-shaped work that needs repeated
+- Run `/loop run discover` for experiment-shaped work that needs repeated
   measurement.
 - Use [`/plan set`](./workflows/plan-mode.md) for ambiguous work that needs an
   inspectable plan before execution.

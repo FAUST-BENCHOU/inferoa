@@ -193,11 +193,10 @@ products:
 
 | Shape | What changes |
 | --- | --- |
-| `/loop` or `/loop mode auto` | Start the default task loop; Inferoa orients first, then chooses the right approach. |
-| `/loop mode focus` | Keep the loop narrow when the target is already clear. |
-| `/loop mode explore` | Let the loop track related high-value candidates before completion. |
-| `/loop mode timebox 2h` | Add an explicit checkpoint for broad or open-ended work. |
-| `/loop mode research` | Use the same loop engine, but require experiment and metric evidence. |
+| `/loop` or `/loop run deliver` | Start a delivery loop that closes an end-to-end objective with verification. |
+| `/loop run deliver --at-least 24h` | Require the loop to keep working for a minimum duration before completion can be accepted. |
+| `/loop run discover` | Run autonomous research with agent-chosen benchmark, metric, harness, controls, and evidence. |
+| `/loop run replay --count 100` | Repeat the same visible prompt for a fixed number of attempts. |
 | `--review` | Pause staged decisions for human feedback through `/loop review`. |
 
 Use `/plan` when scope needs to become inspectable before execution. A plan can

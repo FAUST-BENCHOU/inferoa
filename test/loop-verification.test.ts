@@ -728,7 +728,7 @@ test("research experiment logs write durable verification records", async () => 
   const fixture = await createFixture("inferoa-loop-verification-research-");
   try {
     const registry = new ToolRegistry(config(), fixture.workspace, fixture.store);
-    const state = writeGoalState(fixture.store, fixture.session.session_id, createGoalState({ objective: "Improve benchmark", kind: "research" }), "run_goal");
+    const state = writeGoalState(fixture.store, fixture.session.session_id, createGoalState({ objective: "Improve benchmark", preference: "discover" }), "run_goal");
     setAutoresearchMode(fixture.store, fixture.session.session_id, { mode: "on", goal: state.goal.objective }, "run_goal");
     const experiment = createExperiment({
       name: "latency",

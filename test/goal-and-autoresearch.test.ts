@@ -47,7 +47,7 @@ function approvingContext(sessionId: string, runId: string) {
 }
 
 async function completeGoalOrientation(registry: ToolRegistry, sessionId: string, runId: string): Promise<void> {
-  for (const stepId of ["read_objective_and_constraints", "inspect_workspace_shape", "identify_candidate_sources", "infer_goal_strategy"]) {
+  for (const stepId of ["read_objective_and_constraints", "map_work_surfaces", "seed_frontier_candidates", "choose_first_execution_slice"]) {
     const result = await registry.call(
       { id: `${runId}_${stepId}`, name: "goal", arguments: { op: "update_step", step_id: stepId, status: "completed" } },
       { session_id: sessionId, run_id: runId },
@@ -57,17 +57,17 @@ async function completeGoalOrientation(registry: ToolRegistry, sessionId: string
 }
 
 function startResearchGoal(store: SessionStore, sessionId: string, objective: string): void {
-  writeGoalState(store, sessionId, createGoalState({ objective, kind: "research" }), "run_research_goal");
+  writeGoalState(store, sessionId, createGoalState({ objective, preference: "discover" }), "run_research_goal");
   setAutoresearchMode(store, sessionId, {
     mode: "on",
     goal: objective,
   });
 }
 
-test("goal reflection prompt treats completed plans as a hypothesis, not a boundary", () => {
+test("goal decision prompt treats completed plans as a hypothesis, not a boundary", () => {
   const prompt = buildGoalReflectionPrompt("Ship reliable goal mode");
 
-  assert.match(prompt, /reflection/i);
+  assert.match(prompt, /Decision turn/i);
   assert.match(prompt, /Step back/i);
   assert.match(prompt, /Use current evidence first/i);
   assert.match(prompt, /Inspect only narrowly missing evidence/i);
@@ -93,10 +93,10 @@ test("goal reflection prompt treats completed plans as a hypothesis, not a bound
   assert.doesNotMatch(prompt, /decision=continue/i);
 });
 
-test("goal work prompt seeds a general frontier during orientation", () => {
+test("deliver work prompt seeds a general frontier during bootstrap", () => {
   const prompt = buildGoalWorkPrompt("Improve a project end to end");
 
-  assert.match(prompt, /loop task 0 orientation/i);
+  assert.match(prompt, /Deliver loop/i);
   assert.match(prompt, /map the relevant work surfaces/i);
   assert.match(prompt, /rank the high-value frontier by impact, uncertainty, and risk/i);
   assert.match(prompt, /durable task topology/i);
@@ -107,31 +107,33 @@ test("goal work prompt seeds a general frontier during orientation", () => {
   assert.doesNotMatch(prompt, /audit/i);
 });
 
-test("goal creation starts with a visible Loop task 0 orientation and no frontier fields", () => {
+test("goal creation starts with a visible Deliver bootstrap and no strategy fields", () => {
   const state = createGoalState({ objective: "Improve codebase" });
   const goal = state.goal as Record<string, any>;
 
   assert.equal(goal.horizon_generation, 0);
   assert.equal("frontier_generation" in goal, false);
-  assert.equal(goal.planning?.summary, "Loop task 0 · Orientation");
+  assert.equal("strategy" in goal, false);
+  assert.equal("kind" in goal, false);
+  assert.equal(goal.preference, "deliver");
+  assert.deepEqual(goal.runtime_policy, { mode: "auto" });
+  assert.equal(goal.planning?.summary, "Loop task 0 · Deliver bootstrap");
   assert.equal(goal.planning?.active_step_id, "read_objective_and_constraints");
   assert.deepEqual(
     goal.planning?.steps.map((step: { id: string; title: string; status: string }) => [step.id, step.title, step.status]),
     [
       ["read_objective_and_constraints", "Read objective and constraints", "in_progress"],
-      ["inspect_workspace_shape", "Inspect workspace shape", "pending"],
-      ["identify_candidate_sources", "Identify candidate sources", "pending"],
-      ["infer_goal_strategy", "Infer goal approach and seed candidates", "pending"],
+      ["map_work_surfaces", "Map work surfaces, risks, and unknowns", "pending"],
+      ["seed_frontier_candidates", "Seed high-value frontier candidates", "pending"],
+      ["choose_first_execution_slice", "Choose the first execution slice", "pending"],
     ],
   );
-  assert.equal(goal.strategy?.mode, "opportunistic");
-  assert.equal(goal.strategy?.inferred, true);
   assert.deepEqual(goal.ledger?.open, []);
   assert.deepEqual(goal.ledger?.done, []);
   assert.deepEqual(goal.ledger?.rejected, []);
 });
 
-test("opportunistic goals cannot complete while high or medium ledger candidates remain open", async () => {
+test("deliver loops cannot complete while high or medium frontier candidates remain open", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-ledger-gate-"));
   const store = await SessionStore.open(path.join(dir, "state"));
   try {
@@ -139,11 +141,10 @@ test("opportunistic goals cannot complete while high or medium ledger candidates
     const session = store.createSession(workspace, "goal-ledger-gate");
     const registry = new ToolRegistry(config(), workspace, store);
     let state = replaceGoalPlanning(createGoalState({ objective: "Improve codebase broadly" }), {
-      summary: "Loop task 0 · Orientation",
+      summary: "Loop task 0 · Deliver bootstrap",
       steps: [{ id: "orientation", title: "Orientation complete", status: "completed" }],
     });
     const seededGoal = state.goal as any;
-    seededGoal.strategy = { mode: "opportunistic", inferred: true, rationale: "Broad improvement goal." };
     seededGoal.ledger = {
       open: [{ id: "tests", title: "Audit integration tests", value: "high", status: "open", updated_at: new Date().toISOString() }],
       done: [],
@@ -164,7 +165,7 @@ test("opportunistic goals cannot complete while high or medium ledger candidates
 
     assert.equal(blocked.ok, false);
     assert.equal(blocked.error?.code, "goal_completion_candidates_remaining");
-    assert.match(blocked.error?.message ?? "", /open high\/medium ledger candidates/i);
+    assert.match(blocked.error?.message ?? "", /open high\/medium frontier candidates/i);
     assert.equal(readGoalState(store, session.session_id)?.goal.status, "active");
   } finally {
     store.close();
@@ -640,7 +641,7 @@ test("approved plan body is bounded in goal context without losing stored body",
 
     const goalState = readGoalState(store, session.session_id);
     assert.equal(goalState?.goal.plan?.body, longBody);
-    assert.equal(goalState?.goal.planning?.summary, "Loop task 0 · Orientation");
+    assert.equal(goalState?.goal.planning?.summary, "Loop task 0 · Deliver bootstrap");
 
     const context = new PromptBuilder(config(), store, workspace).build(
       store.getSession(session.session_id)!,
@@ -1179,8 +1180,8 @@ test("goal horizon history hides stale source horizon summaries", async () => {
     writeGoalState(store, session.session_id, next, "run_horizon_1");
 
     const horizons = readGoalHorizons(store, session.session_id, state.goal.id);
-    assert.equal(horizons[0]?.title, "Setup");
-    assert.equal(horizons[0]?.summary, "Setup");
+    assert.equal(horizons[0]?.title, "Deliver bootstrap");
+    assert.equal(horizons[0]?.summary, "Deliver bootstrap");
     assert.equal(horizons[1]?.title, undefined);
     assert.equal(horizons[1]?.summary, undefined);
   } finally {
@@ -1280,7 +1281,7 @@ test("goal supervisor treats accounting-only updates as no horizon progress", as
   }
 });
 
-test("goal supervisor repeat strategy resends the original objective for the configured count", async () => {
+test("goal supervisor replay preference resends the original objective for the configured count", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-repeat-supervisor-"));
   const store = await SessionStore.open(path.join(dir, "state"));
   try {
@@ -1292,7 +1293,8 @@ test("goal supervisor repeat strategy resends the original objective for the con
       createGoalState({
         objective: "Run the same cleanup prompt",
         hil_policy: "auto",
-        strategy: { mode: "repeat", inferred: false, target_runs: 3 },
+        preference: "replay",
+        replay: { target_attempts: 3 },
       }),
       "run_seed",
     );
@@ -1323,27 +1325,24 @@ test("goal supervisor repeat strategy resends the original objective for the con
     assert.deepEqual(origins, ["loop", "loop", "loop"]);
     const current = readGoalState(store, session.session_id)?.goal;
     assert.equal(current?.status, "complete");
-    assert.equal(current?.strategy?.remaining_runs, 0);
+    assert.equal(current?.replay?.remaining_attempts, 0);
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });
   }
 });
 
-test("repeat loop prompt context stays mechanical without setup or reflection instructions", () => {
+test("repeat loop does not expose hidden repeat counters or instructions to the model", () => {
   const state = createGoalState({
     objective: "Say hi repeatedly",
     hil_policy: "auto",
-    strategy: { mode: "repeat", inferred: false, target_runs: 10 },
+    preference: "replay",
+    replay: { target_attempts: 10 },
   });
 
-  const prompt = renderGoalModeSection(state) ?? "";
+  const prompt = renderGoalModeSection(state);
 
-  assert.match(prompt, /Repeat loop is active/);
-  assert.match(prompt, /remaining repeat runs: 10/);
-  assert.doesNotMatch(prompt, /Internal loop task plan/i);
-  assert.doesNotMatch(prompt, /goal op=reflect/i);
-  assert.doesNotMatch(prompt, /Read objective and constraints/i);
+  assert.equal(prompt, undefined);
 });
 
 test("goal supervisor explains empty model turns as no goal progress", async () => {
@@ -1385,11 +1384,10 @@ test("goal supervisor expands the next horizon when a done reflection leaves led
     const session = store.createSession(workspace, "goal-ledger-auto-expand");
     const registry = new ToolRegistry(config(), workspace, store);
     const state = replaceGoalPlanning(createGoalState({ objective: "Improve codebase broadly" }), {
-      summary: "Loop task 0 · Orientation",
+      summary: "Loop task 0 · Deliver bootstrap",
       steps: [{ id: "orientation", title: "Orientation complete", status: "completed" }],
     });
     const goal = state.goal as any;
-    goal.strategy = { mode: "opportunistic", inferred: true, rationale: "Broad improvement goal." };
     goal.ledger = {
       open: [{ id: "tests", title: "Audit integration tests", value: "high", status: "open", updated_at: new Date().toISOString() }],
       done: [],
@@ -1474,25 +1472,18 @@ test("completing a horizon step reconciles the matching open ledger candidate", 
   }
 });
 
-test("campaign goals checkpoint instead of completing when target time is reached with open ledger candidates", async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-campaign-checkpoint-"));
+test("at least runtime blocks completion before the minimum duration is reached", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-runtime-gate-"));
   const store = await SessionStore.open(path.join(dir, "state"));
   try {
-    const workspace: WorkspaceIdentity = { id: "w_goal_campaign_checkpoint", root: dir, alias: "goal-campaign-checkpoint" };
-    const session = store.createSession(workspace, "goal-campaign-checkpoint");
+    const workspace: WorkspaceIdentity = { id: "w_goal_runtime_gate", root: dir, alias: "goal-runtime-gate" };
+    const session = store.createSession(workspace, "goal-runtime-gate");
     const registry = new ToolRegistry(config(), workspace, store);
-    const state = replaceGoalPlanning(createGoalState({ objective: "Run a campaign", strategy: { mode: "campaign", inferred: false, target_hours: 0.001 } }), {
-      summary: "Loop task 1 · Campaign work",
-      steps: [{ id: "done", title: "Completed campaign slice", status: "completed" }],
+    const state = replaceGoalPlanning(createGoalState({ objective: "Run a long loop", runtime_policy: { mode: "at_least", min_duration_ms: 60_000 } }), {
+      summary: "Loop task 1 · Runtime work",
+      steps: [{ id: "done", title: "Completed current slice", status: "completed" }],
     });
     state.goal.time_used_ms = 10_000;
-    const goal = state.goal as any;
-    goal.ledger = {
-      open: [{ id: "docs", title: "Audit docs deeply", value: "medium", status: "open", updated_at: new Date().toISOString() }],
-      done: [],
-      rejected: [],
-      updated_at: new Date().toISOString(),
-    };
     writeGoalState(store, session.session_id, state, "run_seed");
 
     const result = await runGoalSupervisor({
@@ -1502,7 +1493,7 @@ test("campaign goals checkpoint instead of completing when target time is reache
       maxIterations: 1,
       runTurn: async (request) => {
         const reflected = await registry.call(
-          { id: "campaign_done_reflection", name: "goal", arguments: { op: "reflect", decision: "done", summary: "Campaign should checkpoint.", verification_evidence: { checked: true } } },
+          { id: "runtime_done_reflection", name: "goal", arguments: { op: "reflect", decision: "done", summary: "Runtime should block.", verification_evidence: { checked: true } } },
           { session_id: session.session_id, run_id: request.runId ?? "run_reflection", request_class: "reflection", visibility: "internal" },
         );
         assert.equal(reflected.ok, true, JSON.stringify(reflected));
@@ -1511,7 +1502,7 @@ test("campaign goals checkpoint instead of completing when target time is reache
     });
 
     assert.equal(result.status, "paused");
-    assert.match(result.reason ?? "", /Campaign target reached/);
+    assert.match(result.reason ?? "", /At least runtime/);
     const current = readGoalState(store, session.session_id)?.goal;
     assert.equal(current?.status, "paused");
     assert.equal(current?.horizon_generation, 0);
@@ -1986,7 +1977,7 @@ test("research goal completion requires logged metric evidence", async () => {
   try {
     const workspace: WorkspaceIdentity = { id: "w_research_completion_gate", root: dir, alias: "research-completion-gate" };
     const session = store.createSession(workspace, "research-completion-gate");
-    let goal = replaceGoalPlanning(createGoalState({ objective: "prove latency improvement", kind: "research" }), {
+    let goal = replaceGoalPlanning(createGoalState({ objective: "prove latency improvement", preference: "discover" }), {
       summary: "Research cycle 0 · Done",
       steps: [{ id: "done", title: "Research cycle complete", status: "completed" }],
     });
@@ -2443,7 +2434,7 @@ test("mode context renderers escape tag-like dynamic text", async () => {
     const registry = new ToolRegistry(config(), workspace, store);
 
     await registry.call(
-      { id: "esc_goal_1", name: "goal", arguments: { op: "create", objective: "Stabilize <prefix> cache", kind: "research" } },
+      { id: "esc_goal_1", name: "goal", arguments: { op: "create", objective: "Stabilize <prefix> cache", preference: "discover" } },
       { session_id: session.session_id, run_id: "run_escape", control_plane: true },
     );
     await registry.call(

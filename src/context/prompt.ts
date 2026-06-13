@@ -361,7 +361,7 @@ export function currentTurnContextMessagesForSession(store: SessionStore, sessio
     messages.push({ role: "user", content: `<goal.mode>\n${goalMode}\n</goal.mode>` });
   }
   const autoresearchMode =
-    goalState?.enabled && goalState.goal.kind === "research" ? renderAutoresearchModeSection(readAutoresearchState(store, session.session_id)) : undefined;
+    goalState?.enabled && goalState.goal.preference === "discover" ? renderAutoresearchModeSection(readAutoresearchState(store, session.session_id)) : undefined;
   if (autoresearchMode) {
     messages.push({ role: "user", content: `<autoresearch.mode>\n${autoresearchMode}\n</autoresearch.mode>` });
   }

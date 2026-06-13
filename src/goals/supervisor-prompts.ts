@@ -1,69 +1,78 @@
-import type { GoalRecord } from "./state.js";
+import type { GoalRecord, LoopPreference } from "./state.js";
 
-export function buildGoalWorkPrompt(goalOrObjective: GoalRecord | string): string {
+export function buildLoopExecutionPrompt(goalOrObjective: GoalRecord | string): string {
   const objective = typeof goalOrObjective === "string" ? goalOrObjective : goalOrObjective.objective;
-  const kind = typeof goalOrObjective === "string" ? "task" : goalOrObjective.kind;
-  if (kind === "research") {
+  const preference = typeof goalOrObjective === "string" ? "deliver" : goalOrObjective.preference;
+  if (preference === "discover") {
     return [
       `Loop objective: ${objective}`,
-      "Continue the active research loop cycle.",
-      "Use the loop task as the research cycle: keep loop steps current with goal op=update_step while maintaining research experiments with init_experiment, run_experiment, log_experiment, and update_experiment.",
-      "If a benchmark run is pending, log it before starting another run. If no experiment exists, identify or create ./autoresearch.sh, establish metrics and guardrails, initialize a baseline experiment, run it, and log the baseline.",
-      "For exploratory work, create separate experiments for distinct hypotheses; keep at most one pending run at a time.",
-      "Use metric evidence, guardrail checks, failed runs, rejected experiments, and notes to decide the next useful experiment.",
-      "If this is research cycle 0 orientation, inspect enough context to infer the approach, map the relevant research surfaces, rank the high-value frontier by impact, uncertainty, and risk, call goal op=set_strategy with approach when needed, seed the candidate ledger, and complete the orientation steps.",
-      "Track frontier candidates as hypotheses, experiments, verification gaps, or deferred work. Complete, reject, or defer them with evidence instead of letting unexplored directions disappear from the loop.",
+      "Execution turn for a Discover loop.",
+      "Drive autonomous research with evidence. Treat the objective as an open investigation, not a checklist to finish quickly.",
+      "Build or locate the benchmark / experiment protocol that best answers the objective. The agent decides the benchmark, metric, harness, controls, and comparison shape from the workspace and task evidence.",
+      "Form competing hypotheses, prioritize the highest-information experiment, run or design the smallest credible test, and record observations, metrics, guardrails, failures, and interpretation.",
+      "Keep the internal loop plan current with goal op=update_step. Use goal op=update_ledger for hypotheses, evidence gaps, promising directions, and rejected branches so high-value frontier does not disappear.",
+      "For complex or uncertain research, create a multi-layer plan: problem framing, evidence sources, baseline, experiment variants, comparison criteria, risks, and next verification slice.",
+      "Do not force a fixed script name or preselected harness. Prefer the most defensible metric-driven evidence path available.",
+      "End the turn with concrete evidence, updated frontier, and a clear next slice when more work remains.",
     ].join("\n");
   }
   return [
     `Loop objective: ${objective}`,
-    "Continue the active loop task.",
-    "If this is loop task 0 orientation, inspect enough context to infer the loop approach, map the relevant work surfaces, rank the high-value frontier by impact, uncertainty, and risk, call goal op=set_strategy with approach when needed, seed the candidate ledger with goal op=update_ledger, and complete the orientation steps.",
-    "Treat frontier candidates as the durable task topology: they may be code areas, user paths, APIs, documents, tests, design options, data flows, verification gaps, or deferred scope depending on the objective.",
-    "Complete, reject, or defer frontier candidates with evidence so the loop does not confuse local progress with global completion.",
-    "Keep step status, notes, and evidence current with goal op=update_step. Do not complete the loop merely because the current loop task is empty.",
+    "Execution turn for a Deliver loop.",
+    "Close the end-to-end objective with verification. Treat the top-level objective as larger than the current small task unless evidence proves otherwise.",
+    "Build a multi-layer plan when the objective is complex: user intent, affected surfaces, risks, dependencies, implementation slices, verification, polish, and rollback or follow-up concerns.",
+    "During bootstrap and whenever the map is stale, map the relevant work surfaces and keep a durable task topology across code areas, user paths, APIs, documents, tests, design options, data flows, verification gaps.",
+    "Actively expand the high-value frontier each turn, then rank the high-value frontier by impact, uncertainty, and risk. Look for missing work surfaces, edge cases, tests, integration paths, product rough edges, and verification gaps.",
+    "Balance local progress with global completion. Do not conclude the loop merely because the current checklist is empty or one local fix is done.",
+    "Maintain the candidate ledger with goal op=update_ledger so new findings, skipped branches, and remaining risks stay visible across turns. Convert execution evidence into goal op=update_step notes.",
+    "When uncertain, generate hypotheses and a verification path instead of stopping. Prefer concrete edits, tests, inspections, or measurements that increase confidence.",
+    "Keep the internal loop plan current with goal op=update_step. Leave evidence, frontier status, and the next execution slice visible for the decision turn.",
   ].join("\n");
 }
 
-export function buildGoalReflectionPrompt(goalOrObjective: GoalRecord | string): string {
+export function buildLoopDecisionPrompt(goalOrObjective: GoalRecord | string): string {
   const objective = typeof goalOrObjective === "string" ? goalOrObjective : goalOrObjective.objective;
-  const kind = typeof goalOrObjective === "string" ? "task" : goalOrObjective.kind;
-  if (kind === "research") {
+  const preference = typeof goalOrObjective === "string" ? "deliver" : goalOrObjective.preference;
+  if (preference === "discover") {
     return [
       `Loop objective: ${objective}`,
-      "Run an internal decision pass for the active research loop.",
-      "Step back from the current research cycle, experiment ledger, run history, benchmark evidence, guardrail evidence, notes, and loop task plan.",
-      "Treat the current experiments as hypotheses, not as the boundary of the research loop.",
-      "Use current evidence first. Inspect only narrowly missing evidence when it changes expand/done/blocked; do not resume broad research execution from the decision pass.",
-      "Generate competing next-cycle hypotheses before deciding, but keep only candidates with substantive expected impact.",
-      "Use the candidate ledger and experiment ledger as the durable frontier, not merely as a list of experiments already tried. Add, complete, reject, or defer goal candidates with goal op=update_ledger and update experiment lifecycle with update_experiment when reflection changes what remains.",
-      "Before choosing done, check for local convergence: did the loop overfocus on the first promising hypothesis, leave a high-value research surface open, or fail to justify deferred scope?",
-      "Use decision=expand when a new research cycle should open a distinct experiment, continue a promising experiment, compare candidates, or run guardrail/regression verification with substantive impact.",
-      "Use decision=done only when pending runs are logged, metric evidence is sufficient, high-value experiments are completed or rejected, and verification evidence includes run history, best metric, and guardrail evidence.",
-      "Use decision=blocked with blocker details when harness, environment, data, or external dependencies prevent meaningful progress.",
-      "Do not call goal op=decompose, op=update_plan, or op=update_step from reflection. New work must be returned through goal op=reflect decision=expand with concrete research-cycle steps.",
-      "Finish by calling goal op=reflect exactly once.",
-      "Do not call goal op=complete from a decision run; completion happens after the loop decision is recorded.",
+      "Decision turn for a Discover loop.",
+      "Do not do broad implementation or research execution in this turn. Decide only expand / done / blocked through goal op=reflect exactly once.",
+      "Default posture: be skeptical of premature completion. A Discover loop is done only when pending experiments are logged or ruled out, metric/evidence exists, and the conclusion follows from evidence.",
+      "If At least runtime is configured and not satisfied, decision=done is not allowed; expand with the next highest-information experiment or evidence check.",
+      "Inspect only narrowly missing evidence when it changes the decision. Otherwise reason from current plan, evidence, frontier, experiment notes, metrics, and guardrails.",
+      "Prefer expand when a comparison, ablation, baseline, failure analysis, guardrail, or alternative hypothesis could materially change the conclusion.",
+      "Use done only with concrete verification_evidence containing the decisive metric/evidence, comparison context, and remaining-scope justification.",
+      "Use blocked only when meaningful progress cannot continue without user input or external state change.",
     ].join("\n");
   }
   return [
     `Loop objective: ${objective}`,
-    "Run an internal decision pass for the active loop.",
-    "Step back from the just-finished turn, the current plan, and the current evidence.",
-    "Use current evidence first. Inspect only narrowly missing evidence when it changes expand/done/blocked; do not resume broad implementation from the decision pass.",
-    "Evaluate the best-effort version of the objective: as complete, polished, and semantically faithful as the current session can reasonably make it.",
-    "Treat the current plan as a hypothesis, not as the boundary of the objective.",
-    "Generate competing next-step hypotheses before deciding, but keep only candidates with substantive impact on the original objective.",
-    "Use the candidate ledger as the durable frontier, not merely as a list of discovered fixes. Add, complete, reject, or defer candidates with goal op=update_ledger when reflection changes what remains.",
-    "A frontier candidate can be any high-value work surface implied by the objective: code area, user path, API, document, test, design option, data flow, verification gap, or deferred scope.",
-    "Look for better decomposition, missing verification, rough edges, or unfinished work implied by the top-level objective, even if all listed steps are complete.",
-    "Before choosing done, check for local convergence: did the loop overfocus on the first promising area, leave a high-value work surface open, or fail to justify deferred scope?",
-    "Hard stop condition: only accept new work when it has substantive impact on the original objective; otherwise choose decision=done.",
-    "Do not call goal op=decompose, op=update_plan, or op=update_step from the decision pass. New work must be returned through goal op=reflect decision=expand with steps.",
-    "Finish by calling goal op=reflect exactly once.",
-    "Do not call goal op=complete from a decision run; completion happens after the loop decision is recorded.",
-    "Use decision=expand only with concrete new loop task steps whose impact on the original objective is substantive.",
-    "Use decision=done when no visible completion, verification, decomposition, or polish work with substantive impact remains, and include verification_evidence.",
-    "Use decision=blocked with blocker details when completion cannot proceed without user input or an external state change.",
+    "Decision turn for a Deliver loop.",
+    "Do not perform implementation work in this turn. Decide only expand / done / blocked through goal op=reflect exactly once.",
+    "Step back. Use current evidence first; inspect only narrowly missing evidence when it can change the decision.",
+    "Treat the current plan as a hypothesis, not as the boundary. Generate competing next-step hypotheses before declaring the loop complete.",
+    "Default posture: be skeptical of premature completion. A complex objective should expand toward verification, contrast, boundaries, risk reduction, integration, or polish until evidence supports closure.",
+    "If At least runtime is configured and not satisfied, decision=done is not allowed; expand with substantive work that advances the original objective.",
+    "Evaluate the current horizon, evidence, durable frontier, work surface coverage, verifier policy, user-visible behavior, and remaining risks. Current checklist completion is not enough.",
+    "Use expand when any high-value frontier remains, verification is weak, integration has not been checked, or the loop only solved a local slice of a broader objective.",
+    "Use done only when the current horizon is complete, no high-value frontier remains, verification evidence exists, required verifiers are satisfied, and the top-level objective is genuinely handled as complete, polished, and semantically faithful.",
+    "If only local convergence is visible while deferred scope could have substantive impact on the original objective, expand. Otherwise choose decision=done with best-effort evidence.",
+    "Do not call goal op=complete from this turn. Do not call goal op=decompose from this turn. Record the decision through goal op=reflect exactly once.",
+    "Use blocked only when meaningful progress cannot continue without user input or external state change.",
   ].join("\n");
+}
+
+export function buildGoalWorkPrompt(goalOrObjective: GoalRecord | string): string {
+  return buildLoopExecutionPrompt(goalOrObjective);
+}
+
+export function buildGoalReflectionPrompt(goalOrObjective: GoalRecord | string): string {
+  return buildLoopDecisionPrompt(goalOrObjective);
+}
+
+export function loopPreferenceDescription(preference: LoopPreference): string {
+  if (preference === "discover") return "Explore, experiment, and learn with evidence";
+  if (preference === "replay") return "Repeat one visible prompt for fixed attempts";
+  return "Close an end-to-end objective with verification";
 }

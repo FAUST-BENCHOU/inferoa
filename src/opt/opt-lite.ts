@@ -758,7 +758,7 @@ function collectOptEvidence(store: SessionStore, workspace: WorkspaceIdentity): 
       title: session.title,
       goal_id: view.goal.id,
       objective: view.goal.objective,
-      kind: view.goal.kind,
+      kind: view.goal.preference,
       verification_count: view.verifications.length,
       skill_snapshot_count: view.skill_snapshots.length,
     });

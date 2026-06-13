@@ -7,7 +7,6 @@ import {
   consumeRepeatGoalRun,
   completeGoalAfterReflection,
   goalCompletionCandidateBlockMessage,
-  goalDurationMs,
   incompleteGoalPlanningSteps,
   isGoalHorizonExhausted,
   markGoalReflectionStarted,
@@ -19,7 +18,7 @@ import {
   type GoalCandidate,
   type GoalState,
 } from "./state.js";
-import { buildGoalReflectionPrompt, buildGoalWorkPrompt } from "./supervisor-prompts.js";
+import { buildLoopDecisionPrompt, buildLoopExecutionPrompt } from "./supervisor-prompts.js";
 import { buildGoalVerificationPrompt } from "./verifier.js";
 import { readAutoresearchState, researchCompletionBlockMessage, setAutoresearchMode } from "../autoresearch/state.js";
 import { goalVerifierPolicyCompletionBlockMessage } from "../loop/verification.js";
@@ -82,7 +81,7 @@ export async function runGoalSupervisor(options: GoalSupervisorOptions): Promise
       return { status: "idle", iteration, goal_id: goalId(state) };
     }
     options.onIteration?.(iteration + 1);
-    if (state.goal.strategy?.mode === "repeat") {
+    if (state.goal.preference === "replay") {
       const remaining = repeatGoalRemainingRuns(state.goal);
       if (remaining <= 0) {
         const runId = randomId("run");
@@ -111,7 +110,7 @@ export async function runGoalSupervisor(options: GoalSupervisorOptions): Promise
       if (!isRunnableGoal(afterRepeat)) {
         return { status: "idle", iteration: iteration + 1, run_id: run.run_id, goal_id: goalId(afterRepeat) };
       }
-      if (afterRepeat.goal.strategy?.mode === "repeat" && repeatGoalRemainingRuns(afterRepeat.goal) <= 0) {
+      if (afterRepeat.goal.preference === "replay" && repeatGoalRemainingRuns(afterRepeat.goal) <= 0) {
         const saved = writeGoalState(options.store, options.sessionId, completeRepeatGoal(afterRepeat, "Repeat loop finished."), run.run_id);
         recordGoalCompletionReport(options.store, options.sessionId, run.run_id);
         options.onCompleted?.(saved, run.run_id);
@@ -127,7 +126,7 @@ export async function runGoalSupervisor(options: GoalSupervisorOptions): Promise
       return result;
     }
     const workRun = await options.runTurn({
-      prompt: buildGoalWorkPrompt(state.goal),
+      prompt: buildLoopExecutionPrompt(state.goal),
       requestClass: options.workRequestClass ?? "background",
       activityLabel: goalHorizonActivityLabel("Continuing loop task", state.goal.horizon_generation),
     });
@@ -163,7 +162,7 @@ async function runGoalReflection(options: GoalSupervisorOptions, state: GoalStat
     },
   });
   const reflectionRun = await options.runTurn({
-    prompt: buildGoalReflectionPrompt(state.goal),
+    prompt: buildLoopDecisionPrompt(state.goal),
     requestClass: "reflection",
     visibility: "internal",
     runId: reflectionRunId,
@@ -202,7 +201,7 @@ async function runGoalReflection(options: GoalSupervisorOptions, state: GoalStat
         const paused = pauseGoal(options, reflected, reflectionRunId, candidateBlock);
         return { status: "paused", iteration, reason: candidateBlock, run_id: reflectionRunId, goal_id: paused.goal.id };
       }
-      if (reflected.goal.kind === "research") {
+      if (reflected.goal.preference === "discover") {
         const researchBlock = researchCompletionBlockMessage(readAutoresearchState(options.store, options.sessionId));
         if (researchBlock) {
           const paused = pauseGoal(options, reflected, reflectionRunId, researchBlock);
@@ -224,7 +223,7 @@ async function runGoalReflection(options: GoalSupervisorOptions, state: GoalStat
           if (!afterVerificationBlock) {
             const completed = completeGoalAfterReflection(reflected, reflected.goal.last_reflection_summary);
             const saved = writeGoalState(options.store, options.sessionId, completed, reflectionRunId);
-            if (saved.goal.kind === "research") {
+            if (saved.goal.preference === "discover") {
               setAutoresearchMode(options.store, options.sessionId, { mode: "off", goal: saved.goal.objective }, reflectionRunId);
             }
             recordGoalCompletionReport(options.store, options.sessionId, reflectionRunId);
@@ -239,7 +238,7 @@ async function runGoalReflection(options: GoalSupervisorOptions, state: GoalStat
       }
       const completed = completeGoalAfterReflection(reflected, reflected.goal.last_reflection_summary);
       const saved = writeGoalState(options.store, options.sessionId, completed, reflectionRunId);
-      if (saved.goal.kind === "research") {
+      if (saved.goal.preference === "discover") {
         setAutoresearchMode(options.store, options.sessionId, { mode: "off", goal: saved.goal.objective }, reflectionRunId);
       }
       recordGoalCompletionReport(options.store, options.sessionId, reflectionRunId);
@@ -313,7 +312,7 @@ function goalHorizonActivityLabel(prefix: string, generation: number): string {
 }
 
 function repeatGoalActivityLabel(goal: GoalState["goal"]): string {
-  const target = goal.strategy?.target_runs ?? 1;
+  const target = goal.replay?.target_attempts ?? 1;
   const remaining = repeatGoalRemainingRuns(goal);
   const current = Math.max(1, target - remaining);
   return `Repeating loop ${current}/${target}`;
@@ -348,14 +347,10 @@ function appendLedgerExpansionEvent(
 
 function expandGoalFromLedgerCandidates(state: GoalState): GoalState | undefined {
   const goal = state.goal;
-  const strategy = goal.strategy;
-  if (!goal.ledger || strategy?.mode === "surgical" || strategy?.mode === "repeat") {
+  if (!goal.ledger || goal.preference === "replay") {
     return undefined;
   }
-  if (strategy?.mode === "campaign" && strategy.target_hours !== undefined && goalDurationMs(goal) >= strategy.target_hours * 60 * 60 * 1000) {
-    return undefined;
-  }
-  const candidates = nextHorizonCandidates(goal.ledger.open, strategy?.mode ?? "opportunistic");
+  const candidates = nextHorizonCandidates(goal.ledger.open);
   if (!candidates.length) {
     return undefined;
   }
@@ -377,9 +372,9 @@ function expandGoalFromLedgerCandidates(state: GoalState): GoalState | undefined
   return planned;
 }
 
-function nextHorizonCandidates(candidates: GoalCandidate[], mode: "opportunistic" | "campaign" | undefined): GoalCandidate[] {
-  const eligible = mode === "campaign" ? candidates : candidates.filter((candidate) => candidate.value === "high" || candidate.value === "medium");
-  return eligible
+function nextHorizonCandidates(candidates: GoalCandidate[]): GoalCandidate[] {
+  return candidates
+    .filter((candidate) => candidate.value === "high" || candidate.value === "medium")
     .slice()
     .sort((a, b) => candidateValueRank(b.value) - candidateValueRank(a.value))
     .slice(0, 5);

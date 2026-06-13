@@ -38,11 +38,12 @@ subcommands.
 # Loop mode
 /loop status                 Show active loop state
 /loop                        Start a recursive long-horizon loop
-/loop mode auto              Start a default auto loop
-/loop mode focus             Start a focused loop
-/loop mode explore           Start an exploratory loop
-/loop mode timebox 2h        Start a timeboxed loop
-/loop mode research          Start a research loop
+/loop run deliver            Start an end-to-end delivery loop
+/loop run discover           Start a metric-driven discovery loop
+/loop run replay             Repeat one prompt for a fixed count
+/loop run deliver --at-least 24h
+                             Keep a delivery loop running for at least 24h
+/loop run replay --count 100 Repeat the prompt 100 times
 /loop review                 Review a pending loop decision
 /loop verify                 Run an independent loop verification pass
 /loop pause                  Pause the current loop

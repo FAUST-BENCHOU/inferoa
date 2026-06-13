@@ -35,7 +35,7 @@ export function readGoalLoopView(store: SessionStore, sessionId: string): GoalLo
   return {
     session_id: sessionId,
     goal,
-    kind: goal?.kind,
+    preference: goal?.preference,
     current_horizon: horizons.find((horizon) => horizon.current),
     horizons,
     reflections,

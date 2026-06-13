@@ -28,9 +28,9 @@ test("slash parser supports loop chat commands and removes goal", () => {
   assert.equal(loop.args, "ship the feature");
   assert.equal(loop.error, undefined);
 
-  const researchGoal = parseSlashCommand("/loop mode research reduce benchmark latency");
+  const researchGoal = parseSlashCommand("/loop run discover reduce benchmark latency");
   assert.equal(researchGoal.command?.name, "loop");
-  assert.equal(researchGoal.args, "mode research reduce benchmark latency");
+  assert.equal(researchGoal.args, "run discover reduce benchmark latency");
   assert.equal(researchGoal.error, undefined);
 
   const plan = parseSlashCommand("/plan add offline retry support");
@@ -173,12 +173,10 @@ test("slash registry exposes chat subcommands for completion", () => {
     [
       "/loop status",
       "/loop health",
-      "/loop mode auto",
-      "/loop mode research",
-      "/loop mode focus",
-      "/loop mode explore",
-      "/loop mode timebox",
-      "/loop mode repeat",
+      "/loop run",
+      "/loop run deliver",
+      "/loop run discover",
+      "/loop run replay",
       "/loop review",
       "/loop verify",
       "/loop pause",

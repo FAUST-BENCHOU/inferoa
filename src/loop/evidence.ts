@@ -26,7 +26,7 @@ export interface LoopEvidenceReport {
   goal?: {
     goal_id: string;
     objective: string;
-    kind: string;
+    preference: string;
     status: string;
     horizon_generation: number;
     hil_policy: string;
@@ -156,7 +156,7 @@ export function readLoopEvidence(store: SessionStore, session: SessionRecord): L
     goal: view.goal ? {
       goal_id: view.goal.id,
       objective: view.goal.objective,
-      kind: view.goal.kind,
+      preference: view.goal.preference,
       status: view.goal.status,
       horizon_generation: view.goal.horizon_generation,
       hil_policy: view.goal.hil_policy,

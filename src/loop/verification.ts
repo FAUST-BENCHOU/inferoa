@@ -283,10 +283,10 @@ function unattendedCompletionBlockMessage(
   if (records.some(isStrongCompletionVerification)) {
     return undefined;
   }
-  const providers = goal.kind === "research"
+  const providers = goal.preference === "discover"
     ? "research metric, command, human review, or checker"
     : "command, human review, or checker";
-  return `Cannot auto-complete unattended ${goal.kind} goal until horizon ${goal.horizon_generation} has a pass verification from ${providers}. Reflection-only evidence is not enough for background completion.`;
+  return `Cannot auto-complete unattended ${goal.preference} loop until horizon ${goal.horizon_generation} has a pass verification from ${providers}. Reflection-only evidence is not enough for background completion.`;
 }
 
 function isStrongCompletionVerification(record: GoalLoopVerification): boolean {

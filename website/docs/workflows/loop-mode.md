@@ -26,12 +26,10 @@ needs approval before edits begin, start with [Plan mode](./plan-mode.md).
 
 ```text
 /loop Improve the docs site and verify the Docusaurus build.
-/loop mode auto Improve the docs site and verify the Docusaurus build.
-/loop mode focus Fix the failing parser test and verify it.
-/loop mode explore Improve this package and handle related high-value issues.
-/loop mode timebox 2h Audit this repository and improve the highest-value rough edges.
-/loop mode research Reduce benchmark latency without hurting accuracy.
-/loop mode research explore Find and validate latency improvement hypotheses.
+/loop run deliver Improve the docs site and verify the Docusaurus build.
+/loop run deliver --at-least 24h Improve this package and handle related high-value issues.
+/loop run discover Reduce benchmark latency without hurting accuracy.
+/loop run replay --count 100 say hi to me
 /loop status
 /loop pause
 /loop resume
@@ -41,28 +39,24 @@ needs approval before edits begin, start with [Plan mode](./plan-mode.md).
 `/loop status` displays the active loop, current loop task, attempts, verification,
 skills, pending review state, and latest loop decisions.
 
-## Kind And Approach
+## Preference And Runtime
 
-Bare `/loop <objective>` starts a task loop with automatic approach selection.
-Inferoa first runs loop task 0 orientation, then decides how broadly to pursue
-the objective.
+Bare `/loop <objective>` starts the creation flow. Inferoa asks for the
+objective, a preference, runtime, and optional human-in-the-loop review.
 
-Loop kind:
+Preference:
 
-- `task` is the default for ordinary implementation, investigation, and
-  verification work.
-- `research` is for metric-driven experimental loops that need benchmark
-  harnesses, hypotheses, runs, and metric evidence.
+- `Deliver` closes an end-to-end objective with planning, execution,
+  verification, and decision passes.
+- `Discover` runs autonomous research and lets the agent choose benchmarks,
+  metrics, harnesses, controls, and comparison shape.
+- `Replay` repeats the original visible prompt for a fixed attempt count.
 
-Approach:
+Runtime:
 
-- `auto` lets Inferoa choose after orientation.
-- `focus` keeps the work scoped to the current objective.
-- `explore` allows related high-value directions.
-- `timebox` keeps working until a time checkpoint, then records a loop decision.
-
-Use `/loop` with no arguments to open the creation flow. If no loop is active,
-Inferoa asks for the objective, loop kind, and approach.
+- `Auto` lets the agent decide when enough evidence exists to stop.
+- `At least` keeps the loop running until the minimum duration is satisfied,
+  then the normal decision and verification gates still apply.
 
 ## How It Works
 
@@ -82,13 +76,13 @@ stateDiagram-v2
 The active loop stores:
 
 - the original objective;
-- loop kind (`task` or `research`);
+- preference (`deliver`, `discover`, or `replay`);
+- runtime policy (`auto` or `at_least`);
 - an internal loop task plan and step status;
-- the current loop task, starting with loop task 0 orientation;
+- the current loop task, starting with a Deliver or Discover bootstrap;
 - attempts, which are runs interpreted as work on the loop task;
 - verification records from commands, research metrics, checker runs, human
   review, or structured model evidence;
-- an inferred or selected approach (`auto`, `focus`, `explore`, or `timebox`);
 - a candidate ledger of open, completed, and rejected work;
 - notes, resources, tool traces, skill snapshots, token usage, tool usage, and
   time usage;
@@ -118,13 +112,14 @@ Loop completion is gated by verification and loop decisions. A loop is not done
 because the checklist is empty; it is done after verification records
 evidence-backed semantic completion.
 
-## Research Loops
+## Discover Loops
 
-Research loops reuse the same loop supervisor, but each loop task is shown as a
-research cycle. A research cycle can create, continue, complete, or reject
-multiple experiments. Each experiment represents one hypothesis or solution
-line, and each run records benchmark output and parsed `METRIC name=value`
-evidence.
+Discover loops reuse the same loop supervisor, but each loop task is optimized
+for research. The agent chooses the benchmark shape, metric, harness, controls,
+and comparison path from the workspace and task evidence. A loop task can
+create, continue, complete, or reject multiple experiments. Each experiment
+represents one hypothesis or solution line, and each run records benchmark
+output and parsed `METRIC name=value` evidence.
 
 Research completion requires logged metric evidence. The loop cannot complete
 while a benchmark run is pending, and a `done` decision should cite run history,

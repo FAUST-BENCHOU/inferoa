@@ -66,7 +66,7 @@ test("loop tasks projects goal horizons as bounded task units", async () => {
     const report = readLoopTasks(store, workspace);
     assert.equal(report.summary.total, 2);
     assert.equal(report.summary.current, 1);
-    assert.equal(report.summary.by_kind.task, 2);
+    assert.equal(report.summary.by_preference.deliver, 2);
     assert.equal(report.summary.verified, 1);
     assert.equal(report.summary.blocked, 1);
 

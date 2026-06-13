@@ -120,7 +120,7 @@ function buildLoopSubagentPrompt(
     "",
     `Parent session: ${context.parent_session.session_id}`,
     goal ? `Loop: ${goal.objective}` : "Loop: none",
-    goal ? `Kind: ${goal.kind}` : undefined,
+    goal ? `Preference: ${goal.preference}` : undefined,
     goal ? `Loop task: ${goal.horizon_generation}` : undefined,
     "",
     "Task:",

@@ -203,18 +203,16 @@ const DEFINITIONS = [
   },
   {
     name: "goal",
-    description: "Update active loop work: inspect, plan/update steps, manage strategy/ledger/verifier policy, record reflection, or record verification. Creation, review, resume, completion, and drop stay in /loop.",
+    description: "Update active loop work: inspect, plan/update steps, manage ledger/verifier policy, record reflection, or record verification. Creation, review, resume, completion, and drop stay in /loop.",
     permission: "read",
     parameters: objectSchema(
       {
-        op: stringEnum("Goal operation.", ["get", "decompose", "update_plan", "update_step", "set_strategy", "set_owner", "clear_owner", "set_review_owner", "clear_review_owner", "set_verifier_policy", "update_ledger", "reflect", "verify"]),
+        op: stringEnum("Goal operation.", ["get", "decompose", "update_plan", "update_step", "set_owner", "clear_owner", "set_review_owner", "clear_review_owner", "set_verifier_policy", "update_ledger", "reflect", "verify"]),
         owner: string("Explicit goal owner for op=set_owner. Empty or op=clear_owner clears owner; do not infer owner from objective text."),
         review_owner: string("Explicit human review owner for op=set_review_owner. Empty or op=clear_review_owner clears review owner; do not infer owner from objective or review text."),
-        approach: stringEnum("Goal approach for op=set_strategy.", ["focus", "explore", "timebox", "repeat"]),
-        inferred: boolean("Whether the approach was inferred automatically. Use true for auto and false for selected approach."),
-        target_hours: number("Optional timebox budget in hours. Do not expose target horizon counts to users."),
-        target_runs: number("Optional repeat run count for repeat approach."),
-        rationale: string("Short rationale for the selected strategy."),
+        preference: stringEnum("Loop preference for control-plane op=create.", ["deliver", "discover", "replay"]),
+        min_duration_ms: number("Optional At least runtime in milliseconds for control-plane op=create."),
+        replay_attempts: number("Optional Replay attempt count for control-plane op=create."),
         command_verifiers: { type: "array", description: "Command verifier policy for op=set_verifier_policy. Only exact matching run_command calls become command verification records.", items: goalCommandVerifier },
         open: { type: "array", description: "Open candidate ledger entries for op=update_ledger.", items: goalCandidate },
         done: { type: "array", description: "Completed candidate ledger entries for op=update_ledger.", items: goalCandidate },

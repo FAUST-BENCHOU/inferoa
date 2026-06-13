@@ -568,14 +568,6 @@ function renderGoalTool(data: JsonObject, args: JsonObject = {}, result?: ToolRe
     }
     return lines;
   }
-  if (op === "set_strategy") {
-    const strategy = objectField(goal.strategy);
-    lines.push(`${fg256(39, "approach")} ${goalApproachLabel(stringField(strategy.mode) ?? stringField(args.approach) ?? stringField(args.mode)) ?? "unknown"}`);
-    if (stringField(strategy.rationale) ?? stringField(args.rationale)) {
-      lines.push(`${fg256(39, "reason")} ${stringField(strategy.rationale) ?? stringField(args.rationale)}`);
-    }
-    return lines;
-  }
   if (op === "update_ledger") {
     const ledger = objectField(goal.ledger);
     lines.push(`${fg256(39, "candidates")} ${goalLedgerJsonSummary(ledger)}`);
@@ -620,8 +612,6 @@ function goalOperationLabel(op: string, decision?: string): string {
       return "update plan";
     case "update_step":
       return "update step";
-    case "set_strategy":
-      return "set strategy";
     case "update_ledger":
       return "update candidates";
     case "reflect":
@@ -668,8 +658,6 @@ function goalToolAction(group: ToolEventGroup, failed: string): string {
       return `Updated loop plan${failed}`;
     case "update_step":
       return `Updated loop step${failed}`;
-    case "set_strategy":
-      return `Set loop approach${failed}`;
     case "update_ledger":
       return `Updated loop candidates${failed}`;
     case "reflect":
@@ -696,10 +684,6 @@ function goalToolDetail(group: ToolEventGroup, data: JsonObject, summary: string
     const steps = Array.isArray(planning.steps) ? planning.steps.length : Array.isArray(group.args.steps) ? group.args.steps.length : undefined;
     const active = stringField(planning.active_step_id) ?? stringField(group.args.active_step_id);
     return [`${steps ?? 0} steps`, active ? `active ${active}` : undefined].filter(Boolean).join(" · ") || compactSummary(summary);
-  }
-  if (op === "set_strategy") {
-    const strategy = objectField(goal.strategy);
-    return goalApproachLabel(stringField(strategy.mode) ?? stringField(group.args.approach) ?? stringField(group.args.mode)) ?? compactSummary(summary);
   }
   if (op === "update_ledger") {
     return goalLedgerJsonSummary(objectField(goal.ledger));
@@ -1416,14 +1400,6 @@ function compactSummary(summary: string): string {
     .replace(/^Command exited\s+(\d+)$/i, "exited $1")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function goalApproachLabel(value: string | undefined): string | undefined {
-  if (value === "surgical" || value === "focus") return "focus";
-  if (value === "opportunistic" || value === "explore") return "explore";
-  if (value === "campaign" || value === "timebox") return "timebox";
-  if (value === "auto") return "auto";
-  return value;
 }
 
 function objectField(value: unknown): JsonObject {

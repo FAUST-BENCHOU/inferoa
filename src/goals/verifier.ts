@@ -80,7 +80,7 @@ export function buildGoalVerificationPrompt(goal: GoalRecord, options: string | 
     "Finish by calling goal op=verify exactly once with provider=checker.",
     "",
     `Loop: ${goal.objective}`,
-    `Kind: ${goal.kind}`,
+    `Preference: ${goal.preference}`,
     `Loop task: ${goal.horizon_generation}`,
     "",
     "Use verdict=pass only if the current attempt satisfies the bounded loop task. Use partial when progress is real but incomplete, fail when evidence contradicts completion, blocked when an external decision or missing prerequisite prevents verification, and unknown when evidence is insufficient.",

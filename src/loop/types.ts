@@ -1,5 +1,5 @@
 import type { JsonObject } from "../types.js";
-import type { GoalHorizonSnapshot, GoalKind, GoalPendingReviewDecision, GoalRecord, GoalReflectionSnapshot } from "../goals/state.js";
+import type { GoalHorizonSnapshot, GoalPendingReviewDecision, GoalRecord, GoalReflectionSnapshot, LoopPreference } from "../goals/state.js";
 
 export type GoalLoopRunStatus = "running" | "completed" | "stopped" | "failed" | "unknown";
 export type GoalLoopVerificationProvider = "reflection" | "research" | "human" | "checker" | "command";
@@ -107,7 +107,7 @@ export interface GoalLoopLearningSignal {
 export interface GoalLoopView {
   session_id: string;
   goal?: GoalRecord;
-  kind?: GoalKind;
+  preference?: LoopPreference;
   current_horizon?: GoalHorizonSnapshot;
   horizons: GoalHorizonSnapshot[];
   reflections: GoalReflectionSnapshot[];

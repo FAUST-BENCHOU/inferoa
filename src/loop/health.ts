@@ -22,7 +22,7 @@ export interface LoopScheduleHealthSummary extends LoopHealthCountSummary {
 }
 
 export interface LoopGoalHealthSummary extends LoopHealthCountSummary {
-  by_kind: Record<string, number>;
+  by_preference: Record<string, number>;
   pending_review: number;
 }
 
@@ -97,7 +97,7 @@ export async function readLoopHealth(
   const goalSummary: LoopGoalHealthSummary = {
     total: goals.length,
     by_status: countBy(goals, (goal) => goal.status),
-    by_kind: countBy(goals, (goal) => goal.kind),
+    by_preference: countBy(goals, (goal) => goal.preference),
     pending_review: goals.filter((goal) => goal.pending_review_decision).length,
   };
   const jobStatus = countBy(jobs, (job) => job.status);

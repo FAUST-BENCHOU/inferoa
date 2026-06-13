@@ -7,10 +7,12 @@ export type GoalStatus = "active" | "paused" | "budget-limited" | "complete" | "
 export type GoalStepStatus = "pending" | "in_progress" | "completed" | "blocked" | "skipped";
 export type GoalReflectionDecision = "expand" | "done" | "blocked";
 export type GoalReflectionStatus = "running" | "completed";
-export type GoalKind = "task" | "research";
+export type LoopPreference = "deliver" | "discover" | "replay";
+export type LoopRuntimePolicy =
+  | { mode: "auto" }
+  | { mode: "at_least"; min_duration_ms: number };
 export type GoalHilPolicy = "auto" | "review";
 export type GoalReviewDecision = "approve" | "reject" | "revise" | "block";
-export type GoalStrategyMode = "surgical" | "opportunistic" | "campaign" | "repeat";
 export type GoalCandidateValue = "high" | "medium" | "low";
 export type GoalCandidateStatus = "open" | "done" | "rejected";
 
@@ -21,7 +23,9 @@ export interface GoalRecord {
   objective: string;
   owner?: string;
   review_owner?: string;
-  kind: GoalKind;
+  preference: LoopPreference;
+  runtime_policy: LoopRuntimePolicy;
+  replay?: LoopReplayState;
   hil_policy: GoalHilPolicy;
   status: GoalStatus;
   token_budget?: number;
@@ -31,7 +35,6 @@ export interface GoalRecord {
   tool_rounds_used: number;
   tool_calls_used: number;
   horizon_generation: number;
-  strategy?: GoalStrategy;
   verifier_policy?: GoalVerifierPolicy;
   ledger?: GoalLedger;
   reflection_status?: GoalReflectionStatus;
@@ -75,13 +78,9 @@ export interface GoalPendingReviewDecision {
   feedback?: string;
 }
 
-export interface GoalStrategy {
-  mode: GoalStrategyMode;
-  inferred: boolean;
-  target_hours?: number;
-  target_runs?: number;
-  remaining_runs?: number;
-  rationale?: string;
+export interface LoopReplayState {
+  target_attempts: number;
+  remaining_attempts: number;
 }
 
 export interface GoalLedger {
@@ -193,19 +192,16 @@ export interface GoalCreateInput {
   objective: string;
   owner?: string;
   review_owner?: string;
-  kind?: GoalKind;
+  preference?: LoopPreference;
+  runtime_policy?: LoopRuntimePolicy;
+  replay?: LoopReplayInput;
   hil_policy?: GoalHilPolicy;
   token_budget?: number;
-  strategy?: GoalStrategyInput;
 }
 
-export interface GoalStrategyInput {
-  mode: GoalStrategyMode;
-  inferred?: boolean;
-  target_hours?: number;
-  target_runs?: number;
-  remaining_runs?: number;
-  rationale?: string;
+export interface LoopReplayInput {
+  target_attempts?: number;
+  remaining_attempts?: number;
 }
 
 export interface GoalVerifierPolicyInput {
@@ -333,9 +329,10 @@ export function createGoalState(input: GoalCreateInput, now = new Date()): GoalS
   }
   validateTokenBudget(input.token_budget);
   const timestamp = now.toISOString();
-  const kind = input.kind ?? "task";
-  const strategy = createGoalStrategy(input.strategy);
-  const planning = strategy.mode === "repeat" ? undefined : createGoalPlanning(horizonZeroPlanningInput(kind), now);
+  const preference = input.preference ?? "deliver";
+  const runtimePolicy = createLoopRuntimePolicy(input.runtime_policy);
+  const replay = preference === "replay" ? createLoopReplayState(input.replay) : undefined;
+  const planning = preference === "replay" ? undefined : createGoalPlanning(horizonZeroPlanningInput(preference), now);
   return {
     enabled: true,
     goal: {
@@ -343,7 +340,9 @@ export function createGoalState(input: GoalCreateInput, now = new Date()): GoalS
       objective,
       owner: cleanOptionalString(input.owner),
       review_owner: cleanOptionalString(input.review_owner),
-      kind,
+      preference,
+      runtime_policy: runtimePolicy,
+      replay,
       hil_policy: input.hil_policy ?? "auto",
       status: "active",
       token_budget: input.token_budget,
@@ -353,7 +352,6 @@ export function createGoalState(input: GoalCreateInput, now = new Date()): GoalS
       tool_rounds_used: 0,
       tool_calls_used: 0,
       horizon_generation: 0,
-      strategy,
       ledger: emptyGoalLedger(timestamp),
       planning,
       created_at: timestamp,
@@ -362,58 +360,47 @@ export function createGoalState(input: GoalCreateInput, now = new Date()): GoalS
   };
 }
 
-function horizonZeroPlanningInput(kind: GoalKind): GoalPlanningInput {
-  if (kind === "research") {
+function horizonZeroPlanningInput(preference: LoopPreference): GoalPlanningInput {
+  if (preference === "discover") {
     return {
-      summary: "Research cycle 0 · Orientation and baseline",
-      active_step_id: "read_objective_and_constraints",
+      summary: "Loop task 0 · Discover bootstrap",
+      active_step_id: "read_research_objective",
       steps: [
-        { id: "read_objective_and_constraints", title: "Read objective and constraints", status: "in_progress" },
-        { id: "inspect_workspace_shape", title: "Inspect workspace shape", status: "pending" },
-        { id: "identify_metrics_and_harness", title: "Identify metrics, guardrails, and benchmark harness", status: "pending" },
-        { id: "establish_baseline", title: "Establish baseline experiment evidence", status: "pending" },
-        { id: "seed_research_experiments", title: "Seed research experiments and approach", status: "pending" },
+        { id: "read_research_objective", title: "Read research objective", status: "in_progress" },
+        { id: "define_evidence_metrics_guardrails", title: "Define evidence, metrics, and guardrails", status: "pending" },
+        { id: "design_experiment_protocol", title: "Design or locate the benchmark / experiment protocol", status: "pending" },
+        { id: "seed_experiment_hypotheses", title: "Seed experiment hypotheses", status: "pending" },
       ],
     };
   }
   return {
-    summary: "Loop task 0 · Orientation",
+    summary: "Loop task 0 · Deliver bootstrap",
     active_step_id: "read_objective_and_constraints",
     steps: [
       { id: "read_objective_and_constraints", title: "Read objective and constraints", status: "in_progress" },
-      { id: "inspect_workspace_shape", title: "Inspect workspace shape", status: "pending" },
-      { id: "identify_candidate_sources", title: "Identify candidate sources", status: "pending" },
-      { id: "infer_goal_strategy", title: "Infer goal approach and seed candidates", status: "pending" },
+      { id: "map_work_surfaces", title: "Map work surfaces, risks, and unknowns", status: "pending" },
+      { id: "seed_frontier_candidates", title: "Seed high-value frontier candidates", status: "pending" },
+      { id: "choose_first_execution_slice", title: "Choose the first execution slice", status: "pending" },
     ],
   };
 }
 
-function createGoalStrategy(input?: GoalStrategyInput): GoalStrategy {
-  if (!input) {
-    return {
-      mode: "opportunistic",
-      inferred: true,
-      rationale: "Auto mode starts opportunistic and should be refined after loop task 0 orientation.",
-    };
+function createLoopRuntimePolicy(input?: LoopRuntimePolicy): LoopRuntimePolicy {
+  if (input?.mode === "at_least") {
+    const minDurationMs = Math.max(0, Math.trunc(input.min_duration_ms));
+    return Number.isFinite(minDurationMs) && minDurationMs > 0
+      ? { mode: "at_least", min_duration_ms: minDurationMs }
+      : { mode: "auto" };
   }
-  const targetHours = input.target_hours === undefined ? undefined : Math.max(0, input.target_hours);
-  const targetRuns = input.mode === "repeat"
-    ? Math.max(1, Math.trunc(input.target_runs ?? 1))
-    : input.target_runs === undefined
-      ? undefined
-      : Math.max(1, Math.trunc(input.target_runs));
-  const remainingRuns = input.mode === "repeat"
-    ? Math.max(0, Math.trunc(input.remaining_runs ?? targetRuns ?? 1))
-    : input.remaining_runs === undefined
-      ? undefined
-      : Math.max(0, Math.trunc(input.remaining_runs));
+  return { mode: "auto" };
+}
+
+function createLoopReplayState(input?: LoopReplayInput): LoopReplayState {
+  const targetAttempts = Math.max(1, Math.trunc(input?.target_attempts ?? 1));
+  const remainingAttempts = Math.max(0, Math.trunc(input?.remaining_attempts ?? targetAttempts));
   return {
-    mode: input.mode,
-    inferred: input.inferred ?? true,
-    target_hours: targetHours && Number.isFinite(targetHours) ? targetHours : undefined,
-    target_runs: targetRuns !== undefined && Number.isFinite(targetRuns) ? targetRuns : undefined,
-    remaining_runs: remainingRuns !== undefined && Number.isFinite(remainingRuns) ? remainingRuns : undefined,
-    rationale: cleanOptionalString(input.rationale),
+    target_attempts: Number.isFinite(targetAttempts) ? targetAttempts : 1,
+    remaining_attempts: Number.isFinite(remainingAttempts) ? remainingAttempts : targetAttempts,
   };
 }
 
@@ -486,16 +473,8 @@ export function replaceGoalPlanning(state: GoalState, input: GoalPlanningInput, 
   return next;
 }
 
-export function setGoalStrategy(state: GoalState, input: GoalStrategyInput, now = new Date()): GoalState {
-  const next = cloneGoalState(state);
-  next.goal.strategy = createGoalStrategy(input);
-  next.goal.updated_at = now.toISOString();
-  return next;
-}
-
 export function consumeRepeatGoalRun(state: GoalState, now = new Date()): GoalState | undefined {
-  const strategy = state.goal.strategy;
-  if (strategy?.mode !== "repeat") {
+  if (state.goal.preference !== "replay" || !state.goal.replay) {
     return undefined;
   }
   const remaining = repeatGoalRemainingRuns(state.goal);
@@ -503,9 +482,9 @@ export function consumeRepeatGoalRun(state: GoalState, now = new Date()): GoalSt
     return undefined;
   }
   const next = cloneGoalState(state);
-  next.goal.strategy = {
-    ...strategy,
-    remaining_runs: remaining - 1,
+  next.goal.replay = {
+    ...state.goal.replay,
+    remaining_attempts: remaining - 1,
   };
   next.goal.updated_at = now.toISOString();
   return next;
@@ -524,12 +503,10 @@ export function completeRepeatGoal(state: GoalState, summary: string | undefined
 }
 
 export function repeatGoalRemainingRuns(goal: GoalRecord): number {
-  const strategy = goal.strategy;
-  if (strategy?.mode !== "repeat") {
+  if (goal.preference !== "replay" || !goal.replay) {
     return 0;
   }
-  const target = strategy.target_runs ?? 1;
-  return Math.max(0, Math.trunc(strategy.remaining_runs ?? target));
+  return Math.max(0, Math.trunc(goal.replay.remaining_attempts ?? goal.replay.target_attempts));
 }
 
 export function setGoalOwner(state: GoalState, owner: string | undefined, now = new Date()): GoalState {
@@ -953,26 +930,16 @@ export function modelUsageTokenCost(usage: ModelUsage | undefined): number {
 }
 
 export function renderGoalModeSection(state: GoalState | undefined): string | undefined {
+  return renderLoopContext(state);
+}
+
+export function renderLoopContext(state: GoalState | undefined): string | undefined {
   if (!state?.enabled || !isActiveGoalPromptStatus(state.goal.status)) {
     return undefined;
   }
   const goal = state.goal;
-  if (goal.strategy?.mode === "repeat") {
-    return [
-      "Repeat loop is active for this session.",
-      renderTrustedObjective(goal.objective),
-      goal.owner ? `loop owner: ${escapeXmlText(goal.owner)}` : undefined,
-      goal.review_owner ? `loop review owner: ${escapeXmlText(goal.review_owner)}` : undefined,
-      `status: ${goal.status}`,
-      `repeat runs: ${goal.strategy.target_runs ?? 1}`,
-      `remaining repeat runs: ${repeatGoalRemainingRuns(goal)}`,
-      `tool loops used: ${goal.tool_rounds_used}; tool calls used: ${goal.tool_calls_used}`,
-      `time used seconds: ${goal.time_used_seconds}`,
-      "For this run, answer the repeated user prompt directly.",
-      "Do not decompose loop work, update loop planning, or record loop decisions; repeat count and completion are handled outside the model.",
-    ]
-      .filter((line): line is string => Boolean(line))
-      .join("\n");
+  if (goal.preference === "replay") {
+    return undefined;
   }
   const budgetLine =
     goal.token_budget === undefined
@@ -988,7 +955,8 @@ export function renderGoalModeSection(state: GoalState | undefined): string | un
     renderTrustedObjective(goal.objective),
     goal.owner ? `loop owner: ${escapeXmlText(goal.owner)}` : undefined,
     goal.review_owner ? `loop review owner: ${escapeXmlText(goal.review_owner)}` : undefined,
-    `loop kind: ${goal.kind}`,
+    `preference: ${loopPreferenceLabel(goal.preference)}`,
+    `runtime: ${renderLoopRuntimePolicy(goal.runtime_policy)}`,
     `review policy: ${goal.hil_policy}`,
     statusLine,
     budgetLine,
@@ -996,7 +964,6 @@ export function renderGoalModeSection(state: GoalState | undefined): string | un
     `time used seconds: ${goal.time_used_seconds}`,
     `time used ms: ${goalDurationMs(goal)}`,
     `loop task: ${goal.horizon_generation}`,
-    renderGoalStrategy(goal.strategy),
     renderGoalVerifierPolicy(goal.verifier_policy),
     renderDefaultVerifierPolicy(),
     renderGoalLedger(goal.ledger),
@@ -1007,6 +974,7 @@ export function renderGoalModeSection(state: GoalState | undefined): string | un
     goal.planning
       ? "Keep the internal loop task plan current with goal op=update_step as findings, edits, and verification change."
       : "For broad or multi-step work, call goal op=decompose with concrete steps before risky edits.",
+    renderLoopCompletionGates(goal),
     "Work on the objective until it is genuinely handled. Use the goal tool to inspect and update current loop work; user-facing loop creation, review, resume, completion, and drop are handled by /loop.",
     "When the current loop task appears exhausted, a tool-enabled internal decision run must decide whether more loop task, verification, decomposition, or polish work with substantive impact on the original objective remains before completion.",
     "When the loop appears complete, record goal op=reflect decision=done with concrete verification evidence so the loop supervisor can close or request more work.",
@@ -1016,27 +984,39 @@ export function renderGoalModeSection(state: GoalState | undefined): string | un
     .join("\n");
 }
 
-export function goalApproachName(strategy: GoalStrategy | undefined): "auto" | "focus" | "explore" | "timebox" | "repeat" {
-  const current = strategy ?? createGoalStrategy();
-  if (current.inferred) {
-    return "auto";
+export function loopPreferenceLabel(preference: LoopPreference): "Deliver" | "Discover" | "Replay" {
+  if (preference === "discover") return "Discover";
+  if (preference === "replay") return "Replay";
+  return "Deliver";
+}
+
+export function renderLoopRuntimePolicy(policy: LoopRuntimePolicy): string {
+  if (policy.mode === "at_least") {
+    return `At least ${formatDurationMs(policy.min_duration_ms)}`;
   }
-  return goalStrategyModePublicName(current.mode);
+  return "Auto";
 }
 
-export function goalStrategyModePublicName(mode: GoalStrategyMode): "focus" | "explore" | "timebox" | "repeat" {
-  if (mode === "surgical") return "focus";
-  if (mode === "campaign") return "timebox";
-  if (mode === "repeat") return "repeat";
-  return "explore";
-}
-
-export function goalStrategyModeFromPublicName(value: unknown): GoalStrategyMode | undefined {
-  if (value === "focus") return "surgical";
-  if (value === "explore") return "opportunistic";
-  if (value === "timebox") return "campaign";
-  if (value === "repeat") return "repeat";
-  return undefined;
+function renderLoopCompletionGates(goal: GoalRecord): string {
+  if (goal.preference === "discover") {
+    return [
+      "Completion gates:",
+      "- pending experiments are logged or explicitly ruled out",
+      "- metric/evidence exists",
+      "- conclusion follows from evidence",
+      "- runtime at-least satisfied when configured",
+      "- decision=done is recorded by the internal decision run",
+    ].join("\n");
+  }
+  return [
+    "Completion gates:",
+    "- current horizon complete",
+    "- decision=done is recorded by the internal decision run",
+    "- no high-value frontier remains",
+    "- runtime at-least satisfied when configured",
+    "- verification evidence exists",
+    "- required verifier policy is satisfied",
+  ].join("\n");
 }
 
 export function completionBudgetReport(goal: GoalRecord): string | undefined {
@@ -1068,11 +1048,12 @@ export function cloneGoalState(state: GoalState): GoalState {
     enabled: state.enabled,
     goal: {
       ...state.goal,
-      kind: state.goal.kind ?? "task",
+      preference: state.goal.preference ?? "deliver",
+      runtime_policy: createLoopRuntimePolicy(state.goal.runtime_policy),
+      replay: state.goal.replay ? { ...state.goal.replay } : undefined,
       hil_policy: state.goal.hil_policy ?? "auto",
       verification_evidence: state.goal.verification_evidence ? cloneJsonObject(state.goal.verification_evidence) : undefined,
       pending_review_decision: state.goal.pending_review_decision ? cloneGoalPendingReviewDecision(state.goal.pending_review_decision) : undefined,
-      strategy: state.goal.strategy ? cloneGoalStrategy(state.goal.strategy) : undefined,
       verifier_policy: state.goal.verifier_policy ? cloneGoalVerifierPolicy(state.goal.verifier_policy) : undefined,
       ledger: state.goal.ledger ? cloneGoalLedger(state.goal.ledger) : undefined,
       planning: state.goal.planning ? cloneGoalPlanning(state.goal.planning) : undefined,
@@ -1113,29 +1094,32 @@ export function goalCompletionReflectionBlockMessage(goal: GoalRecord): string |
 }
 
 export function goalCompletionCandidateBlockMessage(goal: GoalRecord): string | undefined {
-  const strategy = goal.strategy ?? createGoalStrategy();
+  if (goal.preference === "replay") {
+    const remaining = repeatGoalRemainingRuns(goal);
+    return remaining > 0 ? `Cannot complete replay loop while ${countLabel(remaining, "attempt")} remains.` : undefined;
+  }
+  const runtimeMessage = loopRuntimeCompletionBlockMessage(goal);
+  if (runtimeMessage) {
+    return runtimeMessage;
+  }
   const openCandidates = goal.ledger?.open ?? [];
-  if (strategy.mode === "surgical") {
+  const highMedium = openCandidates.filter((candidate) => candidate.value === "high" || candidate.value === "medium");
+  if (highMedium.length > 0) {
+    return `Cannot complete ${goal.preference} loop while open high/medium frontier candidates remain (${highMedium.length}).`;
+  }
+  return undefined;
+}
+
+export function loopRuntimeCompletionBlockMessage(goal: GoalRecord): string | undefined {
+  const runtime = goal.runtime_policy;
+  if (runtime.mode !== "at_least") {
     return undefined;
   }
-  if (strategy.mode === "repeat") {
+  const elapsed = goalDurationMs(goal);
+  if (elapsed >= runtime.min_duration_ms) {
     return undefined;
   }
-  if (strategy.mode === "opportunistic") {
-    const highMedium = openCandidates.filter((candidate) => candidate.value === "high" || candidate.value === "medium");
-    if (highMedium.length > 0) {
-      return `Cannot complete opportunistic loop while open high/medium ledger candidates remain (${highMedium.length}).`;
-    }
-    return undefined;
-  }
-  if (openCandidates.length === 0) {
-    return undefined;
-  }
-  const targetHours = strategy.target_hours;
-  if (targetHours !== undefined && goalDurationMs(goal) >= targetHours * 60 * 60 * 1000) {
-    return `Campaign target reached with ${countLabel(openCandidates.length, "open ledger candidate")} remaining; checkpoint or pause instead of completing.`;
-  }
-  return `Cannot complete campaign loop while ${countLabel(openCandidates.length, "open ledger candidate")} remains before the time budget; expand the next loop task.`;
+  return `Cannot complete loop before At least runtime is satisfied (${formatDurationMs(elapsed)} elapsed of ${formatDurationMs(runtime.min_duration_ms)}).`;
 }
 
 export function goalPlanningProgressSummary(planning: GoalPlanningState): string {
@@ -1246,7 +1230,9 @@ function parseGoalState(data: JsonObject): GoalState | undefined {
       objective,
       owner: optionalString(candidate.owner),
       review_owner: optionalString(candidate.review_owner),
-      kind: parseGoalKind(candidate.kind) ?? "task",
+      preference: parseLoopPreference(candidate.preference) ?? "deliver",
+      runtime_policy: parseLoopRuntimePolicy(candidate.runtime_policy) ?? { mode: "auto" },
+      replay: parseLoopReplayState(candidate.replay),
       hil_policy: parseGoalHilPolicy(candidate.hil_policy) ?? "auto",
       status,
       token_budget: tokenBudget,
@@ -1256,7 +1242,6 @@ function parseGoalState(data: JsonObject): GoalState | undefined {
       tool_rounds_used: numeric(candidate.tool_rounds_used),
       tool_calls_used: numeric(candidate.tool_calls_used),
       horizon_generation: horizonGeneration,
-      strategy: parseGoalStrategy(candidate.strategy),
       verifier_policy: parseGoalVerifierPolicy(candidate.verifier_policy),
       ledger: parseGoalLedger(candidate.ledger),
       reflection_status: parseGoalReflectionStatus(candidate.reflection_status),
@@ -1275,8 +1260,40 @@ function parseGoalState(data: JsonObject): GoalState | undefined {
   };
 }
 
-function parseGoalKind(value: unknown): GoalKind | undefined {
-  return value === "task" || value === "research" ? value : undefined;
+export function parseLoopPreference(value: unknown): LoopPreference | undefined {
+  return value === "deliver" || value === "discover" || value === "replay" ? value : undefined;
+}
+
+function parseLoopRuntimePolicy(value: unknown): LoopRuntimePolicy | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const data = value as Record<string, unknown>;
+  if (data.mode === "auto") {
+    return { mode: "auto" };
+  }
+  if (data.mode === "at_least") {
+    const minDurationMs = numericValue(data.min_duration_ms);
+    return minDurationMs !== undefined && minDurationMs > 0
+      ? { mode: "at_least", min_duration_ms: Math.trunc(minDurationMs) }
+      : { mode: "auto" };
+  }
+  return undefined;
+}
+
+function parseLoopReplayState(value: unknown): LoopReplayState | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const data = value as Record<string, unknown>;
+  const targetAttempts = numericValue(data.target_attempts);
+  if (targetAttempts === undefined || targetAttempts <= 0) {
+    return undefined;
+  }
+  return createLoopReplayState({
+    target_attempts: targetAttempts,
+    remaining_attempts: numericValue(data.remaining_attempts),
+  });
 }
 
 export function parseGoalHilPolicy(value: unknown): GoalHilPolicy | undefined {
@@ -1375,21 +1392,6 @@ function renderPendingReviewDecision(decision: GoalPendingReviewDecision | undef
     .join("\n");
 }
 
-function renderGoalStrategy(strategy: GoalStrategy | undefined): string {
-  const current = strategy ?? createGoalStrategy();
-  return [
-    "Loop approach:",
-    `mode: ${goalApproachName(current)}`,
-    `source: ${current.inferred ? "auto" : "selected"}`,
-    current.target_hours !== undefined ? `target hours: ${formatGoalTargetHours(current.target_hours)}` : undefined,
-    current.target_runs !== undefined ? `target runs: ${current.target_runs}` : undefined,
-    current.mode === "repeat" ? `remaining runs: ${Math.max(0, Math.trunc(current.remaining_runs ?? current.target_runs ?? 1))}` : undefined,
-    current.rationale ? `rationale: ${escapeXmlText(truncateEvidenceText(current.rationale, 500))}` : undefined,
-  ]
-    .filter((line): line is string => Boolean(line))
-    .join("\n");
-}
-
 function renderGoalVerifierPolicy(policy: GoalVerifierPolicy | undefined): string | undefined {
   if (!policy?.command_verifiers.length) {
     return undefined;
@@ -1413,12 +1415,6 @@ function cloneGoalVerifierPolicy(policy: GoalVerifierPolicy): GoalVerifierPolicy
     command_verifiers: policy.command_verifiers.map((verifier) => ({ ...verifier })),
     updated_at: policy.updated_at,
   };
-}
-
-function formatGoalTargetHours(hours: number): string {
-  const precision = hours < 1 ? 3 : 2;
-  const formatted = hours.toFixed(precision).replace(/\.?0+$/, "");
-  return `${formatted}h`;
 }
 
 function renderGoalLedger(ledger: GoalLedger | undefined): string {
@@ -1584,25 +1580,6 @@ function parseGoalReviewDecision(value: unknown): GoalReviewDecision | undefined
   return value === "approve" || value === "reject" || value === "revise" || value === "block" ? value : undefined;
 }
 
-function parseGoalStrategy(value: unknown): GoalStrategy | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const data = value as Record<string, unknown>;
-  const mode = parseGoalStrategyMode(data.mode);
-  if (!mode) {
-    return undefined;
-  }
-  return createGoalStrategy({
-    mode,
-    inferred: data.inferred === undefined ? true : data.inferred === true,
-    target_hours: positiveNumberOrUndefined(data.target_hours),
-    target_runs: positiveNumberOrUndefined(data.target_runs),
-    remaining_runs: numericValue(data.remaining_runs),
-    rationale: optionalString(data.rationale),
-  });
-}
-
 function parseGoalVerifierPolicy(value: unknown): GoalVerifierPolicy | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
@@ -1749,10 +1726,6 @@ function parseGoalStatus(value: unknown): GoalStatus | undefined {
     : undefined;
 }
 
-function parseGoalStrategyMode(value: unknown): GoalStrategyMode | undefined {
-  return value === "surgical" || value === "opportunistic" || value === "campaign" || value === "repeat" ? value : undefined;
-}
-
 function parseGoalCandidateValue(value: unknown): GoalCandidateValue | undefined {
   return value === "high" || value === "medium" || value === "low" ? value : undefined;
 }
@@ -1773,10 +1746,6 @@ function numericValue(value: unknown): number | undefined {
 
 function numericOrUndefined(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
-}
-
-function positiveNumberOrUndefined(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 function durationMsFromGoalData(candidate: Record<string, unknown>): number {
@@ -1852,10 +1821,6 @@ function cloneGoalPlanningStepInput(step: GoalPlanningStepInput): GoalPlanningSt
     ...step,
     evidence: step.evidence ? cloneJsonObject(step.evidence) : undefined,
   };
-}
-
-function cloneGoalStrategy(strategy: GoalStrategy): GoalStrategy {
-  return { ...strategy };
 }
 
 function cloneGoalPendingReviewDecision(decision: GoalPendingReviewDecision): GoalPendingReviewDecision {

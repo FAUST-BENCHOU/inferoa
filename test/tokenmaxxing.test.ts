@@ -308,7 +308,7 @@ test("tokenmaxxing shows compact boundaries as epoch rows and signals", () => {
     event("model.response.settled", {
       step_index: 1,
       prompt_epoch_id: "pe_1",
-      usage: { prompt_tokens: 1000, cached_prompt_tokens: 0, completion_tokens: 10, total_tokens: 1010 },
+      usage: { prompt_tokens: 1000, cached_prompt_tokens: 600, completion_tokens: 10, total_tokens: 1010 },
       tool_calls: [],
     }, "run_1"),
     event("endpoint.evidence.recorded", {
@@ -494,7 +494,7 @@ test("tokenmaxxing shows compact failure and breaker lifecycle signals", () => {
   assert.match(plain, /compact skipped .*est 99000\/80000 .*epoch pe_2 .*auto-fail.*threshold/);
 });
 
-test("tokenmaxxing trend renders pageable metric panels", () => {
+test("tokenmaxxing trend renders fullscreen coordinate charts without tables", () => {
   const events: SessionEvent[] = [
     event("prompt.epoch.created", { prompt_epoch_id: "pe_1", reason: "session-created" }),
     event("user.prompt", { prompt: "warmup" }, "run_1"),
@@ -554,18 +554,52 @@ test("tokenmaxxing trend renders pageable metric panels", () => {
 
   assert.equal(tokenmaxxingTrendPageCount(), 6);
   const overview = stripAnsi(renderTokenmaxxingTrendScreen(events, evidence, 140, 16, 0).join("\n"));
+  const cache = stripAnsi(renderTokenmaxxingTrendScreen(events, evidence, 140, 16, 1).join("\n"));
   const prefix = stripAnsi(renderTokenmaxxingTrendScreen(events, evidence, 140, 16, 2).join("\n"));
+  const rtkTools = stripAnsi(renderTokenmaxxingTrendScreen(events, evidence, 140, 16, 4).join("\n"));
   const compact = stripAnsi(renderTokenmaxxingTrendScreen(events, evidence, 140, 16, 5).join("\n"));
 
   assert.match(overview, /Tokenmaxxing trend .*overview/);
-  assert.match(overview, /calls 4/);
-  assert.match(overview, /prompt tokens/);
+  assert.match(overview, /┌[─┄]+/);
+  assert.match(overview, /│/);
+  assert.match(overview, /└/);
+  assert.match(overview, /plot prompt tokens/);
+  assert.match(overview, /summary .*total tokens.*cache hit/);
+  assert.doesNotMatch(overview, /relative trend/);
+  assert.doesNotMatch(overview, /◆/);
+  assert.doesNotMatch(overview, /turn\s+event\s+cache\s+gap\s+prefix\s+tokens/);
+  assert.match(cache, /Tokenmaxxing trend .*cache/);
+  assert.match(cache, /plot actual hit/);
+  assert.match(cache, /summary .*oracle hit.*cache gap/);
+  assert.match(cache, /^75\.0%\s+[┌│]/m);
+  assert.doesNotMatch(cache, /^100\.0%\s+[┌│]/m);
+  assert.match(cache, /┄/);
+  assert.doesNotMatch(cache, /◆/);
+  assert.doesNotMatch(cache, /[╱╲]/);
+  assert.doesNotMatch(cache, /╌/);
   assert.match(prefix, /Tokenmaxxing trend .*prefix/);
-  assert.match(prefix, /safe 1 .*break 0 .*new 2/);
-  assert.match(prefix, /sequence/);
+  assert.match(prefix, /plot safe rate/);
+  assert.match(prefix, /summary .*cache gap/);
+  assert.match(prefix, /^100\.0%\s+[┌│]/m);
+  assert.match(prefix, /┄/);
+  assert.doesNotMatch(prefix, /◆/);
+  assert.doesNotMatch(prefix, /break rate/);
+  assert.doesNotMatch(prefix, /[╱╲]/);
+  assert.doesNotMatch(prefix, /╌/);
+  assert.doesNotMatch(prefix, /sequence/);
+  assert.match(rtkTools, /Tokenmaxxing trend .*rtk-tools/);
+  assert.match(rtkTools, /plot rtk saved/);
+  assert.match(rtkTools, /summary .*tool calls.*without rtk/);
+  assert.doesNotMatch(rtkTools, /[╱╲]/);
+  assert.doesNotMatch(rtkTools, /╌/);
   assert.match(compact, /Tokenmaxxing trend .*compact/);
-  assert.match(compact, /1,500->700/);
-  assert.match(compact, /12->4 saved 8/);
+  assert.match(compact, /plot tokens before/);
+  assert.match(compact, /summary .*tokens after.*messages saved/);
+  assert.doesNotMatch(compact, /◆/);
+  assert.doesNotMatch(compact, /epoch\s+reason\s+tokens\s+messages\s+archive/);
+  assert.equal(overview.split("\n").length, 16);
+  assert.equal(prefix.split("\n").length, 16);
+  assert.equal(compact.split("\n").length, 16);
 });
 
 test("tokenmaxxing cache gap marks large provider cache gaps in red", () => {

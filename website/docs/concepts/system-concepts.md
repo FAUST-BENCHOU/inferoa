@@ -84,8 +84,8 @@ flowchart TB
 | Term | Meaning | Relationship |
 | --- | --- | --- |
 | Loop | Durable controller for a long-horizon objective. | A loop owns loop tasks, attempts, verification, decisions, candidate work, and completion evidence. |
-| Loop kind | The loop's execution family. | `task` is the default. `research` reuses the loop engine with experiment and metric gates. |
-| Approach | How broadly the loop should pursue the objective. | `auto`, `focus`, `explore`, and `timebox` guide loop task expansion and completion behavior. |
+| Preference | The loop's execution shape. | `deliver` closes an end-to-end objective, `discover` runs metric-driven research, and `replay` repeats one visible prompt for a fixed count. |
+| Runtime | The loop's duration policy. | `auto` lets the agent decide when to stop; `at_least` requires a minimum duration before completion can be accepted. |
 | Loop task | A bounded generation of loop work. | Loop task 0 is orientation. Later loop tasks are created by `expand` decisions when the original objective needs more work. |
 | Attempt | One runtime attempt to make progress on a loop task. | Attempts are runs interpreted through the active loop task. An attempt may be visible work, verification, reflection, or internal control. |
 | Verification | Structured evidence about whether an attempt or loop task satisfies the objective. | Verification can come from tests, commands, research metrics, connector checks, human review, or checker runs. |

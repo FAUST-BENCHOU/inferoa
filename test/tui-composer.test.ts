@@ -230,14 +230,14 @@ test("composer suggestions page around the selected command", () => {
   assert.ok(plain.some((line) => line.includes("2/2") && line.includes("←/→ page")));
 });
 
-test("composer shows full loop research subcommand label", () => {
+test("composer shows full loop discover subcommand label", () => {
   const items = slashSubcommands("loop").map((item) => ({
     label: item.value,
     description: item.description,
     kind: "command" as const,
     value: item.value,
   }));
-  const selected = items.findIndex((item) => item.value === "/loop mode research");
+  const selected = items.findIndex((item) => item.value === "/loop run discover");
   const rendered = renderComposerSurface({
     buffer: "/loop",
     cursor: 5,
@@ -247,8 +247,8 @@ test("composer shows full loop research subcommand label", () => {
   });
   const plain = rendered.lines.map((line) => stripAnsi(line)).join("\n");
 
-  assert.match(plain, /\/loop mode research\s+Start a research loop/);
-  assert.doesNotMatch(plain, /\/loop mode resear…/);
+  assert.match(plain, /\/loop run discover\s+Explore, experiment, and learn with evidence/);
+  assert.doesNotMatch(plain, /\/loop run disco…/);
 });
 
 test("composer keeps unknown slash commands in the input instead of submitting", () => {
@@ -266,17 +266,17 @@ test("composer keeps unknown slash commands in the input instead of submitting",
 
 test("composer enter selects the highlighted slash suggestion", () => {
   const decision = resolveComposerSubmission({
-    buffer: "/loop m",
+    buffer: "/loop r",
     compactRanges: [],
     items: [
-      { value: "/loop mode auto" },
-      { value: "/loop mode research" },
+      { value: "/loop run" },
+      { value: "/loop run discover" },
     ],
     selected: 1,
     selectionTouched: true,
   });
 
-  assert.deepEqual(decision, { action: "submit", text: "/loop mode research" });
+  assert.deepEqual(decision, { action: "submit", text: "/loop run discover" });
 });
 
 test("composer submits slash-looking text when slash validation is disabled", () => {

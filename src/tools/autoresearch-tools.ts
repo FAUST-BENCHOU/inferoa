@@ -103,7 +103,7 @@ export async function initExperiment(args: JsonObject, context: ToolExecutionCon
 export async function runExperiment(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
   const state = readAutoresearchState(context.store, context.session_id);
   if (!state.enabled) {
-    return fail("research_goal_required", "no active research goal; start with /loop mode research <objective>", autoresearchFailureData(state));
+    return fail("research_goal_required", "no active Discover loop; start with /loop run discover <objective>", autoresearchFailureData(state));
   }
   const pendingExperiment = pendingAutoresearchExperiment(state);
   if (pendingExperiment?.pending_run) {
@@ -275,7 +275,7 @@ export async function updateExperiment(args: JsonObject, context: ToolExecutionC
   try {
     state = readAutoresearchState(context.store, context.session_id);
     if (!state.enabled) {
-      return fail("autoresearch_not_initialized", "no active research goal; start with /loop mode research <objective>", autoresearchFailureData(state));
+      return fail("autoresearch_not_initialized", "no active Discover loop; start with /loop run discover <objective>", autoresearchFailureData(state));
     }
     const experiment = selectExperiment(state, args);
     if (!experiment) {
@@ -310,8 +310,8 @@ function autoresearchFailureData(state: AutoresearchState, extra: JsonObject = {
 
 function ensureResearchGoalEnabled(context: ToolExecutionContext): AutoresearchState {
   const goal = readGoalState(context.store, context.session_id);
-  if (!goal || goal.goal.kind !== "research" || goal.goal.status === "complete" || goal.goal.status === "dropped") {
-    throw new Error("an active research goal is required; start with /loop mode research <objective>");
+  if (!goal || goal.goal.preference !== "discover" || goal.goal.status === "complete" || goal.goal.status === "dropped") {
+    throw new Error("an active Discover loop is required; start with /loop run discover <objective>");
   }
   const state = readAutoresearchState(context.store, context.session_id);
   if (state.enabled) {

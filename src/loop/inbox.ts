@@ -5,7 +5,7 @@ import type { GoalLoopVerification } from "./types.js";
 import type { AutomationSchedule, ManagedWorktree, SessionStore, SupervisorJob } from "../session/store.js";
 import type { JsonObject, SessionEvent, SessionRecord, WorkspaceIdentity } from "../types.js";
 import { readGoalState, type GoalRecord } from "../goals/state.js";
-import { buildGoalWorkPrompt } from "../goals/supervisor-prompts.js";
+import { buildLoopExecutionPrompt } from "../goals/supervisor-prompts.js";
 import { createLoopWorktree, loopWorktreeRunTarget } from "./worktree.js";
 
 export type LoopInboxItemKind =
@@ -39,7 +39,7 @@ export interface LoopInboxItem {
   session_id?: string;
   session_title?: string;
   goal_id?: string;
-  goal_kind?: string;
+  goal_preference?: string;
   run_id?: string;
   job_id?: string;
   schedule_id?: string;
@@ -274,7 +274,7 @@ export async function promoteLoopInboxItem(
     }
     queued = await queuePromotedInboxJob(store, workspace, item, options, {
       session_id: item.session_id,
-      prompt: options.prompt ?? buildGoalWorkPrompt(state.goal),
+      prompt: options.prompt ?? buildLoopExecutionPrompt(state.goal),
       kind: "goal",
       goal_id: state.goal.id,
       metadata,
@@ -487,7 +487,7 @@ function goalInboxItems(store: SessionStore, session: SessionRecord, stalePolicy
     session_id: session.session_id,
     session_title: session.title,
     goal_id: goal.id,
-    goal_kind: goal.kind,
+    goal_preference: goal.preference,
   };
   if (view.pending_review_decision) {
     items.push(withStaleMetadata({

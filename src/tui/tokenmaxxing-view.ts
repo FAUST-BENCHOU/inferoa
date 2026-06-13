@@ -170,9 +170,28 @@ interface TokenmaxxingTrendModel {
   compactEvents: EpochSummary[];
 }
 
+interface TrendChartSeries {
+  label: string;
+  values: Array<number | undefined>;
+  color: number;
+  formatValue: (value: number) => string;
+  domain?: TrendValueDomain;
+}
+
+interface TrendValueDomain {
+  min: number;
+  max: number;
+}
+
+interface TrendChartDefinition {
+  xLabels: string[];
+  series: TrendChartSeries[];
+  emptyMessage?: string;
+}
+
 interface TrendPanelDefinition {
   title: string;
-  rows(model: TokenmaxxingTrendModel, width: number): TokenmaxxingScreenRow[];
+  chart(model: TokenmaxxingTrendModel): TrendChartDefinition;
 }
 
 export function renderTokenmaxxingLines(
@@ -304,19 +323,17 @@ export function renderTokenmaxxingTrendScreen(
 ): string[] {
   const safeWidth = Math.max(32, Math.floor(width));
   const safeHeight = Math.max(6, Math.floor(height));
-  const contentWidth = Math.max(20, safeWidth - 2);
   const pageCount = tokenmaxxingTrendPageCount();
   const page = Math.max(0, Math.min(Math.floor(pageIndex), pageCount - 1));
   const panel = TREND_PANELS[page]!;
   const model = tokenmaxxingTrendModel(events, endpointEvidence);
-  const bodyRows = panel.rows(model, contentWidth).map(normalizeScreenRow);
   const contentHeight = Math.max(1, safeHeight - 2);
-  const visible = bodyRows.slice(0, contentHeight);
+  const chart = panel.chart(model);
   const title = `${fg256(87, "Tokenmaxxing")} ${fg256(244, `trend · ${panel.title}`)}`;
   const headerRight = `metric ${page + 1}/${pageCount}`;
   const rows = [
     bgLine(234, fitLeftRight(`  ${title}`, fg256(244, headerRight), safeWidth), safeWidth),
-    ...visible.map((item) => renderScreenRow(item, safeWidth)),
+    ...renderTrendCoordinateChart(chart, safeWidth, contentHeight).map((line) => bgLine(234, line, safeWidth)),
   ];
   while (rows.length < safeHeight - 1) {
     rows.push(bgLine(234, "", safeWidth));
@@ -851,27 +868,27 @@ function rtkTotalsFromSummaries(summaries: RtkSavingsSummary[]): RtkTotals {
 const TREND_PANELS: TrendPanelDefinition[] = [
   {
     title: "overview",
-    rows: (model, width) => trendOverviewRows(model, width),
+    chart: trendOverviewChart,
   },
   {
     title: "cache",
-    rows: (model, width) => trendCacheRows(model, width),
+    chart: trendCacheChart,
   },
   {
     title: "prefix",
-    rows: (model, width) => trendPrefixRows(model, width),
+    chart: trendPrefixChart,
   },
   {
     title: "context",
-    rows: (model, width) => trendContextRows(model, width),
+    chart: trendContextChart,
   },
   {
     title: "rtk-tools",
-    rows: (model, width) => trendRtkRows(model, width),
+    chart: trendRtkChart,
   },
   {
     title: "compact",
-    rows: (model, width) => trendCompactRows(model, width),
+    chart: trendCompactChart,
   },
 ];
 
@@ -916,286 +933,358 @@ function compactEpochSortKey(epoch: EpochSummary): number {
   return Number(epoch.promptEpochId.replace(/\D/g, "").slice(0, 8)) || 0;
 }
 
-function trendOverviewRows(model: TokenmaxxingTrendModel, width: number): TokenmaxxingScreenRow[] {
+const PERCENT_TREND_DOMAIN: TrendValueDomain = { min: 0, max: 1 };
+
+function trendOverviewChart(model: TokenmaxxingTrendModel): TrendChartDefinition {
   const points = model.points;
-  const latest = points.at(-1);
-  const actualHit = average(points.map((point) => point.actualHit));
-  const cacheGap = average(points.map((point) => point.cacheDiff));
-  const breakCount = points.filter((point) => point.prefixStatus === "changed").length;
-  return [
-    trendTitle("Overview", "session token, cache, and tool-savings shape"),
-    trendKpis([
-      ["calls", String(points.length)],
-      ["latest tokens", latest ? formatInteger(latest.actualTokens) : "-"],
-      ["avg cache", actualHit === undefined ? "-" : formatPlainPct(actualHit)],
-      ["avg gap", cacheGap === undefined ? "-" : formatPlainPct(cacheGap)],
-      ["prefix break", String(breakCount)],
-      ["rtk saved", formatInteger(model.rtk.savedTokens)],
-    ], width),
-    trendChart("prompt tokens", points.map((point) => point.promptTokens), width, formatInteger),
-    trendChart("total tokens", points.map((point) => point.actualTokens), width, formatInteger),
-    trendChart("cache hit", points.map((point) => point.actualHit), width, formatPlainPct),
-    trendRecentTable(points, width),
-  ].flat();
+  return {
+    xLabels: points.map((point) => point.label),
+    series: [
+      trendSeries("prompt tokens", points.map((point) => point.promptTokens), 39, formatInteger),
+      trendSeries("total tokens", points.map((point) => point.actualTokens), 75, formatInteger),
+      trendSeries("cache hit", points.map((point) => point.actualHit), 48, formatPlainPct, PERCENT_TREND_DOMAIN),
+    ],
+    emptyMessage: "No model calls yet.",
+  };
 }
 
-function trendCacheRows(model: TokenmaxxingTrendModel, width: number): TokenmaxxingScreenRow[] {
+function trendCacheChart(model: TokenmaxxingTrendModel): TrendChartDefinition {
   const points = model.points;
-  return [
-    trendTitle("Cache", "actual hit, oracle hit, and provider cache gap"),
-    trendKpis([
-      ["steady turns", `${model.cache.promptTurns}/${Math.max(model.cache.promptTurns, model.cache.turns - model.cache.warmupTurns)}`],
-      ["cached", formatInteger(model.cache.cachedTokens)],
-      ["prompt", formatInteger(model.cache.promptTokens)],
-      ["hit", model.cache.promptTokens ? `${((model.cache.cachedTokens / model.cache.promptTokens) * 100).toFixed(1)}%` : "-"],
-      ["warmup", String(model.cache.warmupTurns)],
-    ], width),
-    trendChart("actual hit", points.map((point) => point.actualHit), width, formatPlainPct),
-    trendChart("oracle hit", points.map((point) => point.oracleHit), width, formatPlainPct),
-    trendChart("cache gap", points.map((point) => point.cacheDiff), width, formatPlainPct),
-    trendChart("cached tokens", points.map((point) => point.cachedTokens), width, formatInteger),
-    trendRecentTable(points, width),
-  ].flat();
+  return {
+    xLabels: points.map((point) => point.label),
+    series: [
+      trendSeries("actual hit", points.map((point) => point.actualHit), 48, formatPlainPct, PERCENT_TREND_DOMAIN),
+      trendSeries("oracle hit", points.map((point) => point.oracleHit), 75, formatPlainPct, PERCENT_TREND_DOMAIN),
+      trendSeries("cache gap", points.map((point) => point.cacheDiff), 203, formatPlainPct, PERCENT_TREND_DOMAIN),
+      trendSeries("cached tokens", points.map((point) => point.cachedTokens), 39, formatInteger),
+    ],
+    emptyMessage: "No cache evidence yet.",
+  };
 }
 
-function trendPrefixRows(model: TokenmaxxingTrendModel, width: number): TokenmaxxingScreenRow[] {
+function trendPrefixChart(model: TokenmaxxingTrendModel): TrendChartDefinition {
   const points = model.points;
-  const safe = points.filter((point) => point.prefixStatus === "safe").length;
-  const breaks = points.filter((point) => point.prefixStatus === "changed").length;
-  const newEpoch = points.filter((point) => point.prefixStatus === "new_epoch").length;
-  const unknown = points.filter((point) => point.prefixStatus === "unknown").length;
-  const legacy = points.filter((point) => !point.prefixStatus).length;
-  return [
-    trendTitle("Prefix", "structural prefix safety, separate from provider cache gap"),
-    trendKpis([
-      ["safe", String(safe)],
-      ["break", String(breaks)],
-      ["new", String(newEpoch)],
-      ["unknown", String(unknown)],
-      ["legacy", String(legacy)],
-    ], width),
-    row(`${fg256(244, "sequence")} ${prefixSequence(points, Math.max(12, width - 12))}`, "trend"),
-    trendChart("break rate", rollingRate(points.map((point) => point.prefixStatus === "changed" ? 1 : 0), 8), width, formatPlainPct),
-    trendChart("cache gap", points.map((point) => point.cacheDiff), width, formatPlainPct),
-    trendRecentTable(points, width),
-  ].flat();
+  return {
+    xLabels: points.map((point) => point.label),
+    series: [
+      trendSeries(
+        "safe rate",
+        rollingRate(points.map((point) => point.prefixStatus === "changed" ? 0 : 1), 8),
+        48,
+        formatPlainPct,
+        PERCENT_TREND_DOMAIN,
+      ),
+      trendSeries("cache gap", points.map((point) => point.cacheDiff), 75, formatPlainPct, PERCENT_TREND_DOMAIN),
+    ],
+    emptyMessage: "No prefix-cache requests yet.",
+  };
 }
 
-function trendContextRows(model: TokenmaxxingTrendModel, width: number): TokenmaxxingScreenRow[] {
+function trendContextChart(model: TokenmaxxingTrendModel): TrendChartDefinition {
   const points = model.points;
-  const epochs = new Set(points.map((point) => point.promptEpochId).filter(Boolean)).size;
-  return [
-    trendTitle("Context", "prompt-token pressure and epoch boundaries"),
-    trendKpis([
-      ["epochs", String(epochs)],
-      ["max prompt", formatInteger(maxDefined(points.map((point) => point.promptTokens)) ?? 0)],
-      ["latest prompt", formatInteger(points.at(-1)?.promptTokens ?? 0)],
-      ["compacts", String(model.compactEvents.length)],
-    ], width),
-    trendChart("prompt tokens", points.map((point) => point.promptTokens), width, formatInteger),
-    trendChart("total tokens", points.map((point) => point.actualTokens), width, formatInteger),
-    trendChart("cache gap", points.map((point) => point.cacheDiff), width, formatPlainPct),
-    ...trendEpochRows(model.compactEvents, width),
-  ].flat();
+  return {
+    xLabels: points.map((point) => point.label),
+    series: [
+      trendSeries("prompt tokens", points.map((point) => point.promptTokens), 39, formatInteger),
+      trendSeries("total tokens", points.map((point) => point.actualTokens), 75, formatInteger),
+      trendSeries("cache gap", points.map((point) => point.cacheDiff), 203, formatPlainPct, PERCENT_TREND_DOMAIN),
+    ],
+    emptyMessage: "No context pressure evidence yet.",
+  };
 }
 
-function trendRtkRows(model: TokenmaxxingTrendModel, width: number): TokenmaxxingScreenRow[] {
+function trendRtkChart(model: TokenmaxxingTrendModel): TrendChartDefinition {
   const points = model.points;
-  return [
-    trendTitle("RTK + Tools", "tool compression and command savings over time"),
-    trendKpis([
-      ["rtk cmds", String(model.rtk.commands)],
-      ["io", `${formatInteger(model.rtk.inputTokens)}->${formatInteger(model.rtk.outputTokens)}`],
-      ["saved", formatInteger(model.rtk.savedTokens)],
-      ["tool", `${model.rtk.toolSavingsPct.toFixed(1)}%`],
-      ["latest tools", String(points.at(-1)?.toolCalls ?? 0)],
-    ], width),
-    trendChart("rtk saved", points.map((point) => point.rtkSaved), width, formatInteger),
-    trendChart("tool calls", points.map((point) => point.toolCalls), width, formatInteger),
-    trendChart("without rtk", points.map((point) => point.withoutRtkTokens), width, formatInteger),
-    trendRecentTable(points, width),
-  ].flat();
+  return {
+    xLabels: points.map((point) => point.label),
+    series: [
+      trendSeries("rtk saved", points.map((point) => point.rtkSaved), 48, formatInteger),
+      trendSeries("tool calls", points.map((point) => point.toolCalls), 75, formatInteger),
+      trendSeries("without rtk", points.map((point) => point.withoutRtkTokens), 39, formatInteger),
+    ],
+    emptyMessage: "No RTK or tool evidence yet.",
+  };
 }
 
-function trendCompactRows(model: TokenmaxxingTrendModel, width: number): TokenmaxxingScreenRow[] {
+function trendCompactChart(model: TokenmaxxingTrendModel): TrendChartDefinition {
   const compacts = model.compactEvents;
-  const rows: TokenmaxxingScreenRow[] = [
-    trendTitle("Compact", "observed post-compact token and message retention"),
-    trendKpis([
-      ["events", String(compacts.length)],
-      ["latest", compacts.at(-1)?.summaryStrategy ?? "-"],
-      ["archived", formatInteger(sumDefined(compacts.map((item) => item.archivedEvents)))],
-    ], width),
-    trendChart("tokens before", compacts.map((item) => item.compactTokensBefore), width, formatInteger),
-    trendChart("tokens after", compacts.map((item) => item.compactTokensAfter), width, formatInteger),
-    trendChart("messages saved", compacts.map((item) => item.compressedMessages), width, formatInteger),
-  ].flat();
-  if (!compacts.length) {
-    rows.push(row(fg256(244, "No compact events yet."), "trend"));
-    return rows;
-  }
-  rows.push(row(trendTableHeader(["epoch", "reason", "tokens", "messages", "archive"], width), "trend"));
-  for (const compact of compacts.slice(-8).reverse()) {
-    rows.push(row(trendTableRow([
-      shortEpochId(compact.promptEpochId),
-      compact.compactReason ?? "-",
-      compact.compactTokensBefore === undefined ? "-" : `${formatInteger(compact.compactTokensBefore)}->${compact.compactTokensAfter === undefined ? "pending" : formatInteger(compact.compactTokensAfter)}`,
-      compactMessageDelta(compact.promptMessagesBefore, compact.promptMessagesAfter, compact.compressedMessages) ?? "-",
-      compact.archivedEvents === undefined ? "-" : formatInteger(compact.archivedEvents),
-    ], width), "trend"));
-  }
-  return rows;
+  return {
+    xLabels: compacts.map((item) => shortEpochId(item.promptEpochId)),
+    series: [
+      trendSeries("tokens before", compacts.map((item) => item.compactTokensBefore), 203, formatInteger),
+      trendSeries("tokens after", compacts.map((item) => item.compactTokensAfter), 48, formatInteger),
+      trendSeries("messages saved", compacts.map((item) => item.compressedMessages), 75, formatInteger),
+    ],
+    emptyMessage: "No compact events yet.",
+  };
 }
 
-function trendTitle(title: string, subtitle: string): TokenmaxxingScreenRow[] {
-  return [
-    row(`${fg256(39, title)} ${fg256(244, subtitle)}`, "section"),
+function trendSeries(
+  label: string,
+  values: Array<number | undefined>,
+  color: number,
+  formatValue: (value: number) => string,
+  domain?: TrendValueDomain,
+): TrendChartSeries {
+  return { label, values, color, formatValue, domain };
+}
+
+interface TrendScale {
+  min: number;
+  max: number;
+  formatValue: (value: number) => string;
+}
+
+function renderTrendCoordinateChart(chart: TrendChartDefinition, width: number, height: number): string[] {
+  const safeWidth = Math.max(32, Math.floor(width));
+  const safeHeight = Math.max(4, Math.floor(height));
+  const axisWidth = Math.min(11, Math.max(7, Math.floor(safeWidth * 0.1)));
+  const plotWidth = Math.max(8, safeWidth - axisWidth - 3);
+  const plotHeight = Math.max(2, safeHeight - 2);
+  const grid = makeTrendGrid(plotWidth, plotHeight);
+  const drawable = chart.series.filter((series) => trendFiniteValues(series.values).length > 0);
+  const primary = drawable.at(0);
+  const scale = primary ? trendSeriesScale(primary) : emptyTrendScale();
+  const guideLabels = primary ? trendGuideLabels(primary, plotHeight, scale) : new Map<number, string>();
+  if (primary) {
+    drawTrendGuides(grid, primary, plotWidth, plotHeight, scale);
+    plotTrendSeries(grid, primary, plotWidth, plotHeight, scale);
+  }
+  const summary = drawable.filter((series) => series !== primary);
+  const rows = [
+    trendLegendLine(primary, summary, chart.emptyMessage, safeWidth),
+    ...renderTrendPlotRows(grid, axisWidth, plotWidth, plotHeight, scale, guideLabels),
+    trendXAxisLine(chart.xLabels, axisWidth, plotWidth),
   ];
+  if (!drawable.length && rows.length > 2) {
+    const messageRow = Math.max(1, Math.floor(plotHeight / 2));
+    rows[messageRow] = overlayTrendMessage(rows[messageRow] ?? "", chart.emptyMessage ?? "No data yet.", safeWidth);
+  }
+  while (rows.length < safeHeight) {
+    rows.push("");
+  }
+  return rows.slice(0, safeHeight).map((line) => padRight(truncateToWidth(line, safeWidth), safeWidth));
 }
 
-function trendKpis(items: Array<[string, string]>, width: number): TokenmaxxingScreenRow[] {
-  const rendered = items.map(([label, value]) => `${fg256(244, label)} ${fg256(252, value)}`);
-  const rows: TokenmaxxingScreenRow[] = [];
-  let current = "";
-  for (const item of rendered) {
-    const next = current ? `${current}   ${item}` : item;
-    if (visibleWidth(next) > width && current) {
-      rows.push(row(current, "trend"));
-      current = item;
-    } else {
-      current = next;
+interface TrendGridCell {
+  char: string;
+  color: number;
+}
+
+function makeTrendGrid(width: number, height: number): Array<Array<TrendGridCell | undefined>> {
+  return Array.from({ length: height }, () => Array.from({ length: width }, () => undefined));
+}
+
+function plotTrendSeries(
+  grid: Array<Array<TrendGridCell | undefined>>,
+  series: TrendChartSeries,
+  width: number,
+  height: number,
+  scale: TrendScale,
+): void {
+  const coords = trendSeriesCoordinates(series.values, width, height, scale);
+  for (const coord of coords) {
+    if (!coord) {
+      continue;
+    }
+    setTrendCell(grid, coord.x, coord.y, "●", series.color);
+  }
+}
+
+function trendSeriesCoordinates(
+  values: Array<number | undefined>,
+  width: number,
+  height: number,
+  scale: TrendScale,
+): Array<{ x: number; y: number } | undefined> {
+  const finite = trendFiniteValues(values);
+  if (!finite.length) {
+    return [];
+  }
+  const span = trendScaleSpan(scale);
+  const denominator = Math.max(1, values.length - 1);
+  return values.map((value, index) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return undefined;
+    }
+    const x = Math.max(0, Math.min(width - 1, Math.round((index / denominator) * (width - 1))));
+    const ratio = Math.max(0, Math.min(1, (value - scale.min) / span));
+    const y = Math.max(0, Math.min(height - 1, height - 1 - Math.round(ratio * (height - 1))));
+    return { x, y };
+  });
+}
+
+function trendSeriesScale(series: TrendChartSeries): TrendScale {
+  const finite = trendFiniteValues(series.values);
+  if (!finite.length) {
+    return emptyTrendScale();
+  }
+  const dataMin = Math.min(...finite);
+  const dataMax = Math.max(...finite);
+  if (dataMax > dataMin) {
+    return { min: dataMin, max: dataMax, formatValue: series.formatValue };
+  }
+  const defaultMin = series.domain?.min ?? Math.min(0, dataMin);
+  const defaultMax = series.domain?.max ?? Math.max(dataMax, 1);
+  const min = Number.isFinite(defaultMin) ? defaultMin : 0;
+  let max = Number.isFinite(defaultMax) ? defaultMax : min + 1;
+  if (max <= min) {
+    max = min + 1;
+  }
+  return { min, max, formatValue: series.formatValue };
+}
+
+function emptyTrendScale(): TrendScale {
+  return { min: 0, max: 1, formatValue: formatInteger };
+}
+
+function trendScaleSpan(scale: TrendScale): number {
+  return Math.max(1e-9, scale.max - scale.min);
+}
+
+function drawTrendGuides(
+  grid: Array<Array<TrendGridCell | undefined>>,
+  series: TrendChartSeries,
+  width: number,
+  height: number,
+  scale: TrendScale,
+): void {
+  const values = trendFiniteValues(series.values);
+  if (!values.length) {
+    return;
+  }
+  const rows = new Set([trendValueRow(Math.min(...values), height, scale), trendValueRow(Math.max(...values), height, scale)]);
+  for (const y of rows) {
+    for (let x = 0; x < width; x += 1) {
+      setTrendCell(grid, x, y, "┄", 238);
     }
   }
-  if (current) {
-    rows.push(row(current, "trend"));
-  }
-  return rows;
 }
 
-function trendChart(label: string, rawValues: Array<number | undefined>, width: number, formatValue: (value: number) => string): TokenmaxxingScreenRow[] {
-  const values = rawValues.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+function trendGuideLabels(series: TrendChartSeries, height: number, scale: TrendScale): Map<number, string> {
+  const labels = new Map<number, string>();
+  const values = trendFiniteValues(series.values);
   if (!values.length) {
-    return [row(leftCell(label, 16) + fg256(244, "no data"), "trend")];
+    return labels;
   }
-  const chartWidth = Math.max(12, width - 44);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  labels.set(trendValueRow(max, height, scale), series.formatValue(max));
+  labels.set(trendValueRow(min, height, scale), series.formatValue(min));
+  return labels;
+}
+
+function trendValueRow(value: number, height: number, scale: TrendScale): number {
+  const ratio = Math.max(0, Math.min(1, (value - scale.min) / trendScaleSpan(scale)));
+  return Math.max(0, Math.min(height - 1, height - 1 - Math.round(ratio * (height - 1))));
+}
+
+function setTrendCell(grid: Array<Array<TrendGridCell | undefined>>, x: number, y: number, char: string, color: number): void {
+  const row = grid[y];
+  if (!row || x < 0 || x >= row.length) {
+    return;
+  }
+  const existing = row[x];
+  if (existing?.char === "┄" && char !== "●") {
+    return;
+  }
+  if (!existing || char === "●" || existing.char !== "●") {
+    row[x] = { char, color };
+  }
+}
+
+function renderTrendPlotRows(
+  grid: Array<Array<TrendGridCell | undefined>>,
+  axisWidth: number,
+  plotWidth: number,
+  plotHeight: number,
+  scale: TrendScale,
+  guideLabels: Map<number, string>,
+): string[] {
+  return grid.map((cells, index) => {
+    const label = trendYAxisLabel(index, plotHeight, scale, guideLabels);
+    const axis = index === 0 ? "┌" : index === plotHeight - 1 ? "└" : "│";
+    const empty = index === 0 || index === plotHeight - 1 ? "─" : " ";
+    const body = cells.map((cell) => cell ? fg256(cell.color, cell.char) : fg256(238, empty)).join("");
+    return `${leftCell(label, axisWidth)} ${fg256(244, axis)}${body}${fg256(244, index === plotHeight - 1 ? "→" : " ")}`;
+  });
+}
+
+function trendYAxisLabel(index: number, height: number, scale: TrendScale, guideLabels: Map<number, string>): string {
+  const guideLabel = guideLabels.get(index);
+  if (guideLabel) {
+    return guideLabel;
+  }
+  if (index === 0) {
+    return scale.formatValue(scale.max);
+  }
+  if (index === Math.floor((height - 1) / 2)) {
+    return scale.formatValue((scale.min + scale.max) / 2);
+  }
+  if (index === height - 1) {
+    return scale.formatValue(scale.min);
+  }
+  return "";
+}
+
+function trendXAxisLine(labels: string[], axisWidth: number, plotWidth: number): string {
+  const cleanLabels = labels.filter(Boolean);
+  const first = cleanLabels.at(0) ?? "start";
+  const last = cleanLabels.at(-1) ?? "now";
+  return `${" ".repeat(axisWidth + 2)}${fitLeftRight(fg256(244, first), fg256(244, last), plotWidth)}`;
+}
+
+function trendLegendLine(
+  primary: TrendChartSeries | undefined,
+  summary: TrendChartSeries[],
+  emptyMessage: string | undefined,
+  width: number,
+): string {
+  if (!primary) {
+    return truncateToWidth(fg256(244, emptyMessage ?? "No data yet."), width);
+  }
+  const summaryText = summary.map((item) => trendSummaryItem(item)).filter(Boolean).join(fg256(244, " · "));
+  const text = [
+    `${fg256(244, "plot")} ${trendLegendItem(primary)}`,
+    summaryText ? `${fg256(244, "summary")} ${summaryText}` : "",
+  ].filter(Boolean).join("   ");
+  return truncateToWidth(text, width);
+}
+
+function trendLegendItem(series: TrendChartSeries): string {
+  const values = trendFiniteValues(series.values);
+  if (!values.length) {
+    return `${fg256(series.color, series.label)} ${fg256(244, "no data")}`;
+  }
   const latest = values.at(-1) ?? 0;
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const stats = `${fg256(244, "now")} ${formatValue(latest)}  ${fg256(244, "min")} ${formatValue(min)}  ${fg256(244, "max")} ${formatValue(max)}`;
-  return [row(`${leftCell(label, 16)}${sparkline(values, chartWidth)}  ${stats}`, "trend")];
+  return [
+    fg256(series.color, series.label),
+    `${fg256(244, "now")} ${series.formatValue(latest)}`,
+    `${fg256(244, "min")} ${series.formatValue(min)}`,
+    `${fg256(244, "max")} ${series.formatValue(max)}`,
+  ].join(" ");
 }
 
-function sparkline(values: number[], width: number): string {
-  const blocks = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
-  const safeWidth = Math.max(1, Math.floor(width));
-  const sampled = sampleValues(values, safeWidth);
-  const min = Math.min(...sampled);
-  const max = Math.max(...sampled);
-  const span = max - min;
-  const chars = sampled.map((value) => {
-    const index = span <= 0 ? blocks.length - 1 : Math.max(0, Math.min(blocks.length - 1, Math.round(((value - min) / span) * (blocks.length - 1))));
-    return blocks[index]!;
-  }).join("");
-  return fg256(39, chars);
-}
-
-function sampleValues(values: number[], width: number): number[] {
-  if (values.length <= width) {
-    return values;
+function trendSummaryItem(series: TrendChartSeries): string {
+  const values = trendFiniteValues(series.values);
+  const latest = values.at(-1);
+  if (latest === undefined) {
+    return "";
   }
-  const out: number[] = [];
-  for (let index = 0; index < width; index += 1) {
-    const source = Math.floor((index / Math.max(1, width - 1)) * (values.length - 1));
-    out.push(values[source]!);
-  }
-  return out;
+  return `${fg256(series.color, series.label)} ${series.formatValue(latest)}`;
 }
 
-function trendRecentTable(points: TokenmaxxingTrendPoint[], width: number): TokenmaxxingScreenRow[] {
-  if (!points.length) {
-    return [row(fg256(244, "No model calls yet."), "trend")];
-  }
-  const rows = [row(trendTableHeader(["turn", "event", "cache", "gap", "prefix", "tokens"], width), "trend")];
-  for (const point of points.slice(-8).reverse()) {
-    rows.push(row(trendTableRow([
-      point.label,
-      point.event,
-      point.actualHit === undefined || point.oracleHit === undefined ? "-" : `${formatPlainPct(point.actualHit)}/${formatPlainPct(point.oracleHit)}`,
-      point.cacheDiff === undefined ? "-" : formatPlainPct(point.cacheDiff),
-      prefixTrendBadge(point.prefixStatus),
-      formatInteger(point.actualTokens),
-    ], width), "trend"));
-  }
-  return rows;
+function trendFiniteValues(values: Array<number | undefined>): number[] {
+  return values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
 }
 
-function trendEpochRows(compacts: EpochSummary[], width: number): TokenmaxxingScreenRow[] {
-  if (!compacts.length) {
-    return [row(fg256(244, "No epoch compaction boundaries yet."), "trend")];
-  }
-  const rows = [row(trendTableHeader(["epoch", "reason", "observed tokens", "messages", "archived"], width), "trend")];
-  for (const compact of compacts.slice(-6).reverse()) {
-    rows.push(row(trendTableRow([
-      shortEpochId(compact.promptEpochId),
-      compact.compactReason ?? "-",
-      compact.compactTokensBefore === undefined ? "-" : `${formatInteger(compact.compactTokensBefore)}->${compact.compactTokensAfter === undefined ? "pending" : formatInteger(compact.compactTokensAfter)}`,
-      compactMessageDelta(compact.promptMessagesBefore, compact.promptMessagesAfter, compact.compressedMessages) ?? "-",
-      compact.archivedEvents === undefined ? "-" : formatInteger(compact.archivedEvents),
-    ], width), "trend"));
-  }
-  return rows;
-}
-
-function compactMessageDelta(before?: number, after?: number, saved?: number): string | undefined {
-  if (before === undefined || after === undefined) {
-    return undefined;
-  }
-  return `${before}->${after} saved ${saved ?? Math.max(0, before - after)}`;
-}
-
-function trendTableHeader(cells: string[], width: number): string {
-  return fg256(244, trendTableRow(cells, width));
-}
-
-function trendTableRow(cells: string[], width: number): string {
-  const base = [14, 12, 20, 18, 10, 16, 16];
-  const separator = "  ";
-  const widths = base.slice(0, cells.length);
-  const rendered = cells.map((cell, index) => leftCell(cell, widths[index] ?? 12)).join(separator).trimEnd();
-  return truncateToWidth(rendered, width);
-}
-
-function prefixSequence(points: TokenmaxxingTrendPoint[], width: number): string {
-  const recent = points.slice(-Math.max(1, width));
-  return recent.map((point) => {
-    switch (point.prefixStatus) {
-      case "safe":
-        return fg256(48, "S");
-      case "changed":
-        return fg256(203, "B");
-      case "new_epoch":
-        return fg256(244, "N");
-      case "unknown":
-        return fg256(244, "?");
-      default:
-        return fg256(244, "L");
-    }
-  }).join("");
-}
-
-function prefixTrendBadge(status?: string): string {
-  switch (status) {
-    case "safe":
-      return "safe";
-    case "changed":
-      return "break";
-    case "new_epoch":
-      return "new";
-    case "unknown":
-      return "?";
-    default:
-      return "legacy";
-  }
+function overlayTrendMessage(line: string, message: string, width: number): string {
+  const clipped = truncateToWidth(fg256(244, message), Math.max(1, width - 4));
+  const start = Math.max(0, Math.floor((width - visibleWidth(clipped)) / 2));
+  const plain = " ".repeat(start);
+  return truncateToWidth(`${plain}${clipped}`, width);
 }
 
 function rollingRate(values: number[], window: number): number[] {
@@ -1204,20 +1293,6 @@ function rollingRate(values: number[], window: number): number[] {
     const slice = values.slice(start, index + 1);
     return slice.reduce((sum, value) => sum + value, 0) / Math.max(1, slice.length);
   });
-}
-
-function average(values: Array<number | undefined>): number | undefined {
-  const finite = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-  return finite.length ? finite.reduce((sum, value) => sum + value, 0) / finite.length : undefined;
-}
-
-function maxDefined(values: Array<number | undefined>): number | undefined {
-  const finite = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-  return finite.length ? Math.max(...finite) : undefined;
-}
-
-function sumDefined(values: Array<number | undefined>): number {
-  return values.reduce<number>((sum, value) => sum + (typeof value === "number" && Number.isFinite(value) ? value : 0), 0);
 }
 
 function formatInteger(value: number): string {

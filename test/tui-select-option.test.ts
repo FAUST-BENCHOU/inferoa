@@ -58,9 +58,9 @@ test("loop setup choices use arrow navigation and enter selection", () => {
     assert.fail("applyGoalSetupChoiceToken export is required");
   }
   const options = [
-    { value: "auto", label: "Auto", description: "Inferoa decides." },
-    { value: "focus", label: "Focus", description: "Finish current goal." },
-    { value: "timebox", label: "Timebox", description: "Use a checkpoint." },
+    { value: "deliver", label: "Deliver", description: "Close the objective." },
+    { value: "discover", label: "Discover", description: "Learn with evidence." },
+    { value: "replay", label: "Replay", description: "Repeat the prompt." },
   ] as const;
 
   let result = applyGoalSetupChoiceToken({ selectedIndex: 0 }, options.slice(), "\u001b[B");
@@ -71,7 +71,7 @@ test("loop setup choices use arrow navigation and enter selection", () => {
   assert.equal(result.state.selectedIndex, 2);
 
   result = applyGoalSetupChoiceToken(result.state, options.slice(), "\r");
-  assert.equal(result.value, "timebox");
+  assert.equal(result.value, "replay");
 });
 
 test("loop setup choice panel renders selected row without numeric input affordance", () => {
@@ -80,10 +80,10 @@ test("loop setup choice panel renders selected row without numeric input afforda
     assert.fail("renderGoalSetupChoicePanel export is required");
   }
   const lines = renderGoalSetupChoicePanel(
-    "Timebox",
+    "Runtime",
     [
       { value: "auto", label: "Auto", description: "Inferoa picks the checkpoint time." },
-      { value: "2h", label: "2h", description: "2h focused run." },
+      { value: "24h", label: "24h", description: "Run for at least 24h." },
     ],
     1,
     [],
@@ -92,7 +92,7 @@ test("loop setup choice panel renders selected row without numeric input afforda
   const plain = lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
 
   assert.match(plain, /↑\/↓ choose · enter select · esc cancels/);
-  assert.match(plain, /› 2h · 2h · selected · 2h focused run\./);
+  assert.match(plain, /› 24h · 24h · selected · Run for at least 24h\./);
   assert.doesNotMatch(plain, /type a value or number|1\.|2\./);
 });
 
@@ -103,18 +103,18 @@ test("loop setup choice panel keeps wizard height stable across steps", () => {
   }
   const commonContext = {
     objective: "Improve cache observability",
-    steps: ["Type", "Approach", "Human in the Loop", "Review"],
+    steps: ["Preference", "Runtime", "Human in the Loop", "Review"],
   };
   const typeLines = renderGoalSetupChoicePanel(
-    "Loop Type",
+    "Preference",
     [
-      { value: "task", label: "Task", description: "Implementation work." },
-      { value: "research", label: "Research", description: "Metric-driven work." },
+      { value: "deliver", label: "Deliver", description: "Close the loop end to end." },
+      { value: "discover", label: "Discover", description: "Metric-driven research." },
     ],
     0,
     [],
     100,
-    { ...commonContext, currentStep: "Type" },
+    { ...commonContext, currentStep: "Preference" },
   );
   const reviewLines = renderGoalSetupChoicePanel(
     "Start Loop",
@@ -125,17 +125,17 @@ test("loop setup choice panel keeps wizard height stable across steps", () => {
     {
       ...commonContext,
       currentStep: "Review",
-      selections: { type: "Research", approach: "Focus", hil: "Review" },
+      selections: { preference: "Discover", runtime: "Auto", hil: "Review" },
       hint: "enter start · esc cancels",
     },
   );
   const plainReview = reviewLines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
 
   assert.equal(typeLines.length, reviewLines.length);
-  assert.match(plainReview, /Type .*Approach .*Human in the Loop .*Review/);
+  assert.match(plainReview, /Preference .*Runtime .*Human in the Loop .*Review/);
   assert.match(plainReview, /goal\s+Improve cache observability/);
-  assert.match(plainReview, /type\s+Research/);
-  assert.match(plainReview, /mode\s+Focus/);
+  assert.match(plainReview, /pref…\s+Discover/);
+  assert.match(plainReview, /runt…\s+Auto/);
   assert.match(plainReview, /hil\s+Review/);
   assert.match(plainReview, /enter start · esc cancels/);
 });

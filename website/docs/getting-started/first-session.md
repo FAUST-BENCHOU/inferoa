@@ -33,7 +33,7 @@ inferoa "Inspect this package and add a missing docs build check."
   long-horizon loop.
 - Use [`/plan set`](../workflows/plan-mode.md) when scope is ambiguous and you
   want a plan before execution.
-- Use `/loop mode research` when the task is experiment-shaped and needs repeated
+- Use `/loop run discover` when the task is experiment-shaped and needs repeated
   measurement.
 - Use `/doctor status` when checking the local endpoint setup before a session.
 
@@ -63,7 +63,7 @@ Open the session picker from the TUI:
 
 Or run the top-level `/resume` slash command to attach to a previous session.
 The resumed session keeps its workspace identity and event log; you can keep
-using `/loop`, `/plan`, `/loop mode research`, and the rest of the TUI surfaces
+using `/loop`, `/plan`, `/loop run discover`, and the rest of the TUI surfaces
 without losing continuity.
 
 ## Next Steps

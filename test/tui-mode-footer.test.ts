@@ -69,7 +69,8 @@ function goalState(input: { status?: GoalState["goal"]["status"]; enabled?: bool
     goal: {
       id: "goal_1",
       objective: input.objective ?? "Improve long horizon flow",
-      kind: "task",
+      preference: "deliver",
+      runtime_policy: { mode: "auto" },
       hil_policy: "auto",
       status: input.status ?? "active",
       tokens_used: 0,
