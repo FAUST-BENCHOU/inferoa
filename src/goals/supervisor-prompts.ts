@@ -11,6 +11,7 @@ export function buildLoopExecutionPrompt(goalOrObjective: GoalRecord | string): 
       "Choose the highest-information move: benchmark, compare, ablate, inspect, hypothesize, or run the experiment that best improves evidence.",
       "The agent decides the benchmark, metric, harness, controls, and comparison shape from workspace evidence.",
       "Record competing hypotheses, rejected branches, failures, metrics, and remaining uncertainty in the loop step, ledger, or decomposition.",
+      "Use goal update_step, plan, or candidate for state updates; goal reflect is only for internal decision turns.",
       "Every execution turn must make structural loop progress; natural-language completion claims alone are not progress.",
     ].join("\n");
   }
@@ -22,6 +23,7 @@ export function buildLoopExecutionPrompt(goalOrObjective: GoalRecord | string): 
     "Choose the highest-leverage action across implementation, verification, comparison, polish, and risk reduction.",
     "Execute and verify with the strongest practical evidence available this turn.",
     "Before ending, update the loop step, ledger, or decomposition with evidence, frontier status, and the next execution slice.",
+    "Use goal update_step, plan, or candidate for state updates; goal reflect is only for internal decision turns.",
     "Every execution turn must make structural loop progress; natural-language completion claims alone are not progress.",
   ].join("\n");
 }

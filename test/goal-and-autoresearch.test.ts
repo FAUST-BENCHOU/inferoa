@@ -91,6 +91,7 @@ test("deliver work prompt seeds a general frontier during bootstrap", () => {
   assert.match(prompt, /work surfaces/i);
   assert.match(prompt, /strongest practical evidence/i);
   assert.match(prompt, /update the loop step, ledger, or decomposition/i);
+  assert.match(prompt, /goal reflect is only for internal decision turns/i);
   assert.match(prompt, /next execution slice/i);
   assert.doesNotMatch(prompt, /bug hunting/i);
 });
@@ -1330,7 +1331,7 @@ test("at least runtime continues through transient accounting-only turns", async
   }
 });
 
-test("at least runtime pauses after repeated no-progress turns instead of spinning forever", async () => {
+test("at least runtime recovers from repeated no-progress turns by expanding the horizon", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-atleast-no-progress-cap-"));
   const store = await SessionStore.open(path.join(dir, "state"));
   try {
@@ -1348,6 +1349,7 @@ test("at least runtime pauses after repeated no-progress turns instead of spinni
       sessionId: session.session_id,
       supervisor: "test",
       maxIterations: 5,
+      shouldContinue: () => runIds.length < 2,
       runTurn: async () => {
         const runId = `run_usage_${runIds.length}`;
         runIds.push(runId);
@@ -1356,14 +1358,15 @@ test("at least runtime pauses after repeated no-progress turns instead of spinni
       },
     });
 
-    assert.equal(result.status, "paused");
-    assert.match(result.reason ?? "", /stalled before At least runtime/);
-    assert.deepEqual(runIds, ["run_usage_0", "run_usage_1", "run_usage_2"]);
+    assert.equal(result.status, "stopped");
+    assert.deepEqual(runIds, ["run_usage_0", "run_usage_1"]);
     const current = readGoalState(store, session.session_id)?.goal;
-    assert.equal(current?.status, "paused");
-    assert.equal(current?.planning?.active_step_id, "active");
+    assert.equal(current?.status, "active");
+    assert.equal(current?.horizon_generation, 1);
+    assert.equal(current?.planning?.active_step_id, "runtime_reassess_scope_1");
     const events = store.listEvents(session.session_id).filter((event) => event.type === "goal.runtime.no_progress");
-    assert.deepEqual(events.map((event) => event.data.consecutive), [1, 2, 3]);
+    assert.deepEqual(events.map((event) => event.data.consecutive), [1, 2]);
+    assert.ok(store.listEvents(session.session_id).some((event) => event.type === "goal.horizon.expanded" && event.data.reason === "runtime_minimum"));
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });

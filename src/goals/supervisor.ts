@@ -29,7 +29,7 @@ import { readAutoresearchState, researchCompletionBlockMessage, setAutoresearchM
 import { goalVerifierPolicyCompletionBlockMessage, readGoalVerificationRecords } from "../loop/verification.js";
 
 export const DEFAULT_GOAL_SUPERVISOR_MAX_ITERATIONS = 1000;
-const AT_LEAST_NO_PROGRESS_LIMIT = 3;
+const AT_LEAST_NO_PROGRESS_RECOVERY_LIMIT = 2;
 
 export interface GoalSupervisorTurnRequest {
   prompt: string;
@@ -144,10 +144,13 @@ export async function runGoalSupervisor(options: GoalSupervisorOptions): Promise
       if (isAtLeastRuntimePending(latest)) {
         consecutiveAtLeastNoProgressTurns += 1;
         appendAtLeastNoProgressEvent(options, latest, workRun?.run_id, reason, consecutiveAtLeastNoProgressTurns);
-        if (consecutiveAtLeastNoProgressTurns >= AT_LEAST_NO_PROGRESS_LIMIT) {
-          const pauseReason = `stalled before At least runtime was satisfied after ${consecutiveAtLeastNoProgressTurns} no-progress turns: ${reason}`;
-          const paused = pauseGoal(options, latest, workRun?.run_id, pauseReason);
-          return { status: "paused", iteration: iteration + 1, reason: pauseReason, run_id: workRun?.run_id, goal_id: paused.goal.id };
+        if (workRun && consecutiveAtLeastNoProgressTurns >= AT_LEAST_NO_PROGRESS_RECOVERY_LIMIT) {
+          const recoveryReason = `Last ${consecutiveAtLeastNoProgressTurns} execution turns did not update loop state (${reason}). Continue because At least runtime is still pending.`;
+          const expanded = expandGoalForRuntimeMinimum(latest, recoveryReason);
+          const saved = writeGoalState(options.store, options.sessionId, expanded, workRun.run_id);
+          appendRuntimeMinimumExpansionEvent(options, saved, latest, workRun.run_id, recoveryReason);
+          options.onReflectionExpanded?.(saved);
+          consecutiveAtLeastNoProgressTurns = 0;
         }
         continue;
       }
