@@ -4,12 +4,32 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DEFAULT_CONFIG } from "../src/config/defaults.js";
-import { completeGoalReflection, createGoalState, replaceGoalPlanning, writeGoalState, type GoalReflectionDecision } from "../src/goals/state.js";
+import { completeGoalReflection, createGoalState, replaceGoalPlanning, writeGoalState, type GoalReflectionDecision, type GoalState } from "../src/goals/state.js";
 import { readGoalLoopView } from "../src/loop/projection.js";
 import { optLiteAdopt, optLitePropose, optLiteReplay } from "../src/opt/opt-lite.js";
 import { SessionStore } from "../src/session/store.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 import type { WorkspaceIdentity } from "../src/types.js";
+
+function recursiveReflectionPacket() {
+  return {
+    objective_decomposition: "Self-improve fixture covers the current workspace loop.",
+    coverage_review: "Fixture surface is covered by the test evidence.",
+    executed_evidence: "The fixture records command or skill-gate evidence.",
+    residual_risk: "No material residual risk for this fixture.",
+    why_no_expand: "This fixture is exercising learned skill completion gates.",
+  };
+}
+
+function structurallyCoveredGoal(state: GoalState): GoalState {
+  const timestamp = new Date().toISOString();
+  state.goal.coverage = {
+    surfaces: [{ id: "fixture-surface", title: "Self-improve fixture surface", status: "covered", evidence: { fixture: true }, updated_at: timestamp }],
+    updated_at: timestamp,
+  };
+  state.goal.frontier = [{ id: "fixture-frontier", title: "Self-improve fixture frontier audit", value: "low", status: "done", evidence: { fixture: true }, updated_at: timestamp }];
+  return state;
+}
 
 test("self-improve e2e proves Loop Skill and Workspace Skill change later loop behavior", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-loop-self-improve-e2e-"));
@@ -35,9 +55,9 @@ test("self-improve e2e proves Loop Skill and Workspace Skill change later loop b
 
     const session = store.createSession(workspace, "post-adoption loop");
     const registry = new ToolRegistry(config, workspace, store);
-    const goal = replaceGoalPlanning(createGoalState({ objective: "Ship a workspace docs update using learned loop policy" }), {
+    const goal = structurallyCoveredGoal(replaceGoalPlanning(createGoalState({ objective: "Ship a workspace docs update using learned loop policy" }), {
       steps: [{ id: "done", title: "Complete docs update", status: "completed" }],
-    });
+    }));
     writeGoalState(store, session.session_id, goal, "run_seed");
 
     const earlyReflect = await registry.call(
@@ -49,6 +69,7 @@ test("self-improve e2e proves Loop Skill and Workspace Skill change later loop b
           decision: "done",
           summary: "Looks done from reflection only.",
           verification_evidence: { self_check: true },
+          reflection_packet: recursiveReflectionPacket(),
         },
       },
       { session_id: session.session_id, run_id: "run_early_reflect", request_class: "reflection", visibility: "internal" },
@@ -107,6 +128,7 @@ test("self-improve e2e proves Loop Skill and Workspace Skill change later loop b
           decision: "done",
           summary: "Verified with npm test after reading learned skills.",
           verification_evidence: { command: "npm test", status: "pass" },
+          reflection_packet: recursiveReflectionPacket(),
         },
       },
       { session_id: session.session_id, run_id: "run_learned_reflect", request_class: "reflection", visibility: "internal" },
@@ -163,9 +185,9 @@ function addHistoricalLoopEvidence(
   feedback?: string,
 ): void {
   const session = store.createSession(workspace, objective);
-  let state = replaceGoalPlanning(createGoalState({ objective }), {
+  let state = structurallyCoveredGoal(replaceGoalPlanning(createGoalState({ objective }), {
     steps: [{ id: "done", title: "Complete implementation", status: "completed" }],
-  });
+  }));
   writeGoalState(store, session.session_id, state, `run_seed_${session.session_id}`);
   state = completeGoalReflection(
     state,
@@ -173,6 +195,7 @@ function addHistoricalLoopEvidence(
       decision: "done" as GoalReflectionDecision,
       summary: "Verified with npm test.",
       verification_evidence: { command: "npm test", status: "pass" },
+      reflection_packet: recursiveReflectionPacket(),
     },
     `run_reflect_${session.session_id}`,
   );

@@ -69,6 +69,12 @@ export async function initExperiment(args: JsonObject, context: ToolExecutionCon
       primary_metric: primaryMetric,
       metric_unit: stringArg(args.metric_unit),
       direction: directionArg(args.direction),
+      hypothesis: stringArg(args.hypothesis),
+      intervention: stringArg(args.intervention),
+      baseline: stringArg(args.baseline),
+      controls: stringArrayArg(args.controls),
+      reward_hack_risks: stringArrayArg(args.reward_hack_risks),
+      variance_plan: stringArg(args.variance_plan),
       scope_paths: stringArrayArg(args.scope_paths),
       off_limits: stringArrayArg(args.off_limits),
       constraints: stringArrayArg(args.constraints),
@@ -218,6 +224,8 @@ export async function logExperiment(args: JsonObject, context: ToolExecutionCont
       metric: metricArg(args.metric, pendingExperiment.pending_run.parsed_primary, status),
       description: requiredString(args.description, "description"),
       metrics: numericRecordArg(args.metrics),
+      reward_hack_check: stringArg(args.reward_hack_check),
+      variance_check: stringArg(args.variance_check),
       asi: objectArg(args.asi),
     });
     const reachedLimit =
@@ -249,6 +257,8 @@ export async function logExperiment(args: JsonObject, context: ToolExecutionCont
           experiment: nextExperiment.name,
           status: latest.status,
           description: latest.description,
+          reward_hack_check: latest.reward_hack_check,
+          variance_check: latest.variance_check,
           asi: latest.asi,
         },
         metrics: {

@@ -1,4 +1,4 @@
-import type { JsonObject, ModelUsage, SessionEvent } from "../types.js";
+import type { JsonObject, JsonValue, ModelUsage, SessionEvent } from "../types.js";
 import { SessionStore } from "../session/store.js";
 import { randomId } from "../util/hash.js";
 import { truncateText } from "../util/limit.js";
@@ -15,6 +15,20 @@ export type GoalHilPolicy = "auto" | "review";
 export type GoalReviewDecision = "approve" | "reject" | "revise" | "block";
 export type GoalCandidateValue = "high" | "medium" | "low";
 export type GoalCandidateStatus = "open" | "done" | "rejected";
+export type GoalCoverageSurfaceStatus = "pending" | "in_progress" | "covered" | "rejected";
+export type GoalStructuralConfidence = "hard" | "soft" | "weak";
+export type GoalEvidenceKind = "command" | "test" | "file" | "resource" | "metric" | "review" | "manual" | "other";
+export type GoalRequirementStatus = "pending" | "satisfied" | "accepted_risk" | "rejected";
+export type GoalFrontierStatus = "open" | "done" | "rejected";
+
+export interface GoalReflectionPacket extends JsonObject {
+  objective_decomposition?: JsonValue;
+  coverage_review?: JsonValue;
+  executed_evidence?: JsonValue;
+  remaining_frontier?: JsonValue;
+  residual_risk?: JsonValue;
+  why_no_expand?: JsonValue;
+}
 
 const PLAN_PROMPT_BODY_LIMIT = 6000;
 
@@ -37,10 +51,17 @@ export interface GoalRecord {
   horizon_generation: number;
   verifier_policy?: GoalVerifierPolicy;
   ledger?: GoalLedger;
+  delivery_contract?: GoalDeliveryContract;
+  coverage?: GoalCoverageState;
+  requirements?: GoalRequirement[];
+  frontier?: GoalFrontierItem[];
+  evidence_records?: GoalEvidenceRecord[];
+  residual_risks?: GoalResidualRisk[];
   reflection_status?: GoalReflectionStatus;
   last_reflection_run_id?: string;
   last_reflection_decision?: GoalReflectionDecision;
   last_reflection_summary?: string;
+  last_reflection_packet?: GoalReflectionPacket;
   verification_evidence?: JsonObject;
   blocker?: string;
   pending_review_decision?: GoalPendingReviewDecision;
@@ -70,6 +91,7 @@ export interface GoalPendingReviewDecision {
   source_horizon_generation: number;
   summary?: string;
   verification_evidence?: JsonObject;
+  reflection_packet?: GoalReflectionPacket;
   blocker?: string;
   steps?: GoalPlanningStepInput[];
   active_step_id?: string;
@@ -87,6 +109,80 @@ export interface GoalLedger {
   open: GoalCandidate[];
   done: GoalCandidate[];
   rejected: GoalCandidate[];
+  updated_at: string;
+}
+
+export interface GoalDeliveryContract {
+  success_criteria: string[];
+  constraints: string[];
+  assumptions: string[];
+  non_goals: string[];
+  required_evidence: string[];
+  risk_surfaces: string[];
+  updated_at: string;
+}
+
+export interface GoalCoverageState {
+  surfaces: GoalCoverageSurface[];
+  updated_at: string;
+}
+
+export interface GoalCoverageSurface {
+  id: string;
+  title: string;
+  status: GoalCoverageSurfaceStatus;
+  notes?: string;
+  evidence?: JsonObject;
+  evidence_ids?: string[];
+  confidence?: GoalStructuralConfidence;
+  residual_risk_id?: string;
+  updated_at: string;
+}
+
+export interface GoalRequirement {
+  id: string;
+  title: string;
+  status: GoalRequirementStatus;
+  notes?: string;
+  evidence_ids?: string[];
+  residual_risk_id?: string;
+  updated_at: string;
+}
+
+export interface GoalFrontierItem {
+  id: string;
+  title: string;
+  source?: string;
+  value: GoalCandidateValue;
+  status: GoalFrontierStatus;
+  reason?: string;
+  evidence?: JsonObject;
+  evidence_ids?: string[];
+  residual_risk_id?: string;
+  updated_at: string;
+}
+
+export interface GoalEvidenceRecord {
+  id: string;
+  kind: GoalEvidenceKind;
+  title?: string;
+  summary?: string;
+  command?: string;
+  path?: string;
+  uri?: string;
+  metrics?: JsonObject;
+  evidence?: JsonObject;
+  confidence: GoalStructuralConfidence;
+  updated_at: string;
+}
+
+export interface GoalResidualRisk {
+  id: string;
+  title: string;
+  severity: GoalCandidateValue;
+  accepted: boolean;
+  reason?: string;
+  evidence_ids?: string[];
   updated_at: string;
 }
 
@@ -134,6 +230,7 @@ export interface GoalReflectionSnapshot {
   decision: GoalReflectionDecision;
   summary?: string;
   blocker?: string;
+  reflection_packet?: GoalReflectionPacket;
   verification_evidence?: JsonObject;
   created_at: string;
 }
@@ -165,9 +262,72 @@ export interface GoalReflectionInput {
   decision: GoalReflectionDecision;
   summary?: string;
   verification_evidence?: JsonObject;
+  reflection_packet?: GoalReflectionPacket;
   blocker?: string;
   steps?: GoalPlanningStepInput[];
   active_step_id?: string;
+}
+
+export interface GoalDeliveryContractInput {
+  success_criteria?: string[];
+  constraints?: string[];
+  assumptions?: string[];
+  non_goals?: string[];
+  required_evidence?: string[];
+  risk_surfaces?: string[];
+}
+
+export interface GoalCoverageSurfaceInput {
+  id?: string;
+  title: string;
+  status?: GoalCoverageSurfaceStatus;
+  notes?: string;
+  evidence?: JsonObject;
+  evidence_ids?: string[];
+  confidence?: GoalStructuralConfidence;
+  residual_risk_id?: string;
+}
+
+export interface GoalFrontierInput {
+  id?: string;
+  title: string;
+  source?: string;
+  value?: GoalCandidateValue;
+  status?: GoalFrontierStatus;
+  reason?: string;
+  evidence?: JsonObject;
+  evidence_ids?: string[];
+  residual_risk_id?: string;
+}
+
+export interface GoalEvidenceRecordInput {
+  id?: string;
+  kind?: GoalEvidenceKind;
+  title?: string;
+  summary?: string;
+  command?: string;
+  path?: string;
+  uri?: string;
+  metrics?: JsonObject;
+  evidence?: JsonObject;
+  confidence?: GoalStructuralConfidence;
+}
+
+export interface GoalResidualRiskInput {
+  id?: string;
+  title: string;
+  severity?: GoalCandidateValue;
+  accepted?: boolean;
+  reason?: string;
+  evidence_ids?: string[];
+}
+
+export interface GoalCandidateCloseInput {
+  candidate_id?: string;
+  title?: string;
+  status: Exclude<GoalCandidateStatus, "open">;
+  reason?: string;
+  evidence?: JsonObject;
 }
 
 export interface GoalPlanSnapshot {
@@ -313,6 +473,9 @@ export function readGoalReflections(store: SessionStore, sessionId: string, goal
       decision,
       summary: optionalString(event.data.summary),
       blocker: optionalString(event.data.blocker),
+      reflection_packet: event.data.reflection_packet && typeof event.data.reflection_packet === "object" && !Array.isArray(event.data.reflection_packet)
+        ? cloneJsonObject(event.data.reflection_packet as JsonObject)
+        : undefined,
       verification_evidence: event.data.verification_evidence && typeof event.data.verification_evidence === "object" && !Array.isArray(event.data.verification_evidence)
         ? cloneJsonObject(event.data.verification_evidence as JsonObject)
         : undefined,
@@ -353,6 +516,12 @@ export function createGoalState(input: GoalCreateInput, now = new Date()): GoalS
       tool_calls_used: 0,
       horizon_generation: 0,
       ledger: emptyGoalLedger(timestamp),
+      delivery_contract: preference === "replay" ? undefined : createGoalDeliveryContract(objective, preference, timestamp),
+      coverage: preference === "replay" ? undefined : emptyGoalCoverage(timestamp),
+      requirements: preference === "replay" ? undefined : [],
+      frontier: preference === "replay" ? undefined : [],
+      evidence_records: preference === "replay" ? undefined : [],
+      residual_risks: preference === "replay" ? undefined : [],
       planning,
       created_at: timestamp,
       updated_at: timestamp,
@@ -440,6 +609,57 @@ function emptyGoalLedger(timestamp: string): GoalLedger {
     open: [],
     done: [],
     rejected: [],
+    updated_at: timestamp,
+  };
+}
+
+function emptyGoalCoverage(timestamp: string): GoalCoverageState {
+  return {
+    surfaces: [],
+    updated_at: timestamp,
+  };
+}
+
+function createGoalDeliveryContract(objective: string, preference: LoopPreference, timestamp: string): GoalDeliveryContract | undefined {
+  if (preference === "replay") {
+    return undefined;
+  }
+  if (preference === "discover") {
+    return {
+      success_criteria: [`Reach an evidence-supported conclusion for: ${objective}`],
+      constraints: [],
+      assumptions: [],
+      non_goals: [],
+      required_evidence: [
+        "hypothesis, intervention, baseline, metric, and experiment result",
+        "comparison against controls or an explicit reason controls are not applicable",
+        "reward-hack and variance checks when a metric drives the conclusion",
+      ],
+      risk_surfaces: [
+        "benchmark design and metric validity",
+        "baseline/control selection",
+        "implementation side effects",
+        "variance, confounders, and reward hacking",
+      ],
+      updated_at: timestamp,
+    };
+  }
+  return {
+    success_criteria: [`Complete the stated objective end to end: ${objective}`],
+    constraints: [],
+    assumptions: [],
+    non_goals: [],
+    required_evidence: [
+      "frontier candidates completed or rejected with evidence",
+      "verification from tests, checks, review, or equivalent hard evidence",
+      "recursive reflection packet covering decomposition, coverage, remaining frontier, and why no expansion remains",
+    ],
+    risk_surfaces: [
+      "code paths and integration boundaries",
+      "tests and negative cases",
+      "configuration, deployment, and rollback behavior",
+      "docs, user-visible behavior, and operational risks",
+    ],
     updated_at: timestamp,
   };
 }
@@ -550,6 +770,238 @@ export function updateGoalLedger(state: GoalState, input: GoalLedgerInput, now =
     rejected: input.rejected !== undefined ? createGoalCandidates(input.rejected, "rejected", timestamp) : current.rejected,
     updated_at: timestamp,
   };
+  next.goal.frontier = frontierFromLegacyLedger(next.goal.ledger) ?? [];
+  next.goal.updated_at = timestamp;
+  return next;
+}
+
+export function appendGoalLedgerCandidate(state: GoalState, input: GoalCandidateInput, now = new Date()): GoalState {
+  const title = input.title.trim();
+  if (!title) {
+    throw new Error("candidate title is required");
+  }
+  const next = cloneGoalState(state);
+  const timestamp = now.toISOString();
+  const ledger = next.goal.ledger ?? emptyGoalLedger(timestamp);
+  const used = new Set([...ledger.open, ...ledger.done, ...ledger.rejected].map((candidate) => candidate.id));
+  const candidate: GoalCandidate = {
+    id: normalizeGoalStepId(input.id, title, ledger.open.length + ledger.done.length + ledger.rejected.length, used),
+    title,
+    source: cleanOptionalString(input.source),
+    value: input.value ?? "medium",
+    status: "open",
+    reason: cleanOptionalString(input.reason),
+    evidence: input.evidence ? cloneJsonObject(input.evidence) : undefined,
+    updated_at: timestamp,
+  };
+  ledger.open = [...ledger.open.filter((item) => !goalCandidatesMatch(item, candidate)), candidate];
+  ledger.done = ledger.done.filter((item) => !goalCandidatesMatch(item, candidate));
+  ledger.rejected = ledger.rejected.filter((item) => !goalCandidatesMatch(item, candidate));
+  ledger.updated_at = timestamp;
+  next.goal.ledger = ledger;
+  next.goal.frontier = frontierFromLegacyLedger(ledger) ?? [];
+  next.goal.updated_at = timestamp;
+  return next;
+}
+
+export function closeGoalLedgerCandidate(state: GoalState, input: GoalCandidateCloseInput, now = new Date()): GoalState {
+  const next = cloneGoalState(state);
+  const timestamp = now.toISOString();
+  const ledger = next.goal.ledger ?? emptyGoalLedger(timestamp);
+  const matchId = canonicalGoalIdentity(input.candidate_id);
+  const matchTitle = cleanOptionalString(input.title);
+  const index = ledger.open.findIndex((candidate) => {
+    if (matchId && canonicalGoalIdentity(candidate.id) === matchId) {
+      return true;
+    }
+    return Boolean(matchTitle && goalStepTitleKey(candidate.title) === goalStepTitleKey(matchTitle));
+  });
+  if (index < 0) {
+    const label = input.candidate_id ?? input.title ?? "candidate";
+    throw new Error(`open candidate not found: ${label}`);
+  }
+  const [candidate] = ledger.open.splice(index, 1);
+  if (!candidate) {
+    throw new Error("open candidate not found");
+  }
+  const closed: GoalCandidate = {
+    ...candidate,
+    status: input.status,
+    reason: cleanOptionalString(input.reason) ?? candidate.reason,
+    evidence: input.evidence ? cloneJsonObject(input.evidence) : candidate.evidence ? cloneJsonObject(candidate.evidence) : undefined,
+    updated_at: timestamp,
+  };
+  if (input.status === "done") {
+    ledger.done = [...ledger.done.filter((item) => !goalCandidatesMatch(item, closed)), closed];
+    ledger.rejected = ledger.rejected.filter((item) => !goalCandidatesMatch(item, closed));
+  } else {
+    ledger.rejected = [...ledger.rejected.filter((item) => !goalCandidatesMatch(item, closed)), closed];
+    ledger.done = ledger.done.filter((item) => !goalCandidatesMatch(item, closed));
+  }
+  ledger.updated_at = timestamp;
+  next.goal.ledger = ledger;
+  next.goal.frontier = frontierFromLegacyLedger(ledger) ?? [];
+  next.goal.updated_at = timestamp;
+  return next;
+}
+
+export function updateGoalDeliveryContract(state: GoalState, input: GoalDeliveryContractInput, now = new Date()): GoalState {
+  const next = cloneGoalState(state);
+  const timestamp = now.toISOString();
+  const current = next.goal.delivery_contract ?? createGoalDeliveryContract(next.goal.objective, next.goal.preference, timestamp);
+  if (!current) {
+    throw new Error("delivery contract is not available for replay loops");
+  }
+  next.goal.delivery_contract = {
+    success_criteria: input.success_criteria !== undefined ? cleanGoalStringList(input.success_criteria) : current.success_criteria,
+    constraints: input.constraints !== undefined ? cleanGoalStringList(input.constraints) : current.constraints,
+    assumptions: input.assumptions !== undefined ? cleanGoalStringList(input.assumptions) : current.assumptions,
+    non_goals: input.non_goals !== undefined ? cleanGoalStringList(input.non_goals) : current.non_goals,
+    required_evidence: input.required_evidence !== undefined ? cleanGoalStringList(input.required_evidence) : current.required_evidence,
+    risk_surfaces: input.risk_surfaces !== undefined ? cleanGoalStringList(input.risk_surfaces) : current.risk_surfaces,
+    updated_at: timestamp,
+  };
+  next.goal.updated_at = timestamp;
+  return next;
+}
+
+export function updateGoalCoverageSurface(state: GoalState, input: GoalCoverageSurfaceInput, now = new Date()): GoalState {
+  const title = input.title.trim();
+  if (!title) {
+    throw new Error("coverage surface title is required");
+  }
+  const next = cloneGoalState(state);
+  const timestamp = now.toISOString();
+  const coverage = next.goal.coverage ?? emptyGoalCoverage(timestamp);
+  const used = new Set(coverage.surfaces.map((surface) => surface.id));
+  const id = normalizeGoalStepId(input.id, title, coverage.surfaces.length, used);
+  const existingIndex = coverage.surfaces.findIndex((surface) => surface.id === id || goalStepTitleKey(surface.title) === goalStepTitleKey(title));
+  const surface: GoalCoverageSurface = {
+    id: existingIndex >= 0 ? coverage.surfaces[existingIndex]!.id : id,
+    title,
+    status: input.status ?? coverage.surfaces[existingIndex]?.status ?? "pending",
+    notes: cleanOptionalString(input.notes) ?? coverage.surfaces[existingIndex]?.notes,
+    evidence: input.evidence
+      ? cloneJsonObject(input.evidence)
+      : coverage.surfaces[existingIndex]?.evidence
+        ? cloneJsonObject(coverage.surfaces[existingIndex]!.evidence!)
+        : undefined,
+    evidence_ids: input.evidence_ids !== undefined
+      ? cleanGoalStringList(input.evidence_ids)
+      : coverage.surfaces[existingIndex]?.evidence_ids
+        ? [...coverage.surfaces[existingIndex]!.evidence_ids!]
+        : undefined,
+    confidence: input.confidence ?? coverage.surfaces[existingIndex]?.confidence,
+    residual_risk_id: cleanOptionalString(input.residual_risk_id) ?? coverage.surfaces[existingIndex]?.residual_risk_id,
+    updated_at: timestamp,
+  };
+  if (existingIndex >= 0) {
+    coverage.surfaces[existingIndex] = surface;
+  } else {
+    coverage.surfaces.push(surface);
+  }
+  coverage.updated_at = timestamp;
+  next.goal.coverage = coverage;
+  next.goal.updated_at = timestamp;
+  return next;
+}
+
+export function upsertGoalFrontierItem(state: GoalState, input: GoalFrontierInput, now = new Date()): GoalState {
+  const title = input.title.trim();
+  if (!title) {
+    throw new Error("frontier title is required");
+  }
+  const next = cloneGoalState(state);
+  const timestamp = now.toISOString();
+  const frontier = next.goal.frontier ?? [];
+  const used = new Set(frontier.map((item) => item.id));
+  const id = normalizeGoalStepId(input.id, title, frontier.length, used);
+  const existingIndex = frontier.findIndex((item) => item.id === id || goalStepTitleKey(item.title) === goalStepTitleKey(title));
+  const prior = existingIndex >= 0 ? frontier[existingIndex] : undefined;
+  const item: GoalFrontierItem = {
+    id: prior?.id ?? id,
+    title,
+    source: cleanOptionalString(input.source) ?? prior?.source,
+    value: input.value ?? prior?.value ?? "medium",
+    status: input.status ?? prior?.status ?? "open",
+    reason: cleanOptionalString(input.reason) ?? prior?.reason,
+    evidence: input.evidence ? cloneJsonObject(input.evidence) : prior?.evidence ? cloneJsonObject(prior.evidence) : undefined,
+    evidence_ids: input.evidence_ids !== undefined ? cleanGoalStringList(input.evidence_ids) : prior?.evidence_ids ? [...prior.evidence_ids] : undefined,
+    residual_risk_id: cleanOptionalString(input.residual_risk_id) ?? prior?.residual_risk_id,
+    updated_at: timestamp,
+  };
+  if (existingIndex >= 0) {
+    frontier[existingIndex] = item;
+  } else {
+    frontier.push(item);
+  }
+  next.goal.frontier = frontier;
+  next.goal.updated_at = timestamp;
+  return next;
+}
+
+export function upsertGoalEvidenceRecord(state: GoalState, input: GoalEvidenceRecordInput, now = new Date()): GoalState {
+  const title = cleanOptionalString(input.title) ?? cleanOptionalString(input.summary) ?? cleanOptionalString(input.command) ?? cleanOptionalString(input.path) ?? cleanOptionalString(input.uri);
+  if (!title) {
+    throw new Error("evidence title, summary, command, path, or uri is required");
+  }
+  const next = cloneGoalState(state);
+  const timestamp = now.toISOString();
+  const records = next.goal.evidence_records ?? [];
+  const used = new Set(records.map((record) => record.id));
+  const id = normalizeGoalStepId(input.id, title, records.length, used);
+  const existingIndex = records.findIndex((record) => record.id === id);
+  const prior = existingIndex >= 0 ? records[existingIndex] : undefined;
+  const record: GoalEvidenceRecord = {
+    id: prior?.id ?? id,
+    kind: input.kind ?? prior?.kind ?? "other",
+    title: cleanOptionalString(input.title) ?? prior?.title,
+    summary: cleanOptionalString(input.summary) ?? prior?.summary,
+    command: cleanOptionalString(input.command) ?? prior?.command,
+    path: cleanOptionalString(input.path) ?? prior?.path,
+    uri: cleanOptionalString(input.uri) ?? prior?.uri,
+    metrics: input.metrics ? cloneJsonObject(input.metrics) : prior?.metrics ? cloneJsonObject(prior.metrics) : undefined,
+    evidence: input.evidence ? cloneJsonObject(input.evidence) : prior?.evidence ? cloneJsonObject(prior.evidence) : undefined,
+    confidence: input.confidence ?? prior?.confidence ?? "soft",
+    updated_at: timestamp,
+  };
+  if (existingIndex >= 0) {
+    records[existingIndex] = record;
+  } else {
+    records.push(record);
+  }
+  next.goal.evidence_records = records;
+  next.goal.updated_at = timestamp;
+  return next;
+}
+
+export function upsertGoalResidualRisk(state: GoalState, input: GoalResidualRiskInput, now = new Date()): GoalState {
+  const title = input.title.trim();
+  if (!title) {
+    throw new Error("residual risk title is required");
+  }
+  const next = cloneGoalState(state);
+  const timestamp = now.toISOString();
+  const risks = next.goal.residual_risks ?? [];
+  const used = new Set(risks.map((risk) => risk.id));
+  const id = normalizeGoalStepId(input.id, title, risks.length, used);
+  const existingIndex = risks.findIndex((risk) => risk.id === id || goalStepTitleKey(risk.title) === goalStepTitleKey(title));
+  const prior = existingIndex >= 0 ? risks[existingIndex] : undefined;
+  const risk: GoalResidualRisk = {
+    id: prior?.id ?? id,
+    title,
+    severity: input.severity ?? prior?.severity ?? "medium",
+    accepted: input.accepted ?? prior?.accepted ?? false,
+    reason: cleanOptionalString(input.reason) ?? prior?.reason,
+    evidence_ids: input.evidence_ids !== undefined ? cleanGoalStringList(input.evidence_ids) : prior?.evidence_ids ? [...prior.evidence_ids] : undefined,
+    updated_at: timestamp,
+  };
+  if (existingIndex >= 0) {
+    risks[existingIndex] = risk;
+  } else {
+    risks.push(risk);
+  }
+  next.goal.residual_risks = risks;
   next.goal.updated_at = timestamp;
   return next;
 }
@@ -560,6 +1012,7 @@ export function markGoalReflectionStarted(state: GoalState, runId: string, now =
   next.goal.last_reflection_run_id = runId;
   next.goal.last_reflection_decision = undefined;
   next.goal.last_reflection_summary = undefined;
+  next.goal.last_reflection_packet = undefined;
   next.goal.verification_evidence = undefined;
   next.goal.blocker = undefined;
   next.goal.pending_review_decision = undefined;
@@ -577,6 +1030,7 @@ export function stageGoalReviewDecision(state: GoalState, input: GoalReflectionI
   next.goal.last_reflection_run_id = runId;
   next.goal.last_reflection_decision = input.decision;
   next.goal.last_reflection_summary = cleanOptionalString(input.summary);
+  next.goal.last_reflection_packet = normalizeGoalReflectionPacket(input.reflection_packet);
   next.goal.verification_evidence = input.verification_evidence ? cloneJsonObject(input.verification_evidence) : undefined;
   next.goal.blocker = input.decision === "blocked" ? cleanOptionalString(input.blocker) : "human review required";
   next.goal.pending_review_decision = {
@@ -586,6 +1040,7 @@ export function stageGoalReviewDecision(state: GoalState, input: GoalReflectionI
     source_horizon_generation: state.goal.horizon_generation,
     summary: cleanOptionalString(input.summary),
     verification_evidence: input.verification_evidence ? cloneJsonObject(input.verification_evidence) : undefined,
+    reflection_packet: next.goal.last_reflection_packet ? cloneJsonObject(next.goal.last_reflection_packet) : undefined,
     blocker: cleanOptionalString(input.blocker),
     steps: input.steps?.map(cloneGoalPlanningStepInput),
     active_step_id: cleanOptionalString(input.active_step_id),
@@ -604,6 +1059,7 @@ export function completeGoalReflection(state: GoalState, input: GoalReflectionIn
   next.goal.last_reflection_run_id = runId;
   next.goal.last_reflection_decision = input.decision;
   next.goal.last_reflection_summary = cleanOptionalString(input.summary);
+  next.goal.last_reflection_packet = normalizeGoalReflectionPacket(input.reflection_packet);
   next.goal.verification_evidence = input.verification_evidence ? cloneJsonObject(input.verification_evidence) : undefined;
   next.goal.blocker = cleanOptionalString(input.blocker);
   next.goal.pending_review_decision = undefined;
@@ -641,6 +1097,7 @@ export function clearGoalPendingReviewDecision(state: GoalState, feedback: strin
   next.goal.last_reflection_run_id = undefined;
   next.goal.last_reflection_decision = undefined;
   next.goal.last_reflection_summary = undefined;
+  next.goal.last_reflection_packet = undefined;
   next.goal.verification_evidence = undefined;
   next.goal.blocker = cleanOptionalString(feedback);
   next.goal.updated_at = now.toISOString();
@@ -658,13 +1115,17 @@ export function blockGoalForReview(state: GoalState, reason: string | undefined,
 }
 
 export function completeGoalAfterReflection(state: GoalState, summary: string | undefined, now = new Date()): GoalState {
-  const reflectionMessage = goalCompletionReflectionBlockMessage(state.goal);
-  if (reflectionMessage) {
-    throw new Error(reflectionMessage);
+  const recursiveMessage = goalCompletionRecursiveBlockMessage(state.goal);
+  if (recursiveMessage) {
+    throw new Error(recursiveMessage);
   }
   const candidateMessage = goalCompletionCandidateBlockMessage(state.goal);
   if (candidateMessage) {
     throw new Error(candidateMessage);
+  }
+  const structuralMessage = goalCompletionStructuralBlockMessage(state.goal);
+  if (structuralMessage) {
+    throw new Error(structuralMessage);
   }
   const next = cloneGoalState(state);
   const trimmed = summary?.trim() || next.goal.last_reflection_summary;
@@ -949,9 +1410,14 @@ export function renderLoopContext(state: GoalState | undefined): string | undefi
     `runtime: ${renderLoopRuntimePolicy(goal.runtime_policy)}`,
     renderLoopRuntimeProgress(goal),
     renderLoopPlanContext(goal),
+    renderGoalDeliveryContract(goal.delivery_contract, goal.preference),
+    renderGoalCoverage(goal.coverage),
+    renderGoalFrontier(goal),
+    renderGoalEvidenceRecords(goal),
     goal.planning ? renderGoalPlanning(goal.planning) : "Internal loop task plan: not decomposed yet.",
     goal.plan ? renderApprovedPlan(goal.plan, Boolean(goal.planning)) : undefined,
-    renderGoalLedger(goal.ledger),
+    renderLatestReflection(goal),
+    renderGoalVerifierPolicy(goal.verifier_policy),
     renderLoopCompletionGates(goal),
   ]
     .filter((line): line is string => Boolean(line))
@@ -982,6 +1448,7 @@ function renderLoopCompletionGates(goal: GoalRecord): string {
       "- pending experiments are logged or explicitly ruled out",
       "- metric/evidence exists",
       "- conclusion follows from evidence",
+      "- done reflection includes recursive planning evidence: decomposition, coverage review, remaining frontier or residual risk, and why no further expansion is useful",
       "- runtime at-least satisfied when configured",
       "- decision=done is recorded by the internal decision run",
     ].join("\n");
@@ -991,6 +1458,7 @@ function renderLoopCompletionGates(goal: GoalRecord): string {
     "- current horizon complete",
     "- decision=done is recorded by the internal decision run",
     "- no high-value frontier remains",
+    "- done reflection includes recursive planning evidence: decomposition, coverage review, remaining frontier or residual risk, and why no further expansion is useful",
     "- runtime at-least satisfied when configured",
     "- verification evidence exists",
     "- required verifier policy is satisfied",
@@ -1044,9 +1512,16 @@ export function cloneGoalState(state: GoalState): GoalState {
       replay: state.goal.replay ? { ...state.goal.replay } : undefined,
       hil_policy: state.goal.hil_policy ?? "auto",
       verification_evidence: state.goal.verification_evidence ? cloneJsonObject(state.goal.verification_evidence) : undefined,
+      last_reflection_packet: state.goal.last_reflection_packet ? cloneJsonObject(state.goal.last_reflection_packet) : undefined,
       pending_review_decision: state.goal.pending_review_decision ? cloneGoalPendingReviewDecision(state.goal.pending_review_decision) : undefined,
       verifier_policy: state.goal.verifier_policy ? cloneGoalVerifierPolicy(state.goal.verifier_policy) : undefined,
       ledger: state.goal.ledger ? cloneGoalLedger(state.goal.ledger) : undefined,
+      delivery_contract: state.goal.delivery_contract ? cloneGoalDeliveryContract(state.goal.delivery_contract) : undefined,
+      coverage: state.goal.coverage ? cloneGoalCoverage(state.goal.coverage) : undefined,
+      requirements: state.goal.requirements ? state.goal.requirements.map(cloneGoalRequirement) : undefined,
+      frontier: state.goal.frontier ? state.goal.frontier.map(cloneGoalFrontierItem) : undefined,
+      evidence_records: state.goal.evidence_records ? state.goal.evidence_records.map(cloneGoalEvidenceRecord) : undefined,
+      residual_risks: state.goal.residual_risks ? state.goal.residual_risks.map(cloneGoalResidualRisk) : undefined,
       planning: state.goal.planning ? cloneGoalPlanning(state.goal.planning) : undefined,
       plan: state.goal.plan ? { ...state.goal.plan } : undefined,
     },
@@ -1084,6 +1559,91 @@ export function goalCompletionReflectionBlockMessage(goal: GoalRecord): string |
   return undefined;
 }
 
+export function goalCompletionRecursiveBlockMessage(goal: GoalRecord): string | undefined {
+  if (goal.preference === "replay") {
+    return undefined;
+  }
+  const reflectionMessage = goalCompletionReflectionBlockMessage(goal);
+  if (reflectionMessage) {
+    return reflectionMessage;
+  }
+  if (!hasRecursiveDoneReflectionEvidence(goal)) {
+    return "Cannot auto-complete loop until the latest done reflection records recursive planning evidence: objective_decomposition, coverage_review, executed_evidence, remaining_frontier or residual_risk, and why_no_expand.";
+  }
+  return undefined;
+}
+
+export function hasRecursiveDoneReflectionEvidence(goal: GoalRecord): boolean {
+  if (goal.last_reflection_decision !== "done") {
+    return false;
+  }
+  const packet = normalizeGoalReflectionPacket(goal.last_reflection_packet);
+  if (!packet) {
+    return false;
+  }
+  return hasMeaningfulReflectionPacketField(packet, "objective_decomposition")
+    && hasMeaningfulReflectionPacketField(packet, "coverage_review")
+    && hasMeaningfulReflectionPacketField(packet, "executed_evidence")
+    && (
+      hasMeaningfulReflectionPacketField(packet, "remaining_frontier")
+      || hasMeaningfulReflectionPacketField(packet, "residual_risk")
+    )
+    && hasMeaningfulReflectionPacketField(packet, "why_no_expand");
+}
+
+export function goalCompletionStructuralBlockMessage(goal: GoalRecord): string | undefined {
+  if (goal.preference === "replay") {
+    return undefined;
+  }
+  const blockers: string[] = [];
+  const surfaces = goal.coverage?.surfaces ?? [];
+  const frontier = goalFrontierItems(goal);
+  const evidenceRecords = goal.evidence_records ?? [];
+  const residualRisks = goal.residual_risks ?? [];
+  const highMediumOpen = frontier.filter((item) => item.status === "open" && (item.value === "high" || item.value === "medium"));
+  const highMediumUnprovenClosed = frontier.filter((item) =>
+    item.status !== "open"
+    && (item.value === "high" || item.value === "medium")
+    && !hasStructuralItemEvidence(item, evidenceRecords, residualRisks)
+  );
+  if (!surfaces.length) {
+    blockers.push("coverage surfaces are empty");
+  } else {
+    const uncovered = surfaces.filter((surface) => surface.status === "pending" || surface.status === "in_progress");
+    const weakCovered = surfaces.filter((surface) => surface.status === "covered" && !hasCoverageEvidence(surface, evidenceRecords));
+    const weakRejected = surfaces.filter((surface) => surface.status === "rejected" && !hasAcceptedResidualRisk(surface.residual_risk_id, residualRisks) && !surface.notes);
+    if (uncovered.length) {
+      blockers.push(`coverage has ${countLabel(uncovered.length, "unfinished surface")}`);
+    }
+    if (weakCovered.length) {
+      blockers.push(`coverage has ${countLabel(weakCovered.length, "covered surface")} without evidence`);
+    }
+    if (weakRejected.length) {
+      blockers.push(`coverage has ${countLabel(weakRejected.length, "rejected surface")} without accepted residual risk or rationale`);
+    }
+  }
+  if (!frontier.length) {
+    blockers.push("frontier audit is empty");
+  }
+  if (completedBootstrapFrontierStep(goal) && !frontier.length) {
+    blockers.push("seed_frontier_candidates completed without recorded frontier");
+  }
+  if (highMediumOpen.length) {
+    blockers.push(`${countLabel(highMediumOpen.length, "open high/medium frontier item")} remain`);
+  }
+  if (highMediumUnprovenClosed.length) {
+    blockers.push(`${countLabel(highMediumUnprovenClosed.length, "closed high/medium frontier item")} lack evidence or accepted residual risk`);
+  }
+  const unacceptedHighMediumRisks = residualRisks.filter((risk) => !risk.accepted && (risk.severity === "high" || risk.severity === "medium"));
+  if (unacceptedHighMediumRisks.length) {
+    blockers.push(`${countLabel(unacceptedHighMediumRisks.length, "high/medium residual risk")} are not accepted`);
+  }
+  if (!blockers.length) {
+    return undefined;
+  }
+  return `Cannot complete ${goal.preference} loop until structural coverage and frontier audit are recorded: ${blockers.join("; ")}.`;
+}
+
 export function goalCompletionCandidateBlockMessage(goal: GoalRecord): string | undefined {
   if (goal.preference === "replay") {
     const remaining = repeatGoalRemainingRuns(goal);
@@ -1102,7 +1662,7 @@ export function goalCompletionCandidateBlockMessage(goal: GoalRecord): string | 
 }
 
 export function meaningfulOpenGoalCandidates(goal: GoalRecord): GoalCandidate[] {
-  return meaningfulOpenLedgerCandidates(goal.ledger);
+  return meaningfulOpenFrontierItems(goalFrontierItems(goal));
 }
 
 export function loopRuntimeCompletionBlockMessage(goal: GoalRecord): string | undefined {
@@ -1227,6 +1787,7 @@ function parseGoalState(data: JsonObject): GoalState | undefined {
   const tokenBudget = numericOrUndefined(candidate.token_budget);
   const planning = parseGoalPlanning(candidate.planning);
   const horizonGeneration = numeric(candidate.horizon_generation);
+  const ledger = parseGoalLedger(candidate.ledger);
   return {
     enabled: data.enabled === true,
     goal: {
@@ -1247,11 +1808,18 @@ function parseGoalState(data: JsonObject): GoalState | undefined {
       tool_calls_used: numeric(candidate.tool_calls_used),
       horizon_generation: horizonGeneration,
       verifier_policy: parseGoalVerifierPolicy(candidate.verifier_policy),
-      ledger: parseGoalLedger(candidate.ledger),
+      ledger,
+      delivery_contract: parseGoalDeliveryContract(candidate.delivery_contract),
+      coverage: parseGoalCoverage(candidate.coverage),
+      requirements: parseGoalRequirements(candidate.requirements),
+      frontier: parseGoalFrontier(candidate.frontier) ?? frontierFromLegacyLedger(ledger),
+      evidence_records: parseGoalEvidenceRecords(candidate.evidence_records),
+      residual_risks: parseGoalResidualRisks(candidate.residual_risks),
       reflection_status: parseGoalReflectionStatus(candidate.reflection_status),
       last_reflection_run_id: optionalString(candidate.last_reflection_run_id),
       last_reflection_decision: parseGoalReflectionDecision(candidate.last_reflection_decision),
       last_reflection_summary: optionalString(candidate.last_reflection_summary),
+      last_reflection_packet: parseJsonObject(candidate.last_reflection_packet),
       verification_evidence: parseJsonObject(candidate.verification_evidence),
       blocker: optionalString(candidate.blocker),
       pending_review_decision: parseGoalPendingReviewDecision(candidate.pending_review_decision),
@@ -1329,6 +1897,102 @@ function renderGoalPlanning(planning: GoalPlanningState): string {
     .join("\n");
 }
 
+function renderGoalDeliveryContract(contract: GoalDeliveryContract | undefined, preference: LoopPreference): string | undefined {
+  if (!contract) {
+    return undefined;
+  }
+  const label = preference === "discover" ? "Research contract:" : "Delivery contract:";
+  return [
+    label,
+    ...renderStringList("Success criteria", contract.success_criteria, 3),
+    ...renderStringList("Required evidence", contract.required_evidence, 4),
+    ...renderStringList("Risk surfaces", contract.risk_surfaces, 4),
+    ...renderStringList("Assumptions", contract.assumptions, 3),
+    ...renderStringList("Non-goals", contract.non_goals, 3),
+    ...renderStringList("Constraints", contract.constraints, 3),
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
+function renderGoalCoverage(coverage: GoalCoverageState | undefined): string | undefined {
+  if (!coverage?.surfaces.length) {
+    return undefined;
+  }
+  const visible = coverage.surfaces.slice(0, 8).map((surface) => {
+    const notes = surface.notes ? ` - ${escapeXmlText(truncateEvidenceText(surface.notes, 180))}` : "";
+    return `- [${surface.status}] ${escapeXmlText(surface.id)} ${escapeXmlText(surface.title)}${notes}`;
+  });
+  const omitted = Math.max(0, coverage.surfaces.length - visible.length);
+  return [
+    "Coverage surfaces:",
+    ...visible,
+    omitted ? `- ${omitted} more coverage surfaces recorded` : undefined,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
+function renderGoalFrontier(goal: GoalRecord): string | undefined {
+  const frontier = goalFrontierItems(goal);
+  if (!frontier.length) {
+    return undefined;
+  }
+  const counts = new Map<GoalFrontierStatus, number>();
+  for (const item of frontier) {
+    counts.set(item.status, (counts.get(item.status) ?? 0) + 1);
+  }
+  const visibleOpen = frontier
+    .filter((item) => item.status === "open" && (item.value === "high" || item.value === "medium"))
+    .slice(0, 8)
+    .map((item) => `- [${item.value}] ${escapeXmlText(item.id)} ${escapeXmlText(item.title)}${item.reason ? ` - ${escapeXmlText(truncateEvidenceText(item.reason, 180))}` : ""}`);
+  return [
+    "Frontier audit:",
+    `open: ${counts.get("open") ?? 0}; done: ${counts.get("done") ?? 0}; rejected: ${counts.get("rejected") ?? 0}`,
+    visibleOpen.length ? "Open high/medium frontier:" : undefined,
+    ...visibleOpen,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
+function renderGoalEvidenceRecords(goal: GoalRecord): string | undefined {
+  const records = goal.evidence_records ?? [];
+  const risks = goal.residual_risks ?? [];
+  if (!records.length && !risks.length) {
+    return undefined;
+  }
+  const visibleRecords = records.slice(-6).map((record) => {
+    const label = record.title ?? record.command ?? record.path ?? record.uri ?? record.summary ?? record.id;
+    return `- [${record.confidence}] ${escapeXmlText(record.kind)} ${escapeXmlText(record.id)} ${escapeXmlText(truncateEvidenceText(label, 180))}`;
+  });
+  const visibleRisks = risks.slice(0, 6).map((risk) => {
+    const accepted = risk.accepted ? "accepted" : "open";
+    return `- [${risk.severity}/${accepted}] ${escapeXmlText(risk.id)} ${escapeXmlText(risk.title)}${risk.reason ? ` - ${escapeXmlText(truncateEvidenceText(risk.reason, 180))}` : ""}`;
+  });
+  return [
+    records.length ? "Evidence records:" : undefined,
+    ...visibleRecords,
+    risks.length ? "Residual risks:" : undefined,
+    ...visibleRisks,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
+function renderStringList(label: string, values: string[], limit: number): string[] {
+  const visible = values.filter((value) => value.trim()).slice(0, limit);
+  if (!visible.length) {
+    return [];
+  }
+  const omitted = Math.max(0, values.length - visible.length);
+  return [
+    `${label}:`,
+    ...visible.map((value) => `- ${escapeXmlText(truncateEvidenceText(value, 260))}`),
+    omitted ? `- ${omitted} more` : undefined,
+  ].filter((line): line is string => Boolean(line));
+}
+
 function goalHorizonDisplaySummary(generation: number, summary: string | undefined): string | undefined {
   const trimmed = cleanOptionalString(summary);
   if (!trimmed) {
@@ -1362,16 +2026,14 @@ function goalHorizonDisplayLabel(text: string): string {
 }
 
 function renderLatestReflection(goal: GoalRecord): string | undefined {
-  if (!goal.reflection_status && !goal.last_reflection_decision && !goal.last_reflection_summary && !goal.verification_evidence && !goal.blocker) {
+  if (!goal.reflection_status && !goal.last_reflection_decision && !goal.last_reflection_summary && !goal.last_reflection_packet && !goal.verification_evidence && !goal.blocker) {
     return undefined;
   }
   return [
     "Latest internal loop decision:",
     goal.reflection_status ? `status: ${goal.reflection_status}` : undefined,
     goal.last_reflection_decision ? `decision: ${goal.last_reflection_decision}` : undefined,
-    goal.last_reflection_summary ? `summary: ${escapeXmlText(truncateEvidenceText(goal.last_reflection_summary, 1000))}` : undefined,
-    goal.blocker ? `blocker: ${escapeXmlText(truncateEvidenceText(goal.blocker, 1000))}` : undefined,
-    goal.verification_evidence ? `verification evidence: ${escapeXmlText(compactEvidenceSummary(goal.verification_evidence))}` : undefined,
+    goal.last_reflection_packet ? `recursive reflection packet: ${escapeXmlText(compactEvidenceSummary(goal.last_reflection_packet))}` : undefined,
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
@@ -1421,22 +2083,6 @@ function cloneGoalVerifierPolicy(policy: GoalVerifierPolicy): GoalVerifierPolicy
   };
 }
 
-function renderGoalLedger(ledger: GoalLedger | undefined): string {
-  const current = ledger ?? emptyGoalLedger("");
-  const visibleOpen = current.open
-    .filter((candidate) => candidate.value === "high" || candidate.value === "medium")
-    .slice(0, 8)
-    .map((candidate) => `- [${candidate.value}] ${escapeXmlText(candidate.id)} ${escapeXmlText(candidate.title)}`);
-  return [
-    "Candidate ledger:",
-    `open: ${current.open.length}; done: ${current.done.length}; rejected: ${current.rejected.length}`,
-    visibleOpen.length ? "Open high/medium candidates:" : undefined,
-    ...visibleOpen,
-  ]
-    .filter((line): line is string => Boolean(line))
-    .join("\n");
-}
-
 function renderGoalPlanningStep(step: GoalPlanningStep): string[] {
   const marker = stepMarker(step.status);
   const lines = [`[${marker}] ${escapeXmlText(step.id)} ${escapeXmlText(step.title)}`];
@@ -1479,6 +2125,7 @@ function reconcileLedgerCandidateFromStep(goal: GoalRecord, step: GoalPlanningSt
     goal.ledger.done = goal.ledger.done.filter((item) => !goalCandidatesMatch(item, moved));
   }
   goal.ledger.updated_at = timestamp;
+  goal.frontier = frontierFromLegacyLedger(goal.ledger) ?? [];
 }
 
 function reconcileLedgerCandidatesFromReflectionSteps(goal: GoalRecord, steps: GoalPlanningStepInput[], timestamp: string): void {
@@ -1600,6 +2247,7 @@ function parseGoalPendingReviewDecision(value: unknown): GoalPendingReviewDecisi
     source_horizon_generation: sourceHorizonGeneration,
     summary: optionalString(data.summary),
     verification_evidence: parseJsonObject(data.verification_evidence),
+    reflection_packet: parseJsonObject(data.reflection_packet),
     blocker: optionalString(data.blocker),
     steps: parseGoalPlanningStepInputs(data.steps),
     active_step_id: optionalString(data.active_step_id),
@@ -1655,6 +2303,204 @@ function parseGoalLedger(value: unknown): GoalLedger | undefined {
     rejected: parseGoalCandidates(data.rejected, "rejected"),
     updated_at: updatedAt,
   };
+}
+
+function parseGoalDeliveryContract(value: unknown): GoalDeliveryContract | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const data = value as Record<string, unknown>;
+  return {
+    success_criteria: parseStringList(data.success_criteria),
+    constraints: parseStringList(data.constraints),
+    assumptions: parseStringList(data.assumptions),
+    non_goals: parseStringList(data.non_goals),
+    required_evidence: parseStringList(data.required_evidence),
+    risk_surfaces: parseStringList(data.risk_surfaces),
+    updated_at: typeof data.updated_at === "string" ? data.updated_at : "",
+  };
+}
+
+function parseGoalCoverage(value: unknown): GoalCoverageState | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const data = value as Record<string, unknown>;
+  const surfaces = Array.isArray(data.surfaces)
+    ? data.surfaces.map(parseGoalCoverageSurface).filter((surface): surface is GoalCoverageSurface => Boolean(surface))
+    : [];
+  return {
+    surfaces,
+    updated_at: typeof data.updated_at === "string" ? data.updated_at : "",
+  };
+}
+
+function parseGoalCoverageSurface(value: unknown): GoalCoverageSurface | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const data = value as Record<string, unknown>;
+  const id = optionalString(data.id);
+  const title = optionalString(data.title);
+  const status = parseGoalCoverageSurfaceStatus(data.status);
+  if (!id || !title || !status) {
+    return undefined;
+  }
+  return {
+    id,
+    title,
+    status,
+    notes: optionalString(data.notes),
+    evidence: parseJsonObject(data.evidence),
+    evidence_ids: parseStringList(data.evidence_ids),
+    confidence: parseGoalStructuralConfidence(data.confidence),
+    residual_risk_id: optionalString(data.residual_risk_id),
+    updated_at: typeof data.updated_at === "string" ? data.updated_at : "",
+  };
+}
+
+function parseGoalCoverageSurfaceStatus(value: unknown): GoalCoverageSurfaceStatus | undefined {
+  return value === "pending" || value === "in_progress" || value === "covered" || value === "rejected" ? value : undefined;
+}
+
+function parseGoalRequirements(value: unknown): GoalRequirement[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const requirements = value.map(parseGoalRequirement).filter((item): item is GoalRequirement => Boolean(item));
+  return requirements.length ? requirements : [];
+}
+
+function parseGoalRequirement(value: unknown): GoalRequirement | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const data = value as Record<string, unknown>;
+  const id = optionalString(data.id);
+  const title = optionalString(data.title);
+  const status = parseGoalRequirementStatus(data.status);
+  if (!id || !title || !status) {
+    return undefined;
+  }
+  return {
+    id,
+    title,
+    status,
+    notes: optionalString(data.notes),
+    evidence_ids: parseStringList(data.evidence_ids),
+    residual_risk_id: optionalString(data.residual_risk_id),
+    updated_at: typeof data.updated_at === "string" ? data.updated_at : "",
+  };
+}
+
+function parseGoalFrontier(value: unknown): GoalFrontierItem[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const frontier = value.map(parseGoalFrontierItem).filter((item): item is GoalFrontierItem => Boolean(item));
+  return frontier.length ? frontier : [];
+}
+
+function parseGoalFrontierItem(value: unknown): GoalFrontierItem | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const data = value as Record<string, unknown>;
+  const id = optionalString(data.id);
+  const title = optionalString(data.title);
+  const candidateValue = parseGoalCandidateValue(data.value);
+  const status = parseGoalFrontierStatus(data.status);
+  if (!id || !title || !candidateValue || !status) {
+    return undefined;
+  }
+  return {
+    id: normalizeGoalStepId(id, title, 0, new Set()),
+    title,
+    source: optionalString(data.source),
+    value: candidateValue,
+    status,
+    reason: optionalString(data.reason),
+    evidence: parseJsonObject(data.evidence),
+    evidence_ids: parseStringList(data.evidence_ids),
+    residual_risk_id: optionalString(data.residual_risk_id),
+    updated_at: typeof data.updated_at === "string" ? data.updated_at : "",
+  };
+}
+
+function parseGoalEvidenceRecords(value: unknown): GoalEvidenceRecord[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const records = value.map(parseGoalEvidenceRecord).filter((item): item is GoalEvidenceRecord => Boolean(item));
+  return records.length ? records : [];
+}
+
+function parseGoalEvidenceRecord(value: unknown): GoalEvidenceRecord | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const data = value as Record<string, unknown>;
+  const id = optionalString(data.id);
+  const kind = parseGoalEvidenceKind(data.kind);
+  const confidence = parseGoalStructuralConfidence(data.confidence);
+  if (!id || !kind || !confidence) {
+    return undefined;
+  }
+  return {
+    id,
+    kind,
+    title: optionalString(data.title),
+    summary: optionalString(data.summary),
+    command: optionalString(data.command),
+    path: optionalString(data.path),
+    uri: optionalString(data.uri),
+    metrics: parseJsonObject(data.metrics),
+    evidence: parseJsonObject(data.evidence),
+    confidence,
+    updated_at: typeof data.updated_at === "string" ? data.updated_at : "",
+  };
+}
+
+function parseGoalResidualRisks(value: unknown): GoalResidualRisk[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const risks = value.map(parseGoalResidualRisk).filter((item): item is GoalResidualRisk => Boolean(item));
+  return risks.length ? risks : [];
+}
+
+function parseGoalResidualRisk(value: unknown): GoalResidualRisk | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const data = value as Record<string, unknown>;
+  const id = optionalString(data.id);
+  const title = optionalString(data.title);
+  const severity = parseGoalCandidateValue(data.severity);
+  if (!id || !title || !severity) {
+    return undefined;
+  }
+  return {
+    id,
+    title,
+    severity,
+    accepted: data.accepted === true,
+    reason: optionalString(data.reason),
+    evidence_ids: parseStringList(data.evidence_ids),
+    updated_at: typeof data.updated_at === "string" ? data.updated_at : "",
+  };
+}
+
+function frontierFromLegacyLedger(ledger: GoalLedger | undefined): GoalFrontierItem[] | undefined {
+  if (!ledger) {
+    return undefined;
+  }
+  const frontier = [...ledger.open, ...ledger.done, ...ledger.rejected].map((candidate) => ({
+    ...candidate,
+    status: candidate.status as GoalFrontierStatus,
+    evidence: candidate.evidence ? cloneJsonObject(candidate.evidence) : undefined,
+  }));
+  return frontier.length ? frontier : [];
 }
 
 function parseGoalCandidates(value: unknown, status: GoalCandidateStatus): GoalCandidate[] {
@@ -1763,6 +2609,31 @@ function parseGoalCandidateValue(value: unknown): GoalCandidateValue | undefined
   return value === "high" || value === "medium" || value === "low" ? value : undefined;
 }
 
+function parseGoalRequirementStatus(value: unknown): GoalRequirementStatus | undefined {
+  return value === "pending" || value === "satisfied" || value === "accepted_risk" || value === "rejected" ? value : undefined;
+}
+
+function parseGoalFrontierStatus(value: unknown): GoalFrontierStatus | undefined {
+  return value === "open" || value === "done" || value === "rejected" ? value : undefined;
+}
+
+function parseGoalStructuralConfidence(value: unknown): GoalStructuralConfidence | undefined {
+  return value === "hard" || value === "soft" || value === "weak" ? value : undefined;
+}
+
+function parseGoalEvidenceKind(value: unknown): GoalEvidenceKind | undefined {
+  return value === "command"
+    || value === "test"
+    || value === "file"
+    || value === "resource"
+    || value === "metric"
+    || value === "review"
+    || value === "manual"
+    || value === "other"
+    ? value
+    : undefined;
+}
+
 export function parseGoalStepStatus(value: unknown): GoalStepStatus | undefined {
   return value === "pending" || value === "in_progress" || value === "completed" || value === "blocked" || value === "skipped"
     ? value
@@ -1801,6 +2672,67 @@ function cleanOptionalString(value: unknown): string | undefined {
   return optionalString(value);
 }
 
+function cleanGoalStringList(values: string[] | undefined): string[] {
+  if (!values) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    const trimmed = typeof value === "string" ? value.trim() : "";
+    if (!trimmed) {
+      continue;
+    }
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    output.push(trimmed);
+  }
+  return output;
+}
+
+function parseStringList(value: unknown): string[] {
+  return Array.isArray(value) ? cleanGoalStringList(value.filter((item): item is string => typeof item === "string")) : [];
+}
+
+function normalizeGoalReflectionPacket(value: unknown): GoalReflectionPacket | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return cloneJsonObject(value as JsonObject);
+}
+
+function hasMeaningfulReflectionPacketField(packet: JsonObject, key: string): boolean {
+  if (!(key in packet)) {
+    return false;
+  }
+  return hasMeaningfulReflectionPacketValue(packet[key]);
+}
+
+function hasMeaningfulReflectionPacketValue(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value);
+  }
+  if (typeof value === "boolean") {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.some(hasMeaningfulReflectionPacketValue);
+  }
+  if (typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).some(hasMeaningfulReflectionPacketValue);
+  }
+  return false;
+}
+
 function cleanPlanStepTitle(value: string | undefined): string | undefined {
   const trimmed = value
     ?.replace(/`([^`]+)`/g, "$1")
@@ -1835,6 +2767,104 @@ function goalStepStatusFromCheckbox(value: string | undefined): GoalStepStatus |
 
 function goalStepTitleKey(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function goalFrontierItems(goal: GoalRecord): GoalFrontierItem[] {
+  if (goal.frontier !== undefined && goal.frontier.length > 0) {
+    return goal.frontier;
+  }
+  const legacy = frontierFromLegacyLedger(goal.ledger) ?? [];
+  return legacy.length ? legacy : goal.frontier ?? [];
+}
+
+function meaningfulOpenFrontierItems(frontier: GoalFrontierItem[]): GoalCandidate[] {
+  const closedKeys = new Set(frontier.filter((item) => item.status !== "open").flatMap(goalFrontierSemanticKeys));
+  const seenKeys = new Set<string>();
+  const output: GoalCandidate[] = [];
+  for (const item of frontier) {
+    if (item.status !== "open") {
+      continue;
+    }
+    const keys = goalFrontierSemanticKeys(item);
+    if (keys.some((key) => closedKeys.has(key))) {
+      continue;
+    }
+    if (keys.some((key) => seenKeys.has(key))) {
+      continue;
+    }
+    for (const key of keys) {
+      seenKeys.add(key);
+    }
+    output.push(frontierItemToCandidate(item));
+  }
+  return output;
+}
+
+function frontierItemToCandidate(item: GoalFrontierItem): GoalCandidate {
+  return {
+    id: item.id,
+    title: item.title,
+    source: item.source,
+    value: item.value,
+    status: item.status === "open" ? "open" : item.status,
+    reason: item.reason,
+    evidence: item.evidence ? cloneJsonObject(item.evidence) : undefined,
+    updated_at: item.updated_at,
+  };
+}
+
+function hasCoverageEvidence(surface: GoalCoverageSurface, records: GoalEvidenceRecord[]): boolean {
+  if (surface.confidence === "weak") {
+    return false;
+  }
+  if (surface.evidence && Object.keys(surface.evidence).length > 0) {
+    return true;
+  }
+  return evidenceIdsResolve(surface.evidence_ids, records);
+}
+
+function hasStructuralItemEvidence(item: GoalFrontierItem, records: GoalEvidenceRecord[], risks: GoalResidualRisk[]): boolean {
+  if (item.evidence && Object.keys(item.evidence).length > 0) {
+    return true;
+  }
+  if (evidenceIdsResolve(item.evidence_ids, records)) {
+    return true;
+  }
+  return hasAcceptedResidualRisk(item.residual_risk_id, risks);
+}
+
+function evidenceIdsResolve(ids: string[] | undefined, records: GoalEvidenceRecord[]): boolean {
+  const requested = cleanGoalStringList(ids);
+  if (!requested.length) {
+    return false;
+  }
+  const byId = new Map(records.map((record) => [record.id, record]));
+  return requested.every((id) => {
+    const record = byId.get(id);
+    return Boolean(record && record.confidence !== "weak");
+  });
+}
+
+function hasAcceptedResidualRisk(id: string | undefined, risks: GoalResidualRisk[]): boolean {
+  const riskId = cleanOptionalString(id);
+  return Boolean(riskId && risks.some((risk) => risk.id === riskId && risk.accepted));
+}
+
+function completedBootstrapFrontierStep(goal: GoalRecord): boolean {
+  return Boolean(goal.planning?.steps.some((step) => step.id === "seed_frontier_candidates" && step.status === "completed"));
+}
+
+function goalFrontierSemanticKeys(item: GoalFrontierItem): string[] {
+  const keys: string[] = [];
+  const id = canonicalGoalIdentity(item.id);
+  if (id) {
+    keys.push(`id:${id}`);
+  }
+  const title = goalStepTitleKey(item.title);
+  if (title) {
+    keys.push(`title:${title}`);
+  }
+  return keys;
 }
 
 function meaningfulOpenLedgerCandidates(ledger: GoalLedger | undefined): GoalCandidate[] {
@@ -1917,6 +2947,7 @@ function cloneGoalPendingReviewDecision(decision: GoalPendingReviewDecision): Go
   return {
     ...decision,
     verification_evidence: decision.verification_evidence ? cloneJsonObject(decision.verification_evidence) : undefined,
+    reflection_packet: decision.reflection_packet ? cloneJsonObject(decision.reflection_packet) : undefined,
     steps: decision.steps?.map(cloneGoalPlanningStepInput),
     requested_decision: decision.requested_decision ? [...decision.requested_decision] : undefined,
   };
@@ -1928,6 +2959,59 @@ function cloneGoalLedger(ledger: GoalLedger): GoalLedger {
     done: ledger.done.map(cloneGoalCandidate),
     rejected: ledger.rejected.map(cloneGoalCandidate),
     updated_at: ledger.updated_at,
+  };
+}
+
+function cloneGoalDeliveryContract(contract: GoalDeliveryContract): GoalDeliveryContract {
+  return {
+    success_criteria: [...contract.success_criteria],
+    constraints: [...contract.constraints],
+    assumptions: [...contract.assumptions],
+    non_goals: [...contract.non_goals],
+    required_evidence: [...contract.required_evidence],
+    risk_surfaces: [...contract.risk_surfaces],
+    updated_at: contract.updated_at,
+  };
+}
+
+function cloneGoalCoverage(coverage: GoalCoverageState): GoalCoverageState {
+  return {
+    surfaces: coverage.surfaces.map((surface) => ({
+      ...surface,
+      evidence: surface.evidence ? cloneJsonObject(surface.evidence) : undefined,
+      evidence_ids: surface.evidence_ids ? [...surface.evidence_ids] : undefined,
+    })),
+    updated_at: coverage.updated_at,
+  };
+}
+
+function cloneGoalRequirement(requirement: GoalRequirement): GoalRequirement {
+  return {
+    ...requirement,
+    evidence_ids: requirement.evidence_ids ? [...requirement.evidence_ids] : undefined,
+  };
+}
+
+function cloneGoalFrontierItem(item: GoalFrontierItem): GoalFrontierItem {
+  return {
+    ...item,
+    evidence: item.evidence ? cloneJsonObject(item.evidence) : undefined,
+    evidence_ids: item.evidence_ids ? [...item.evidence_ids] : undefined,
+  };
+}
+
+function cloneGoalEvidenceRecord(record: GoalEvidenceRecord): GoalEvidenceRecord {
+  return {
+    ...record,
+    metrics: record.metrics ? cloneJsonObject(record.metrics) : undefined,
+    evidence: record.evidence ? cloneJsonObject(record.evidence) : undefined,
+  };
+}
+
+function cloneGoalResidualRisk(risk: GoalResidualRisk): GoalResidualRisk {
+  return {
+    ...risk,
+    evidence_ids: risk.evidence_ids ? [...risk.evidence_ids] : undefined,
   };
 }
 

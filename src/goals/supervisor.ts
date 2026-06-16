@@ -7,6 +7,8 @@ import {
   consumeRepeatGoalRun,
   completeGoalAfterReflection,
   goalCompletionCandidateBlockMessage,
+  goalCompletionRecursiveBlockMessage,
+  goalCompletionStructuralBlockMessage,
   goalDurationMs,
   incompleteGoalPlanningSteps,
   isGoalHorizonExhausted,
@@ -213,6 +215,14 @@ async function runGoalReflection(options: GoalSupervisorOptions, state: GoalStat
   // concrete and substantively tied to the original objective, otherwise done.
   if (reflected.goal.last_reflection_decision === "done") {
     try {
+      const recursiveBlock = goalCompletionRecursiveBlockMessage(reflected.goal);
+      if (recursiveBlock) {
+        const expanded = expandGoalForRecursiveReflection(reflected, recursiveBlock);
+        const saved = writeGoalState(options.store, options.sessionId, expanded, reflectionRunId);
+        appendRecursiveReflectionExpansionEvent(options, saved, reflected, reflectionRunId, recursiveBlock);
+        options.onReflectionExpanded?.(saved);
+        return { status: "waiting", iteration, reason: "expanded_for_recursive_reflection", run_id: reflectionRunId, goal_id: saved.goal.id };
+      }
       const runtimeBlock = loopRuntimeCompletionBlockMessage(reflected.goal);
       if (runtimeBlock) {
         const expanded = expandGoalForRuntimeMinimum(reflected, runtimeBlock);
@@ -223,12 +233,12 @@ async function runGoalReflection(options: GoalSupervisorOptions, state: GoalStat
       }
       const candidateBlock = goalCompletionCandidateBlockMessage(reflected.goal);
       if (candidateBlock) {
-        const expanded = expandGoalFromLedgerCandidates(reflected);
+        const expanded = expandGoalFromFrontier(reflected);
         if (expanded) {
           const saved = writeGoalState(options.store, options.sessionId, expanded, reflectionRunId);
-          appendLedgerExpansionEvent(options, saved, reflected, reflectionRunId, candidateBlock);
+          appendFrontierExpansionEvent(options, saved, reflected, reflectionRunId, candidateBlock);
           options.onReflectionExpanded?.(saved);
-          return { status: "waiting", iteration, reason: "expanded_from_ledger", run_id: reflectionRunId, goal_id: saved.goal.id };
+          return { status: "waiting", iteration, reason: "expanded_from_frontier", run_id: reflectionRunId, goal_id: saved.goal.id };
         }
         const paused = pauseGoal(options, reflected, reflectionRunId, candidateBlock);
         return { status: "paused", iteration, reason: candidateBlock, run_id: reflectionRunId, goal_id: paused.goal.id };
@@ -239,6 +249,14 @@ async function runGoalReflection(options: GoalSupervisorOptions, state: GoalStat
           const paused = pauseGoal(options, reflected, reflectionRunId, researchBlock);
           return { status: "paused", iteration, reason: researchBlock, run_id: reflectionRunId, goal_id: paused.goal.id };
         }
+      }
+      const structuralBlock = goalCompletionStructuralBlockMessage(reflected.goal);
+      if (structuralBlock) {
+        const expanded = expandGoalForRecursiveReflection(reflected, structuralBlock);
+        const saved = writeGoalState(options.store, options.sessionId, expanded, reflectionRunId);
+        appendRecursiveReflectionExpansionEvent(options, saved, reflected, reflectionRunId, structuralBlock);
+        options.onReflectionExpanded?.(saved);
+        return { status: "waiting", iteration, reason: "expanded_for_structural_completion", run_id: reflectionRunId, goal_id: saved.goal.id };
       }
       const verifierBlock = goalVerifierPolicyCompletionBlockMessage(options.store, options.sessionId, reflected.goal, {
         request_class: options.workRequestClass ?? "background",
@@ -278,12 +296,12 @@ async function runGoalReflection(options: GoalSupervisorOptions, state: GoalStat
       return { status: "complete", iteration, run_id: reflectionRunId, goal_id: saved.goal.id };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      const expanded = expandGoalFromLedgerCandidates(reflected);
+      const expanded = expandGoalFromFrontier(reflected);
       if (expanded) {
         const saved = writeGoalState(options.store, options.sessionId, expanded, reflectionRunId);
-        appendLedgerExpansionEvent(options, saved, reflected, reflectionRunId, reason);
+        appendFrontierExpansionEvent(options, saved, reflected, reflectionRunId, reason);
         options.onReflectionExpanded?.(saved);
-        return { status: "waiting", iteration, reason: "expanded_from_ledger", run_id: reflectionRunId, goal_id: saved.goal.id };
+        return { status: "waiting", iteration, reason: "expanded_from_frontier", run_id: reflectionRunId, goal_id: saved.goal.id };
       }
       const paused = pauseGoal(options, reflected, reflectionRunId, reason);
       return { status: "paused", iteration, reason, run_id: reflectionRunId, goal_id: paused.goal.id };
@@ -406,7 +424,7 @@ function isCompletedReflectionForRun(state: GoalState, reflectionRunId: string):
   return state.goal.last_reflection_run_id === reflectionRunId && state.goal.reflection_status === "completed";
 }
 
-function appendLedgerExpansionEvent(
+function appendFrontierExpansionEvent(
   options: GoalSupervisorOptions,
   saved: GoalState,
   previous: GoalState,
@@ -455,6 +473,29 @@ function appendRuntimeMinimumExpansionEvent(
   });
 }
 
+function appendRecursiveReflectionExpansionEvent(
+  options: GoalSupervisorOptions,
+  saved: GoalState,
+  previous: GoalState,
+  runId: string,
+  blockedCompletion: string,
+): void {
+  options.store.appendEvent({
+    session_id: options.sessionId,
+    run_id: runId,
+    type: "goal.horizon.expanded",
+    data: {
+      goal_id: saved.goal.id,
+      previous_horizon_generation: previous.goal.horizon_generation,
+      horizon_generation: saved.goal.horizon_generation,
+      step_count: saved.goal.planning?.steps.length ?? 0,
+      active_step_id: saved.goal.planning?.active_step_id,
+      reason: "recursive_reflection",
+      blocked_completion: blockedCompletion,
+    },
+  });
+}
+
 function appendAtLeastNoProgressEvent(
   options: GoalSupervisorOptions,
   state: GoalState,
@@ -479,9 +520,9 @@ function appendAtLeastNoProgressEvent(
   });
 }
 
-function expandGoalFromLedgerCandidates(state: GoalState): GoalState | undefined {
+function expandGoalFromFrontier(state: GoalState): GoalState | undefined {
   const goal = state.goal;
-  if (!goal.ledger || goal.preference === "replay") {
+  if (goal.preference === "replay") {
     return undefined;
   }
   const candidates = nextHorizonCandidates(goal);
@@ -491,7 +532,7 @@ function expandGoalFromLedgerCandidates(state: GoalState): GoalState | undefined
   const next = cloneGoalState(state);
   next.goal.horizon_generation += 1;
   const planned = replaceGoalPlanning(next, {
-    summary: `Loop task ${next.goal.horizon_generation} · Candidate work`,
+    summary: `Loop task ${next.goal.horizon_generation} · Frontier work`,
     active_step_id: candidates[0]?.id,
     steps: candidates.map((candidate) => ({
       id: candidate.id,
@@ -514,6 +555,85 @@ function expandGoalForRuntimeMinimum(state: GoalState, blockedCompletion: string
   planned.enabled = true;
   planned.goal.status = "active";
   return planned;
+}
+
+function expandGoalForRecursiveReflection(state: GoalState, blockedCompletion: string): GoalState {
+  const goal = state.goal;
+  const next = cloneGoalState(state);
+  next.goal.horizon_generation += 1;
+  const candidates = nextHorizonCandidates(goal).slice(0, 3);
+  const input = candidates.length > 0
+    ? runtimeCandidatePlanningInput(goal, next.goal.horizon_generation, blockedCompletion, candidates)
+    : recursiveReflectionPlanningInput(goal, next.goal.horizon_generation, blockedCompletion);
+  const planned = replaceGoalPlanning(next, input);
+  planned.enabled = true;
+  planned.goal.status = "active";
+  return planned;
+}
+
+function recursiveReflectionPlanningInput(goal: GoalState["goal"], generation: number, blockedCompletion: string): GoalPlanningInput {
+  if (goal.preference === "discover") {
+    return {
+      summary: `Loop task ${generation} · Recursive research review`,
+      active_step_id: `recursive_rebuild_${generation}`,
+      steps: [
+        {
+          id: `recursive_rebuild_${generation}`,
+          title: "Rebuild research decomposition and evidence contract",
+          status: "pending",
+          notes: `${blockedCompletion} Re-read the objective, current experiments, hypotheses, baselines, controls, and metric validity before deciding closure.`,
+        },
+        {
+          id: `recursive_audit_${generation}`,
+          title: "Audit research frontier, counterexamples, and uncertainty",
+          status: "pending",
+          notes: "Identify untested hypotheses, missing controls, reward-hack risks, variance/confounders, or reasons they are immaterial.",
+        },
+        {
+          id: `recursive_act_${generation}`,
+          title: "Run or reject the highest-information follow-up",
+          status: "pending",
+          notes: "Execute a benchmark/ablation/inspection, or reject the follow-up with concrete evidence and update frontier or autoresearch state.",
+        },
+        {
+          id: `recursive_packet_${generation}`,
+          title: "Record recursive reflection packet",
+          status: "pending",
+          notes: "Prepare objective_decomposition, coverage_review, executed_evidence, remaining_frontier or residual_risk, and why_no_expand for the next reflection.",
+        },
+      ],
+    };
+  }
+  return {
+    summary: `Loop task ${generation} · Recursive delivery review`,
+    active_step_id: `recursive_rebuild_${generation}`,
+    steps: [
+      {
+        id: `recursive_rebuild_${generation}`,
+        title: "Rebuild objective decomposition and delivery contract",
+        status: "pending",
+        notes: `${blockedCompletion} Re-read the top-level objective, current plan, coverage, frontier audit, assumptions, and required evidence before deciding closure.`,
+      },
+      {
+        id: `recursive_audit_${generation}`,
+        title: "Audit uninspected coverage and frontier gaps",
+        status: "pending",
+        notes: "Identify code paths, tests, integrations, docs/config, operational risks, or user-visible surfaces that can still materially change the result.",
+      },
+      {
+        id: `recursive_act_${generation}`,
+        title: "Resolve the highest-value uncovered slice",
+        status: "pending",
+        notes: "Implement, verify, document, or reject with evidence; add or close frontier items for any discovered frontier.",
+      },
+      {
+        id: `recursive_packet_${generation}`,
+        title: "Record recursive reflection packet",
+        status: "pending",
+        notes: "Prepare objective_decomposition, coverage_review, executed_evidence, remaining_frontier or residual_risk, and why_no_expand for the next reflection.",
+      },
+    ],
+  };
 }
 
 function runtimeMinimumPlanningInput(goal: GoalState["goal"], generation: number, blockedCompletion: string): GoalPlanningInput {
@@ -589,7 +709,7 @@ function runtimeCandidatePlanningInput(
   }));
   steps.push({
     id: `runtime_verify_frontier_${generation}`,
-    title: "Verify frontier outcomes and update ledger",
+    title: "Verify frontier outcomes and update frontier audit",
     status: "pending",
     notes: "Run targeted checks, reconcile stale open/done/rejected candidates, and leave concrete evidence for the next decision.",
   });
@@ -625,7 +745,7 @@ function runtimeSurfacePlanningInput(
         id: `runtime_act_${generation}_${surfaceId}`,
         title: `Act on findings from ${surface.label}`,
         status: "pending",
-        notes: "Implement, document, reject with evidence, or add ledger candidates for concrete findings from this surface.",
+        notes: "Implement, document, reject with evidence, or add frontier items for concrete findings from this surface.",
       },
       {
         id: `runtime_verify_${generation}_${surfaceId}`,

@@ -18,7 +18,8 @@ import { readGoalVerificationRecords, recordGoalVerification } from "../src/loop
 import { SessionStore } from "../src/session/store.js";
 import { resolveWorkspace } from "../src/session/workspace.js";
 import { ToolRegistry } from "../src/tools/registry.js";
-import type { VllmAgentConfig, WorkspaceIdentity } from "../src/types.js";
+import type { JsonObject, VllmAgentConfig, WorkspaceIdentity } from "../src/types.js";
+import type { GoalState } from "../src/goals/state.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -26,6 +27,27 @@ function config(): VllmAgentConfig {
   const next = structuredClone(DEFAULT_CONFIG);
   next.permissions.mode = "full_access";
   return next;
+}
+
+function recursiveReflectionPacket(overrides: JsonObject = {}): JsonObject {
+  return {
+    objective_decomposition: "Verification fixture covers the current horizon.",
+    coverage_review: "No additional coverage surfaces are relevant to this fixture.",
+    executed_evidence: "Fixture supplied reflection evidence.",
+    residual_risk: "No material residual risk for this fixture.",
+    why_no_expand: "This fixture is exercising verification policy.",
+    ...overrides,
+  };
+}
+
+function structurallyCoveredGoal(state: GoalState): GoalState {
+  const timestamp = new Date().toISOString();
+  state.goal.coverage = {
+    surfaces: [{ id: "fixture-surface", title: "Fixture completion surface", status: "covered", evidence: { fixture: true }, updated_at: timestamp }],
+    updated_at: timestamp,
+  };
+  state.goal.frontier = [{ id: "fixture-frontier", title: "Fixture frontier audit", value: "low", status: "done", evidence: { fixture: true }, updated_at: timestamp }];
+  return state;
 }
 
 test("goal reflection writes a durable verification record", async () => {
@@ -119,7 +141,7 @@ test("verification runs can record checker verdicts without mutating goal state"
     });
 
     const blockedMutation = await registry.call(
-      { id: "verify_mutation", name: "goal", arguments: { op: "update_step", step_id: "read_objective_and_constraints", status: "completed" } },
+      { id: "verify_mutation", name: "goal", arguments: { op: "update", action: "step", step_id: "read_objective_and_constraints", status: "completed" } },
       { session_id: fixture.session.session_id, run_id: "run_checker", request_class: "verification", visibility: "internal" },
     );
     assert.equal(blockedMutation.ok, false);
@@ -341,9 +363,9 @@ test("declared command verifier policy records command verification and gates co
   const fixture = await createFixture("inferoa-loop-verification-command-");
   try {
     const registry = new ToolRegistry(config(), fixture.workspace, fixture.store);
-    let state = replaceGoalPlanning(createGoalState({ objective: "Gate completion on explicit command verifier" }), {
+    let state = structurallyCoveredGoal(replaceGoalPlanning(createGoalState({ objective: "Gate completion on explicit command verifier" }), {
       steps: [{ id: "done", title: "Complete implementation", status: "completed" }],
-    });
+    }));
     state = writeGoalState(fixture.store, fixture.session.session_id, state, "run_seed");
     const command = `"${process.execPath}" -e "process.exit(0)"`;
 
@@ -352,7 +374,7 @@ test("declared command verifier policy records command verification and gates co
         id: "set_policy",
         name: "goal",
         arguments: {
-          op: "set_verifier_policy",
+          op: "update", action: "verifier_policy",
           command_verifiers: [{ id: "unit", command, required: true }],
         },
       },
@@ -370,6 +392,7 @@ test("declared command verifier policy records command verification and gates co
           decision: "done",
           summary: "Implementation is ready.",
           verification_evidence: { review: "ready for command gate" },
+          reflection_packet: recursiveReflectionPacket(),
         },
       },
       { session_id: fixture.session.session_id, run_id: "run_reflect", request_class: "reflection", visibility: "internal" },
@@ -408,9 +431,9 @@ test("unattended completion requires strong non-reflection verification", async 
   const fixture = await createFixture("inferoa-loop-verification-unattended-");
   try {
     const registry = new ToolRegistry(config(), fixture.workspace, fixture.store);
-    let state = replaceGoalPlanning(createGoalState({ objective: "Gate unattended completion" }), {
+    let state = structurallyCoveredGoal(replaceGoalPlanning(createGoalState({ objective: "Gate unattended completion" }), {
       steps: [{ id: "done", title: "Complete implementation", status: "completed" }],
-    });
+    }));
     state = writeGoalState(fixture.store, fixture.session.session_id, state, "run_seed");
 
     const reflected = await registry.call(
@@ -422,6 +445,7 @@ test("unattended completion requires strong non-reflection verification", async 
           decision: "done",
           summary: "The producer believes the horizon is done.",
           verification_evidence: { self_check: true },
+          reflection_packet: recursiveReflectionPacket(),
         },
       },
       { session_id: fixture.session.session_id, run_id: "run_reflect", request_class: "reflection", visibility: "internal" },
@@ -473,9 +497,9 @@ test("completion requires enabled Loop Skill body to be loaded before claiming d
     const nextConfig = config();
     nextConfig.skills.enabled = ["inferoa-loop-skill"];
     const registry = new ToolRegistry(nextConfig, fixture.workspace, fixture.store);
-    let state = replaceGoalPlanning(createGoalState({ objective: "Require learned loop policy before completion" }), {
+    let state = structurallyCoveredGoal(replaceGoalPlanning(createGoalState({ objective: "Require learned loop policy before completion" }), {
       steps: [{ id: "done", title: "Complete implementation", status: "completed" }],
-    });
+    }));
     state = writeGoalState(fixture.store, fixture.session.session_id, state, "run_seed");
 
     const reflected = await registry.call(
@@ -487,6 +511,7 @@ test("completion requires enabled Loop Skill body to be loaded before claiming d
           decision: "done",
           summary: "Implementation is ready.",
           verification_evidence: { command: "npm test", status: "pass" },
+          reflection_packet: recursiveReflectionPacket(),
         },
       },
       { session_id: fixture.session.session_id, run_id: "run_reflect", request_class: "reflection", visibility: "internal" },
@@ -553,9 +578,9 @@ test("missing configured Loop Skill does not create an impossible completion gat
     const nextConfig = config();
     nextConfig.skills.enabled = ["inferoa-loop-skill"];
     const registry = new ToolRegistry(nextConfig, fixture.workspace, fixture.store);
-    let state = replaceGoalPlanning(createGoalState({ objective: "Complete without an adopted learned skill" }), {
+    let state = structurallyCoveredGoal(replaceGoalPlanning(createGoalState({ objective: "Complete without an adopted learned skill" }), {
       steps: [{ id: "done", title: "Complete implementation", status: "completed" }],
-    });
+    }));
     state = writeGoalState(fixture.store, fixture.session.session_id, state, "run_seed");
 
     const reflected = await registry.call(
@@ -567,6 +592,7 @@ test("missing configured Loop Skill does not create an impossible completion gat
           decision: "done",
           summary: "Implementation is ready.",
           verification_evidence: { summary: "checked" },
+          reflection_packet: recursiveReflectionPacket(),
         },
       },
       { session_id: fixture.session.session_id, run_id: "run_reflect", request_class: "reflection", visibility: "internal" },
@@ -596,9 +622,9 @@ test("completion requires enabled Workspace Skill body for workspace development
     const nextConfig = config();
     nextConfig.skills.enabled = ["inferoa-workspace-skill"];
     const registry = new ToolRegistry(nextConfig, fixture.workspace, fixture.store);
-    const state = replaceGoalPlanning(createGoalState({ objective: "Update README docs and TypeScript tests" }), {
+    const state = structurallyCoveredGoal(replaceGoalPlanning(createGoalState({ objective: "Update README docs and TypeScript tests" }), {
       steps: [{ id: "done", title: "Complete docs and test update", status: "completed" }],
-    });
+    }));
     writeGoalState(fixture.store, fixture.session.session_id, state, "run_seed");
 
     const reflected = await registry.call(
@@ -610,6 +636,7 @@ test("completion requires enabled Workspace Skill body for workspace development
           decision: "done",
           summary: "Docs and tests are ready.",
           verification_evidence: { command: "npm test", status: "pass" },
+          reflection_packet: recursiveReflectionPacket(),
         },
       },
       { session_id: fixture.session.session_id, run_id: "run_reflect", request_class: "reflection", visibility: "internal" },
@@ -660,9 +687,9 @@ test("goal supervisor can orchestrate an independent checker before unattended c
   const fixture = await createFixture("inferoa-loop-verification-orchestrated-checker-");
   try {
     const registry = new ToolRegistry(config(), fixture.workspace, fixture.store);
-    const state = replaceGoalPlanning(createGoalState({ objective: "Orchestrate checker before completion" }), {
+    const state = structurallyCoveredGoal(replaceGoalPlanning(createGoalState({ objective: "Orchestrate checker before completion" }), {
       steps: [{ id: "done", title: "Complete implementation", status: "completed" }],
-    });
+    }));
     writeGoalState(fixture.store, fixture.session.session_id, state, "run_seed");
     const seen: string[] = [];
 
@@ -684,6 +711,7 @@ test("goal supervisor can orchestrate an independent checker before unattended c
                 decision: "done",
                 summary: "The producer believes the horizon is done.",
                 verification_evidence: { self_check: true },
+                reflection_packet: recursiveReflectionPacket(),
               },
             },
             { session_id: fixture.session.session_id, run_id: request.runId ?? "run_reflect", request_class: "reflection", visibility: "internal" },

@@ -9,10 +9,31 @@ import os from "node:os";
 import YAML from "yaml";
 import { DEFAULT_CONFIG } from "../src/config/defaults.js";
 import { attachDaemonJob, cancelDaemonJob, daemonStatus, detachDaemonJob, queueDaemonGoal, queueDaemonRun, serveDaemon } from "../src/daemon/supervisor.js";
-import { completeGoalReflection, createGoalState, readGoalState, replaceGoalPlanning, setGoalVerifierPolicy, writeGoalState } from "../src/goals/state.js";
+import { completeGoalReflection, createGoalState, readGoalState, replaceGoalPlanning, setGoalVerifierPolicy, writeGoalState, type GoalState } from "../src/goals/state.js";
 import { readGoalVerificationRecords } from "../src/loop/verification.js";
 import { SessionStore } from "../src/session/store.js";
-import type { VllmAgentConfig, WorkspaceIdentity } from "../src/types.js";
+import type { JsonObject, VllmAgentConfig, WorkspaceIdentity } from "../src/types.js";
+
+function recursiveReflectionPacket(overrides: JsonObject = {}): JsonObject {
+  return {
+    objective_decomposition: "Daemon fixture covers the current hidden horizon.",
+    coverage_review: "No additional coverage surfaces are relevant to this fixture.",
+    executed_evidence: "Fixture supplied daemon verification evidence.",
+    residual_risk: "No material residual risk for this fixture.",
+    why_no_expand: "This fixture is exercising daemon completion or verifier behavior.",
+    ...overrides,
+  };
+}
+
+function structurallyCoveredGoal(state: GoalState): GoalState {
+  const timestamp = new Date().toISOString();
+  state.goal.coverage = {
+    surfaces: [{ id: "daemon-fixture", title: "Daemon fixture surface", status: "covered", evidence: { fixture: true }, updated_at: timestamp }],
+    updated_at: timestamp,
+  };
+  state.goal.frontier = [{ id: "daemon-frontier", title: "Daemon fixture frontier audit", value: "low", status: "done", evidence: { fixture: true }, updated_at: timestamp }];
+  return state;
+}
 
 test("daemon queue, detach, status, and cancel persist job state", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-daemon-"));
@@ -177,10 +198,11 @@ test("daemon goal supervisor expands horizon through internal reflection and com
                     name: "goal",
                     arguments: JSON.stringify({
                       op: "reflect",
-                      decision: "done",
-                      summary: "No additional horizon remains.",
-                      verification_evidence: { git: "checked", hidden_horizon: "complete" },
-                    }),
+	                      decision: "done",
+	                      summary: "No additional horizon remains.",
+	                      verification_evidence: { git: "checked", hidden_horizon: "complete" },
+	                      reflection_packet: recursiveReflectionPacket(),
+	                    }),
                   },
                 }
               : undefined;
@@ -214,7 +236,7 @@ test("daemon goal supervisor expands horizon through internal reflection and com
                       type: "function",
                       function: {
                         name: "goal",
-                        arguments: JSON.stringify({ op: "update_step", step_id: "hidden-horizon", status: "completed", notes: "Handled hidden horizon." }),
+                        arguments: JSON.stringify({ op: "update", action: "step", step_id: "hidden-horizon", status: "completed", notes: "Handled hidden horizon." }),
                       },
                     },
                   ],
@@ -248,6 +270,7 @@ test("daemon goal supervisor expands horizon through internal reflection and com
     goal = replaceGoalPlanning(goal, {
       steps: [{ id: "initial", title: "Initial horizon", status: "completed" }],
     });
+    goal = structurallyCoveredGoal(goal);
     goal = setGoalVerifierPolicy(goal, { command_verifiers: [{ id: "daemon-unit", command: verifierCommand, required: true }] });
     writeGoalState(store, session.session_id, goal);
 
@@ -363,10 +386,11 @@ test("daemon run with an active goal pauses hidden supervision without strong ve
                         name: "goal",
                         arguments: JSON.stringify({
                           op: "reflect",
-                          decision: "done",
-                          summary: "The post-turn supervisor found no remaining horizon.",
-                          verification_evidence: { post_turn_reflection: true },
-                        }),
+	                          decision: "done",
+	                          summary: "The post-turn supervisor found no remaining horizon.",
+	                          verification_evidence: { post_turn_reflection: true },
+	                          reflection_packet: recursiveReflectionPacket(),
+	                        }),
                       },
                     },
                   ],
@@ -406,6 +430,7 @@ test("daemon run with an active goal pauses hidden supervision without strong ve
     const session = store.createSession(workspace, "daemon run goal");
     let goal = createGoalState({ objective: "Finish after visible daemon turn" });
     goal = replaceGoalPlanning(goal, { steps: [{ id: "visible", title: "Visible turn horizon", status: "completed" }] });
+    goal = structurallyCoveredGoal(goal);
     writeGoalState(store, session.session_id, goal);
 
     const job = await queueDaemonRun({ stateDir: state, workspaceRoot, sessionId: session.session_id, prompt: "visible daemon work", configPath });

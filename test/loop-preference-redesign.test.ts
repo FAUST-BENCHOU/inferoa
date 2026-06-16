@@ -68,6 +68,7 @@ test("at least runtime progress is visible only in loop context", () => {
 
   assert.match(context, /runtime: At least 1h/);
   assert.match(context, /runtime progress: elapsed 15m; minimum 1h; remaining 45m/);
+  assert.match(context, /done reflection includes recursive planning evidence/i);
 });
 
 test("replay preference has attempts but no bootstrap or hidden model context", () => {
@@ -100,7 +101,7 @@ test("loop prompt builders expose execution and decision contracts", () => {
   assert.match(deliverExecution, /top-level objective/i);
   assert.match(deliverExecution, /work surfaces/i);
   assert.match(deliverExecution, /Verify/i);
-  assert.match(deliverExecution, /loop step, ledger, or decomposition/i);
+  assert.match(deliverExecution, /coverage\/frontier\/evidence/i);
   assert.doesNotMatch(deliverExecution, /infer the loop approach|set_strategy|focus|timebox/i);
 
   const decision = (buildDecision as (goal: unknown) => string)(
@@ -108,6 +109,10 @@ test("loop prompt builders expose execution and decision contracts", () => {
   );
   assert.match(decision, /Decision turn/i);
   assert.match(decision, /Independently judge/i);
+  assert.match(decision, /Recursive reflection checklist/i);
+  assert.match(decision, /objective decomposition/i);
+  assert.match(decision, /coverage_review/i);
+  assert.match(decision, /why_no_expand/i);
   assert.match(decision, /At least runtime remains/i);
   assert.match(decision, /decision=expand, done, or blocked/i);
   assert.match(decision, /never use bare expand/i);

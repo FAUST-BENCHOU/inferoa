@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { DEFAULT_CONFIG } from "../src/config/defaults.js";
-import { createGoalState, replaceGoalPlanning, writeGoalState } from "../src/goals/state.js";
+import { createGoalState, replaceGoalPlanning, writeGoalState, type GoalState } from "../src/goals/state.js";
 import { readGoalLoopView } from "../src/loop/projection.js";
 import { optLiteAdopt, optLitePropose, optLiteReplay } from "../src/opt/opt-lite.js";
 import { SessionStore } from "../src/session/store.js";
@@ -14,6 +14,26 @@ import { ToolRegistry } from "../src/tools/registry.js";
 import type { VllmAgentConfig, WorkspaceIdentity } from "../src/types.js";
 
 const execFileAsync = promisify(execFile);
+
+function recursiveReflectionPacket() {
+  return {
+    objective_decomposition: "Real task eval fixture covers the current workspace change.",
+    coverage_review: "Command evaluation covers the fixture acceptance surface.",
+    executed_evidence: "npm test passed for the fixture.",
+    residual_risk: "No material residual risk for this fixture.",
+    why_no_expand: "This fixture is exercising self-improve learning gates.",
+  };
+}
+
+function structurallyCoveredGoal(state: GoalState, evidence: Record<string, unknown>): GoalState {
+  const timestamp = new Date().toISOString();
+  state.goal.coverage = {
+    surfaces: [{ id: "real-task-eval", title: "Real task eval acceptance surface", status: "covered", evidence: evidence as never, updated_at: timestamp }],
+    updated_at: timestamp,
+  };
+  state.goal.frontier = [{ id: "real-task-frontier", title: "Real task eval frontier audit", value: "low", status: "done", evidence: evidence as never, updated_at: timestamp }];
+  return state;
+}
 
 test("self-improve real task eval learns from real command verification and gates a later workspace task", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-loop-real-task-eval-"));
@@ -70,9 +90,12 @@ test("self-improve real task eval learns from real command verification and gate
 
     const postSession = store.createSession(workspace, "post-adoption real docs task");
     const registry = new ToolRegistry(learnedConfig, workspace, store);
-    const goal = replaceGoalPlanning(createGoalState({ objective: "Update README docs for the slug workspace" }), {
-      steps: [{ id: "docs", title: "Update README docs", status: "completed" }],
-    });
+    const goal = structurallyCoveredGoal(
+      replaceGoalPlanning(createGoalState({ objective: "Update README docs for the slug workspace" }), {
+        steps: [{ id: "docs", title: "Update README docs", status: "completed" }],
+      }),
+      commandEvidence(workspaceRoot, laterEvalBeforeRecord),
+    );
     writeGoalState(store, postSession.session_id, goal, "run_seed");
 
     const reflected = await registry.call(
@@ -84,6 +107,7 @@ test("self-improve real task eval learns from real command verification and gate
           decision: "done",
           summary: "Docs look updated from reflection.",
           verification_evidence: { self_check: true },
+          reflection_packet: recursiveReflectionPacket(),
         },
       },
       { session_id: postSession.session_id, run_id: "run_reflect_soft", request_class: "reflection", visibility: "internal" },
@@ -210,9 +234,10 @@ async function recordVerifiedRealTask(
 ): Promise<void> {
   const session = store.createSession(workspace, input.objective);
   const registry = new ToolRegistry(config(), workspace, store);
-  const goal = replaceGoalPlanning(createGoalState({ objective: input.objective }), {
+  const evidence = commandEvidence(workspace.root, input.result);
+  const goal = structurallyCoveredGoal(replaceGoalPlanning(createGoalState({ objective: input.objective }), {
     steps: [{ id: "done", title: input.objective, status: "completed" }],
-  });
+  }), evidence);
   const state = writeGoalState(store, session.session_id, goal, `run_seed_${session.session_id}`);
   const reflected = await registry.call(
     {
@@ -222,7 +247,8 @@ async function recordVerifiedRealTask(
         op: "reflect",
         decision: "done",
         summary: "Real workspace eval passed.",
-        verification_evidence: commandEvidence(workspace.root, input.result),
+        verification_evidence: evidence,
+        reflection_packet: recursiveReflectionPacket(),
       },
     },
     { session_id: session.session_id, run_id: `run_reflect_${session.session_id}`, request_class: "reflection", visibility: "internal" },
@@ -237,7 +263,7 @@ async function recordVerifiedRealTask(
         provider: "command",
         verdict: "pass",
         confidence: "hard",
-        evidence: commandEvidence(workspace.root, input.result),
+        evidence,
         summary: "npm test passed for real task eval.",
       },
     },

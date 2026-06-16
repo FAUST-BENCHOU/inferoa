@@ -19,8 +19,46 @@ import {
   replaceGoalPlanning,
   stageGoalReviewDecision,
   writeGoalState,
+  type GoalState,
 } from "../src/goals/state.js";
 import { optLitePropose, type OptLiteLearnReport, type OptReplayStatus } from "../src/opt/opt-lite.js";
+
+function recursiveReflectionPacket() {
+  return {
+    objective_decomposition: "TUI fixture covers the current loop horizon.",
+    coverage_review: "Fixture surface is covered by the recorded evidence.",
+    executed_evidence: "The fixture records verification evidence.",
+    residual_risk: "No material residual risk for this fixture.",
+    why_no_expand: "This fixture is exercising completed loop rendering or learning behavior.",
+  };
+}
+
+function structurallyCoveredGoal(state: GoalState): GoalState {
+  const timestamp = new Date().toISOString();
+  state.goal.coverage = {
+    surfaces: [
+      {
+        id: "fixture-surface",
+        title: "TUI fixture completion surface",
+        status: "covered",
+        evidence: { fixture: true },
+        updated_at: timestamp,
+      },
+    ],
+    updated_at: timestamp,
+  };
+  state.goal.frontier = [
+    {
+      id: "fixture-frontier",
+      title: "TUI fixture frontier audit",
+      value: "low",
+      status: "done",
+      evidence: { fixture: true },
+      updated_at: timestamp,
+    },
+  ];
+  return state;
+}
 
 test("clear starts a clean default session without prompting or rendering creation details", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-clear-session-"));
@@ -1210,7 +1248,7 @@ test("self-improve learn returns composer control while optimizer is pending", a
   try {
     const workspace = { id: "w_self_improve_learn_bg", root: stateDir, alias: "self-improve-learn-bg" };
     const session = store.createSession(workspace, "verified self improve source");
-    let goal = createGoalState({ objective: "Keep slash commands responsive" });
+    let goal = structurallyCoveredGoal(createGoalState({ objective: "Keep slash commands responsive" }));
     writeGoalState(store, session.session_id, goal, "run_goal");
     goal = completeGoalReflection(
       goal,
@@ -1218,6 +1256,7 @@ test("self-improve learn returns composer control while optimizer is pending", a
         decision: "done",
         summary: "Verified with npm test.",
         verification_evidence: { command: "npm test", status: "pass" },
+        reflection_packet: recursiveReflectionPacket(),
       },
       "run_reflect",
     );
@@ -1233,6 +1272,7 @@ test("self-improve learn returns composer control while optimizer is pending", a
         decision: "done",
         summary: goal.goal.last_reflection_summary,
         verification_evidence: goal.goal.verification_evidence,
+        reflection_packet: goal.goal.last_reflection_packet,
       },
     });
 
@@ -1434,7 +1474,7 @@ test("self-improve learn opens inline adopt review after accepted replay", async
     const workspace = { id: "w_self_improve_learn_review", root: stateDir, alias: "self-improve-learn-review" };
     for (let index = 0; index < 4; index += 1) {
       const session = store.createSession(workspace, `verified self improve source ${index}`);
-      let goal = createGoalState({ objective: `Ship verified docs workflow ${index}` });
+      let goal = structurallyCoveredGoal(createGoalState({ objective: `Ship verified docs workflow ${index}` }));
       writeGoalState(store, session.session_id, goal, `run_goal_${index}`);
       goal = completeGoalReflection(
         goal,
@@ -1442,6 +1482,7 @@ test("self-improve learn opens inline adopt review after accepted replay", async
           decision: "done",
           summary: "Verified with npm test.",
           verification_evidence: { command: "npm test", status: "pass" },
+          reflection_packet: recursiveReflectionPacket(),
         },
         `run_reflect_${index}`,
       );
@@ -1457,6 +1498,7 @@ test("self-improve learn opens inline adopt review after accepted replay", async
           decision: "done",
           summary: goal.goal.last_reflection_summary,
           verification_evidence: goal.goal.verification_evidence,
+          reflection_packet: goal.goal.last_reflection_packet,
         },
       });
     }
@@ -1520,7 +1562,7 @@ test("self-improve adopt previews staged skills and requires confirmation", asyn
   try {
     const workspace = { id: "w_self_improve_adopt_preview", root: stateDir, alias: "self-improve-adopt-preview" };
     const session = store.createSession(workspace, "verified self improve source");
-    let goal = createGoalState({ objective: "Ship verified docs workflow" });
+    let goal = structurallyCoveredGoal(createGoalState({ objective: "Ship verified docs workflow" }));
     writeGoalState(store, session.session_id, goal, "run_goal");
     goal = completeGoalReflection(
       goal,
@@ -1528,6 +1570,7 @@ test("self-improve adopt previews staged skills and requires confirmation", asyn
         decision: "done",
         summary: "Verified with npm test.",
         verification_evidence: { command: "npm test", status: "pass" },
+        reflection_packet: recursiveReflectionPacket(),
       },
       "run_reflect",
     );
@@ -1543,6 +1586,7 @@ test("self-improve adopt previews staged skills and requires confirmation", asyn
         decision: "done",
         summary: goal.goal.last_reflection_summary,
         verification_evidence: goal.goal.verification_evidence,
+        reflection_packet: goal.goal.last_reflection_packet,
       },
     });
     const proposal = await optLitePropose(store, workspace);
@@ -1706,13 +1750,15 @@ test("goal show renders wrapped tree horizons without repeated command hints", a
     const expandReflection = "Found a second horizon after the first audit and verification pass.";
     const doneReflection =
       "Successfully improved the vLLM Semantic Router codebase across all three sub-projects after final reflection, including Python tests passing and release notes prepared without hidden tail text.";
-    let goal = replaceGoalPlanning(createGoalState({ objective: "improve codebase" }), {
-      summary: "Initial audit and repair horizon",
-      steps: [
-        { id: "explore_and_audit", title: "Explore codebase and identify concrete improvement areas", status: "completed" },
-        { id: "fix_python_issues", title: "Fix Python code quality issues in the vllm-sr CLI", status: "completed" },
-      ],
-    });
+    let goal = structurallyCoveredGoal(
+      replaceGoalPlanning(createGoalState({ objective: "improve codebase" }), {
+        summary: "Initial audit and repair horizon",
+        steps: [
+          { id: "explore_and_audit", title: "Explore codebase and identify concrete improvement areas", status: "completed" },
+          { id: "fix_python_issues", title: "Fix Python code quality issues in the vllm-sr CLI", status: "completed" },
+        ],
+      }),
+    );
     goal.goal.summary = longSummary;
     writeGoalState(store, session.session_id, goal, "run_horizon_0");
     store.appendEvent({
@@ -1765,6 +1811,7 @@ test("goal show renders wrapped tree horizons without repeated command hints", a
         decision: "done",
         summary: doneReflection,
         verification_evidence: { test: "passed" },
+        reflection_packet: recursiveReflectionPacket(),
       },
       "run_reflection_done",
     );
@@ -1780,6 +1827,7 @@ test("goal show renders wrapped tree horizons without repeated command hints", a
         decision: "done",
         summary: doneReflection,
         verification_evidence: { test: "passed" },
+        reflection_packet: goal.goal.last_reflection_packet,
       },
     });
     goal = completeGoalAfterReflection(goal, longSummary);

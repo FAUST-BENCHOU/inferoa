@@ -1050,7 +1050,7 @@ test("runtime yields after visible work exhausts the active goal horizon", async
                     type: "function",
                     function: {
                       name: "goal",
-                      arguments: JSON.stringify({ op: "update_step", step_id: "final", status: "completed", notes: "Final visible step completed." }),
+                      arguments: JSON.stringify({ op: "update", action: "step", step_id: "final", status: "completed", notes: "Final visible step completed." }),
                     },
                   },
                 ],

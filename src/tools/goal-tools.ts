@@ -3,7 +3,9 @@ import { fail, ok } from "../util/limit.js";
 import type { ToolExecutionContext } from "./context.js";
 import {
   blockGoalForReview,
+  appendGoalLedgerCandidate,
   clearGoalPendingReviewDecision,
+  closeGoalLedgerCandidate,
   cloneGoalState,
   completeGoalAfterReflection,
   completeGoalReflection,
@@ -12,8 +14,11 @@ import {
   formatGoalDuration,
   goalCompletionCandidateBlockMessage,
   goalCompletionReflectionBlockMessage,
+  goalCompletionRecursiveBlockMessage,
+  goalCompletionStructuralBlockMessage,
   incompleteGoalPlanningMessage,
   goalPlanningProgressSummary,
+  meaningfulOpenGoalCandidates,
   parseLoopPreference,
   parseGoalReflectionDecision,
   parseGoalHilPolicy,
@@ -26,17 +31,32 @@ import {
   setGoalOwner,
   setGoalReviewOwner,
   stageGoalReviewDecision,
+  upsertGoalEvidenceRecord,
+  upsertGoalFrontierItem,
+  upsertGoalResidualRisk,
+  updateGoalCoverageSurface,
+  updateGoalDeliveryContract,
   updateGoalPlanningStep,
   updateGoalLedger,
   validateTokenBudget,
   writeGoalState,
   type GoalCandidate,
+  type GoalCandidateCloseInput,
   type GoalCandidateInput,
   type GoalCandidateValue,
+  type GoalCoverageSurfaceInput,
+  type GoalCoverageSurfaceStatus,
+  type GoalDeliveryContractInput,
   type GoalPlanningStepInput,
   type GoalRecord,
   type GoalState,
   type GoalCommandVerifierInput,
+  type GoalEvidenceKind,
+  type GoalEvidenceRecordInput,
+  type GoalFrontierInput,
+  type GoalFrontierStatus,
+  type GoalResidualRiskInput,
+  type GoalStructuralConfidence,
   type LoopRuntimePolicy,
 } from "../goals/state.js";
 import { readAutoresearchState, researchCompletionBlockMessage, setAutoresearchMode } from "../autoresearch/state.js";
@@ -78,6 +98,8 @@ export async function goalTool(args: JsonObject, context: ToolExecutionContext):
         return createGoal(args, context);
       case "get":
         return describeGoal(readGoalState(context.store, context.session_id), "Goal state", context);
+      case "update":
+        return updateGoal(args, context);
       case "decompose":
       case "update_plan":
         return updateGoalPlan(args, context, op);
@@ -101,6 +123,16 @@ export async function goalTool(args: JsonObject, context: ToolExecutionContext):
         return updateGoalVerifierPolicy(args, context);
       case "update_ledger":
         return updateLedger(args, context);
+      case "add_candidate":
+        return addLedgerCandidate(args, context);
+      case "close_candidate":
+        return closeLedgerCandidate(args, context, "done");
+      case "reject_candidate":
+        return closeLedgerCandidate(args, context, "rejected");
+      case "set_delivery_contract":
+        return setDeliveryContract(args, context);
+      case "update_coverage":
+        return updateCoverage(args, context);
       case "resume":
         return resumeGoal(context);
       case "complete":
@@ -113,6 +145,41 @@ export async function goalTool(args: JsonObject, context: ToolExecutionContext):
   } catch (error) {
     return fail("goal_error", error instanceof Error ? error.message : String(error));
   }
+}
+
+function updateGoal(args: JsonObject, context: ToolExecutionContext): ToolResult {
+  const action = stringArg(args.action)?.trim();
+  if (action === "plan" || action === "decompose" || (!action && Array.isArray(args.steps))) {
+    return updateGoalPlan(args, context, action === "decompose" ? "decompose" : "update_plan");
+  }
+  if (action === "step" || (!action && (args.step_id !== undefined || args.status !== undefined))) {
+    return updateGoalStep(args, context);
+  }
+  if (action === "frontier" || action === "candidate" || (!action && args.frontier !== undefined)) {
+    return updateFrontier(args, context);
+  }
+  if (action === "coverage" || (!action && (args.coverage !== undefined || args.surface_id !== undefined || args.coverage_status !== undefined))) {
+    return updateCoverage(args, context);
+  }
+  if (action === "evidence" || (!action && args.evidence_record !== undefined)) {
+    return updateEvidenceRecord(args, context);
+  }
+  if (action === "residual_risk" || action === "risk" || (!action && args.residual_risk !== undefined)) {
+    return updateResidualRisk(args, context);
+  }
+  if (action === "contract") {
+    return setDeliveryContract(args, context);
+  }
+  if (action === "verifier_policy") {
+    return updateGoalVerifierPolicy(args, context);
+  }
+  if (action === "owner") {
+    return updateGoalOwner(args, context);
+  }
+  if (action === "review_owner") {
+    return updateGoalReviewOwner(args, context);
+  }
+  return fail("goal_update_action_required", "goal op=update requires action=plan, step, frontier, coverage, evidence, residual_risk, contract, verifier_policy, owner, or review_owner.");
 }
 
 interface GoalVerificationReflectionInput {
@@ -142,6 +209,37 @@ function handleInternalReflectionGoalOperation(op: string, args: JsonObject, con
   if (op === "get" || op === "reflect" || op === "update_ledger") {
     return undefined;
   }
+  if (op === "update") {
+    const action = stringArg(args.action)?.trim();
+    if (action === "plan") {
+      const steps = stepsArg(args.steps);
+      if (steps?.length) {
+        return recordGoalReflection(
+          {
+            ...args,
+            op: "reflect",
+            decision: "expand",
+            summary: stringArg(args.summary) ?? "Reflection found another horizon.",
+          },
+          context,
+        );
+      }
+    }
+    if (
+      action === "frontier"
+      || action === "coverage"
+      || action === "evidence"
+      || action === "residual_risk"
+      || action === "risk"
+      || action === "contract"
+      || args.frontier !== undefined
+      || args.coverage !== undefined
+      || args.evidence_record !== undefined
+      || args.residual_risk !== undefined
+    ) {
+      return undefined;
+    }
+  }
   if (op === "decompose" || op === "update_plan") {
     const steps = stepsArg(args.steps);
     if (steps?.length) {
@@ -157,8 +255,9 @@ function handleInternalReflectionGoalOperation(op: string, args: JsonObject, con
     }
   }
   const state = readGoalState(context.store, context.session_id);
+  const updateAction = op === "update" ? stringArg(args.action)?.trim() : undefined;
   const message =
-    op === "decompose" || op === "update_plan" || op === "update_step"
+    op === "decompose" || op === "update_plan" || op === "update_step" || updateAction === "step" || updateAction === "plan"
       ? "Internal reflection cannot update the current horizon directly. Call goal op=reflect with decision=expand and concrete steps, decision=done with verification_evidence, or decision=blocked."
       : `Internal reflection cannot call goal op=${op}. Call goal op=reflect with decision=expand, done, or blocked.`;
   return state ? failGoalWithState(state, "goal_reflection_decision_required", message) : fail("goal_missing", "No goal to reflect on.");
@@ -368,6 +467,188 @@ function updateLedger(args: JsonObject, context: ToolExecutionContext): ToolResu
   }
 }
 
+function addLedgerCandidate(args: JsonObject, context: ToolExecutionContext): ToolResult {
+  const state = readGoalState(context.store, context.session_id);
+  if (!state) {
+    return fail("goal_missing", "No goal to update.");
+  }
+  if (state.goal.status === "complete" || state.goal.status === "dropped") {
+    return fail("goal_closed", `Cannot update a ${state.goal.status} goal.`);
+  }
+  const candidate = singleCandidateArg(args);
+  if (!candidate) {
+    return failGoalWithState(state, "goal_candidate_required", "title is required for op=add_candidate");
+  }
+  try {
+    let next = appendGoalLedgerCandidate(state, candidate);
+    next = promoteBootstrapFrontierCandidates(next);
+    return describeGoal(writeGoalState(context.store, context.session_id, next, context.run_id), "Goal candidate added", context);
+  } catch (error) {
+    return failGoalWithState(state, "goal_candidate_add_failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
+function closeLedgerCandidate(args: JsonObject, context: ToolExecutionContext, status: GoalCandidateCloseInput["status"]): ToolResult {
+  const state = readGoalState(context.store, context.session_id);
+  if (!state) {
+    return fail("goal_missing", "No goal to update.");
+  }
+  if (state.goal.status === "complete" || state.goal.status === "dropped") {
+    return fail("goal_closed", `Cannot update a ${state.goal.status} goal.`);
+  }
+  const input: GoalCandidateCloseInput = {
+    candidate_id: stringArg(args.candidate_id) ?? stringArg(args.id),
+    title: stringArg(args.title),
+    status,
+    reason: stringArg(args.reason) ?? stringArg(args.summary),
+    evidence: objectArg(args.evidence) ?? objectArg(args.verification_evidence),
+  };
+  if (!input.candidate_id && !input.title) {
+    return failGoalWithState(state, "goal_candidate_required", "candidate_id or title is required for op=close_candidate/reject_candidate");
+  }
+  try {
+    const next = closeGoalLedgerCandidate(state, input);
+    return describeGoal(writeGoalState(context.store, context.session_id, next, context.run_id), status === "done" ? "Goal candidate closed" : "Goal candidate rejected", context);
+  } catch (error) {
+    return failGoalWithState(state, "goal_candidate_close_failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
+function setDeliveryContract(args: JsonObject, context: ToolExecutionContext): ToolResult {
+  const state = readGoalState(context.store, context.session_id);
+  if (!state) {
+    return fail("goal_missing", "No goal to update.");
+  }
+  if (state.goal.status === "complete" || state.goal.status === "dropped") {
+    return fail("goal_closed", `Cannot update a ${state.goal.status} goal.`);
+  }
+  const input: GoalDeliveryContractInput = {
+    success_criteria: stringArrayArg(args.success_criteria),
+    constraints: stringArrayArg(args.constraints),
+    assumptions: stringArrayArg(args.assumptions),
+    non_goals: stringArrayArg(args.non_goals),
+    required_evidence: stringArrayArg(args.required_evidence),
+    risk_surfaces: stringArrayArg(args.risk_surfaces),
+  };
+  try {
+    const next = updateGoalDeliveryContract(state, input);
+    return describeGoal(writeGoalState(context.store, context.session_id, next, context.run_id), "Goal delivery contract updated", context);
+  } catch (error) {
+    return failGoalWithState(state, "goal_delivery_contract_failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
+function updateCoverage(args: JsonObject, context: ToolExecutionContext): ToolResult {
+  const state = readGoalState(context.store, context.session_id);
+  if (!state) {
+    return fail("goal_missing", "No goal to update.");
+  }
+  if (state.goal.status === "complete" || state.goal.status === "dropped") {
+    return fail("goal_closed", `Cannot update a ${state.goal.status} goal.`);
+  }
+  const coverageItems = coverageSurfacesArg(args.coverage);
+  if (coverageItems?.length) {
+    try {
+      let next = state;
+      for (const input of coverageItems) {
+        next = updateGoalCoverageSurface(next, input);
+      }
+      return describeGoal(writeGoalState(context.store, context.session_id, next, context.run_id), "Goal coverage updated", context);
+    } catch (error) {
+      return failGoalWithState(state, "goal_coverage_update_failed", error instanceof Error ? error.message : String(error));
+    }
+  }
+  const title = stringArg(args.title)?.trim();
+  if (!title) {
+    return failGoalWithState(state, "goal_coverage_title_required", "title is required for op=update_coverage");
+  }
+  const rawStatus = args.coverage_status ?? args.status;
+  const status = parseGoalCoverageSurfaceStatusArg(rawStatus);
+  if (rawStatus !== undefined && !status) {
+    return failGoalWithState(state, "goal_coverage_status_invalid", "coverage status must be pending, in_progress, covered, or rejected");
+  }
+  const input: GoalCoverageSurfaceInput = {
+    id: stringArg(args.surface_id) ?? stringArg(args.id),
+    title,
+    status,
+    notes: stringArg(args.notes) ?? stringArg(args.summary),
+    evidence: objectArg(args.evidence) ?? objectArg(args.verification_evidence),
+    evidence_ids: stringArrayArg(args.evidence_ids),
+    confidence: parseGoalStructuralConfidenceArg(args.confidence),
+    residual_risk_id: stringArg(args.residual_risk_id),
+  };
+  try {
+    const next = updateGoalCoverageSurface(state, input);
+    return describeGoal(writeGoalState(context.store, context.session_id, next, context.run_id), "Goal coverage updated", context);
+  } catch (error) {
+    return failGoalWithState(state, "goal_coverage_update_failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
+function updateFrontier(args: JsonObject, context: ToolExecutionContext): ToolResult {
+  const state = readGoalState(context.store, context.session_id);
+  if (!state) {
+    return fail("goal_missing", "No goal to update.");
+  }
+  if (state.goal.status === "complete" || state.goal.status === "dropped") {
+    return fail("goal_closed", `Cannot update a ${state.goal.status} goal.`);
+  }
+  const inputs = frontierItemsArg(args.frontier) ?? [singleFrontierArg(args)].filter((item): item is GoalFrontierInput => Boolean(item));
+  if (!inputs.length) {
+    return failGoalWithState(state, "goal_frontier_required", "title is required for goal op=update action=frontier.");
+  }
+  try {
+    let next = state;
+    for (const input of inputs) {
+      next = upsertGoalFrontierItem(next, input);
+    }
+    next = promoteBootstrapFrontierCandidates(next);
+    return describeGoal(writeGoalState(context.store, context.session_id, next, context.run_id), "Goal frontier updated", context);
+  } catch (error) {
+    return failGoalWithState(state, "goal_frontier_update_failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
+function updateEvidenceRecord(args: JsonObject, context: ToolExecutionContext): ToolResult {
+  const state = readGoalState(context.store, context.session_id);
+  if (!state) {
+    return fail("goal_missing", "No goal to update.");
+  }
+  if (state.goal.status === "complete" || state.goal.status === "dropped") {
+    return fail("goal_closed", `Cannot update a ${state.goal.status} goal.`);
+  }
+  const input = evidenceRecordArg(args.evidence_record) ?? evidenceRecordArg(args);
+  if (!input) {
+    return failGoalWithState(state, "goal_evidence_record_required", "goal op=update action=evidence requires a title, summary, command, path, or uri.");
+  }
+  try {
+    const next = upsertGoalEvidenceRecord(state, input);
+    return describeGoal(writeGoalState(context.store, context.session_id, next, context.run_id), "Goal evidence recorded", context);
+  } catch (error) {
+    return failGoalWithState(state, "goal_evidence_record_failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
+function updateResidualRisk(args: JsonObject, context: ToolExecutionContext): ToolResult {
+  const state = readGoalState(context.store, context.session_id);
+  if (!state) {
+    return fail("goal_missing", "No goal to update.");
+  }
+  if (state.goal.status === "complete" || state.goal.status === "dropped") {
+    return fail("goal_closed", `Cannot update a ${state.goal.status} goal.`);
+  }
+  const input = residualRiskArg(args.residual_risk) ?? residualRiskArg(args);
+  if (!input) {
+    return failGoalWithState(state, "goal_residual_risk_required", "goal op=update action=residual_risk requires title.");
+  }
+  try {
+    const next = upsertGoalResidualRisk(state, input);
+    return describeGoal(writeGoalState(context.store, context.session_id, next, context.run_id), "Goal residual risk updated", context);
+  } catch (error) {
+    return failGoalWithState(state, "goal_residual_risk_failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
 function promoteBootstrapFrontierCandidates(state: GoalState): GoalState {
   const planning = state.goal.planning;
   if (!planning || state.goal.preference !== "deliver" || state.goal.horizon_generation !== 0) {
@@ -404,7 +685,7 @@ function promoteBootstrapFrontierCandidates(state: GoalState): GoalState {
 }
 
 function openFrontierCandidates(goal: GoalRecord): GoalCandidate[] {
-  const candidates = goal.ledger?.open ?? [];
+  const candidates = meaningfulOpenGoalCandidates(goal);
   return candidates
     .filter((candidate) => candidate.value === "high" || candidate.value === "medium")
     .slice()
@@ -443,6 +724,7 @@ function recordGoalReflection(args: JsonObject, context: ToolExecutionContext): 
       decision,
       summary: stringArg(args.summary),
       verification_evidence: objectArg(args.verification_evidence) ?? objectArg(args.evidence),
+      reflection_packet: objectArg(args.reflection_packet),
       blocker: stringArg(args.blocker),
       steps: stepsArg(args.steps),
       active_step_id: stringArg(args.active_step_id),
@@ -461,6 +743,7 @@ function recordGoalReflection(args: JsonObject, context: ToolExecutionContext): 
           action: decision,
           summary: saved.goal.pending_review_decision?.summary,
           verification_evidence: saved.goal.pending_review_decision?.verification_evidence,
+          reflection_packet: saved.goal.pending_review_decision?.reflection_packet,
           blocker: saved.goal.pending_review_decision?.blocker,
           step_count: saved.goal.pending_review_decision?.steps?.length ?? 0,
         },
@@ -480,6 +763,7 @@ function recordGoalReflection(args: JsonObject, context: ToolExecutionContext): 
         horizon_generation: saved.goal.horizon_generation,
         decision,
         summary: saved.goal.last_reflection_summary,
+        reflection_packet: saved.goal.last_reflection_packet,
         verification_evidence: saved.goal.verification_evidence,
         blocker: saved.goal.blocker,
       },
@@ -491,6 +775,7 @@ function recordGoalReflection(args: JsonObject, context: ToolExecutionContext): 
       rule_summary: "Loop Skill guided a reflection decision with explicit verification or blocker evidence.",
       decision,
       evidence: {
+        reflection_packet: input.reflection_packet,
         verification_evidence: input.verification_evidence,
         blocker: input.blocker,
       },
@@ -601,17 +886,30 @@ async function approveGoalReviewDecision(state: GoalState, context: ToolExecutio
     decision: pending.action,
     summary: pending.summary,
     verification_evidence: pending.verification_evidence,
+    reflection_packet: pending.reflection_packet,
     blocker: pending.blocker,
     steps: pending.steps,
     active_step_id: pending.active_step_id,
   };
   const reflected = completeGoalReflection(state, reflectionInput, pending.source_run_id ?? context.run_id ?? "");
   if (pending.action === "done") {
+    const recursiveMessage = goalCompletionRecursiveBlockMessage(reflected.goal);
+    if (recursiveMessage) {
+      return failGoalWithState(state, "goal_recursive_reflection_required", recursiveMessage);
+    }
     if (reflected.goal.preference === "discover") {
       const researchMessage = researchCompletionBlockMessage(readAutoresearchState(context.store, context.session_id));
       if (researchMessage) {
         return failGoalWithState(state, "goal_research_evidence_required", researchMessage);
       }
+    }
+    const candidateMessage = goalCompletionCandidateBlockMessage(reflected.goal);
+    if (candidateMessage) {
+      return failGoalWithState(state, "goal_completion_candidates_remaining", candidateMessage);
+    }
+    const structuralMessage = goalCompletionStructuralBlockMessage(reflected.goal);
+    if (structuralMessage) {
+      return failGoalWithState(state, "goal_structural_evidence_required", structuralMessage);
     }
     const verifierMessage = goalVerifierPolicyCompletionBlockMessage(context.store, context.session_id, reflected.goal, {
       request_class: context.request_class,
@@ -674,6 +972,7 @@ function appendApprovedReflectionEvents(
       horizon_generation: saved.goal.horizon_generation,
       decision: pending.action,
       summary: saved.goal.last_reflection_summary,
+      reflection_packet: saved.goal.last_reflection_packet,
       verification_evidence: saved.goal.verification_evidence,
       blocker: saved.goal.blocker,
       reviewed: true,
@@ -878,15 +1177,23 @@ async function finishGoal(args: JsonObject, context: ToolExecutionContext, statu
     if (reflectionMessage) {
       return failGoalWithState(state, "goal_reflection_required", reflectionMessage);
     }
-    const candidateMessage = goalCompletionCandidateBlockMessage(state.goal);
-    if (candidateMessage) {
-      return failGoalWithState(state, "goal_completion_candidates_remaining", candidateMessage);
+    const recursiveMessage = goalCompletionRecursiveBlockMessage(state.goal);
+    if (recursiveMessage) {
+      return failGoalWithState(state, "goal_recursive_reflection_required", recursiveMessage);
     }
     if (state.goal.preference === "discover") {
       const researchMessage = researchCompletionBlockMessage(readAutoresearchState(context.store, context.session_id));
       if (researchMessage) {
         return failGoalWithState(state, "goal_research_evidence_required", researchMessage);
       }
+    }
+    const candidateMessage = goalCompletionCandidateBlockMessage(state.goal);
+    if (candidateMessage) {
+      return failGoalWithState(state, "goal_completion_candidates_remaining", candidateMessage);
+    }
+    const structuralMessage = goalCompletionStructuralBlockMessage(state.goal);
+    if (structuralMessage) {
+      return failGoalWithState(state, "goal_structural_evidence_required", structuralMessage);
     }
     const verifierMessage = goalVerifierPolicyCompletionBlockMessage(context.store, context.session_id, state.goal, {
       request_class: context.request_class,
@@ -1155,6 +1462,213 @@ function commandVerifiersArg(value: unknown): GoalCommandVerifierInput[] | undef
 
 function parseGoalCandidateValueArg(value: unknown): GoalCandidateValue | undefined {
   return value === "high" || value === "medium" || value === "low" ? value : undefined;
+}
+
+function parseGoalCoverageSurfaceStatusArg(value: unknown): GoalCoverageSurfaceStatus | undefined {
+  return value === "pending" || value === "in_progress" || value === "covered" || value === "rejected" ? value : undefined;
+}
+
+function parseGoalFrontierStatusArg(value: unknown): GoalFrontierStatus | undefined {
+  return value === "open" || value === "done" || value === "rejected" ? value : undefined;
+}
+
+function parseGoalStructuralConfidenceArg(value: unknown): GoalStructuralConfidence | undefined {
+  return value === "hard" || value === "soft" || value === "weak" ? value : undefined;
+}
+
+function parseGoalEvidenceKindArg(value: unknown): GoalEvidenceKind | undefined {
+  return value === "command"
+    || value === "test"
+    || value === "file"
+    || value === "resource"
+    || value === "metric"
+    || value === "review"
+    || value === "manual"
+    || value === "other"
+    ? value
+    : undefined;
+}
+
+function stringArrayArg(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const values = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return values.length ? values : [];
+}
+
+function singleCandidateArg(args: JsonObject): GoalCandidateInput | undefined {
+  const title = stringArg(args.title)?.trim();
+  if (!title) {
+    return undefined;
+  }
+  return {
+    id: stringArg(args.candidate_id) ?? stringArg(args.id),
+    title,
+    source: stringArg(args.source),
+    value: parseGoalCandidateValueArg(args.value),
+    reason: stringArg(args.reason) ?? stringArg(args.summary),
+    evidence: objectArg(args.evidence) ?? objectArg(args.verification_evidence),
+  };
+}
+
+function singleFrontierArg(args: JsonObject): GoalFrontierInput | undefined {
+  const title = stringArg(args.title)?.trim();
+  if (!title) {
+    return undefined;
+  }
+  const status = parseGoalFrontierStatusArg(args.frontier_status ?? args.candidate_status ?? args.status);
+  return {
+    id: stringArg(args.frontier_id) ?? stringArg(args.candidate_id) ?? stringArg(args.id),
+    title,
+    source: stringArg(args.source),
+    value: parseGoalCandidateValueArg(args.value),
+    status,
+    reason: stringArg(args.reason) ?? stringArg(args.summary),
+    evidence: objectArg(args.evidence) ?? objectArg(args.verification_evidence),
+    evidence_ids: stringArrayArg(args.evidence_ids),
+    residual_risk_id: stringArg(args.residual_risk_id),
+  };
+}
+
+function coverageSurfacesArg(value: unknown): GoalCoverageSurfaceInput[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const surfaces: GoalCoverageSurfaceInput[] = [];
+  for (const item of value) {
+    if (typeof item === "string") {
+      const title = item.trim();
+      if (title) {
+        surfaces.push({ title });
+      }
+      continue;
+    }
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+    const data = item as Record<string, unknown>;
+    const title = stringArg(data.title)?.trim();
+    if (!title) {
+      continue;
+    }
+    surfaces.push({
+      id: stringArg(data.surface_id) ?? stringArg(data.id),
+      title,
+      status: parseGoalCoverageSurfaceStatusArg(data.coverage_status ?? data.status),
+      notes: stringArg(data.notes) ?? stringArg(data.summary),
+      evidence: objectArg(data.evidence) ?? objectArg(data.verification_evidence),
+      evidence_ids: stringArrayArg(data.evidence_ids),
+      confidence: parseGoalStructuralConfidenceArg(data.confidence),
+      residual_risk_id: stringArg(data.residual_risk_id),
+    });
+  }
+  return surfaces.length ? surfaces : undefined;
+}
+
+function frontierItemsArg(value: unknown): GoalFrontierInput[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const items: GoalFrontierInput[] = [];
+  for (const item of value) {
+    if (typeof item === "string") {
+      const title = item.trim();
+      if (title) {
+        items.push({ title });
+      }
+      continue;
+    }
+    const parsed = frontierItemArg(item);
+    if (parsed) {
+      items.push(parsed);
+    }
+  }
+  return items.length ? items : undefined;
+}
+
+function frontierItemArg(value: unknown): GoalFrontierInput | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const data = value as Record<string, unknown>;
+  const title = stringArg(data.title)?.trim();
+  if (!title) {
+    return undefined;
+  }
+  return {
+    id: stringArg(data.id) ?? stringArg(data.frontier_id) ?? stringArg(data.candidate_id),
+    title,
+    source: stringArg(data.source),
+    value: parseGoalCandidateValueArg(data.value),
+    status: parseGoalFrontierStatusArg(data.status ?? data.frontier_status ?? data.candidate_status),
+    reason: stringArg(data.reason) ?? stringArg(data.summary),
+    evidence: objectArg(data.evidence) ?? objectArg(data.verification_evidence),
+    evidence_ids: stringArrayArg(data.evidence_ids),
+    residual_risk_id: stringArg(data.residual_risk_id),
+  };
+}
+
+function evidenceRecordArg(value: unknown): GoalEvidenceRecordInput | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const data = value as Record<string, unknown>;
+  const title = stringArg(data.title);
+  const summary = stringArg(data.summary);
+  const command = stringArg(data.command);
+  const path = stringArg(data.path);
+  const uri = stringArg(data.uri) ?? stringArg(data.evidence_resource_uri);
+  if (!title && !summary && !command && !path && !uri) {
+    return undefined;
+  }
+  return {
+    id: stringArg(data.evidence_id) ?? stringArg(data.id),
+    kind: parseGoalEvidenceKindArg(data.kind) ?? inferGoalEvidenceKind({ command, path, uri }),
+    title,
+    summary,
+    command,
+    path,
+    uri,
+    metrics: objectArg(data.metrics),
+    evidence: objectArg(data.evidence) ?? objectArg(data.verification_evidence),
+    confidence: parseGoalStructuralConfidenceArg(data.confidence),
+  };
+}
+
+function inferGoalEvidenceKind(input: { command?: string; path?: string; uri?: string }): GoalEvidenceKind {
+  if (input.command) {
+    return "command";
+  }
+  if (input.path) {
+    return "file";
+  }
+  if (input.uri) {
+    return input.uri.startsWith("resource://") ? "resource" : "other";
+  }
+  return "other";
+}
+
+function residualRiskArg(value: unknown): GoalResidualRiskInput | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const data = value as Record<string, unknown>;
+  const title = stringArg(data.title)?.trim();
+  if (!title) {
+    return undefined;
+  }
+  return {
+    id: stringArg(data.risk_id) ?? stringArg(data.id),
+    title,
+    severity: parseGoalCandidateValueArg(data.severity) ?? parseGoalCandidateValueArg(data.value),
+    accepted: typeof data.accepted === "boolean" ? data.accepted : undefined,
+    reason: stringArg(data.reason) ?? stringArg(data.summary),
+    evidence_ids: stringArrayArg(data.evidence_ids),
+  };
 }
 
 function candidatesArg(value: unknown): GoalCandidateInput[] | undefined {

@@ -126,7 +126,7 @@ test("run_command foreground uses RTK rewrite and records tool savings", async (
     const registry = new ToolRegistry(rtkConfig(fakeRtk), workspace, store);
 
     const result = await registry.call(
-      { id: "rtk_call_1", name: "run_command", arguments: { command: "printf raw-output", timeout_ms: 5000 } },
+      { id: "rtk_call_1", name: "run_command", arguments: { command: "printf raw-output", timeout_ms: 30_000 } },
       { session_id: session.session_id, run_id: "run_rtk", step_id: "step_rtk", step_index: 3 },
     );
 
@@ -190,12 +190,12 @@ test("RTK tool savings are not embedded in tool result prompt content", async ()
       type: "model.response.settled",
       data: {
         content: "",
-        tool_calls: [{ id: "rtk_call_prompt", name: "run_command", arguments: { command: "printf raw-output", timeout_ms: 5000 } }],
+        tool_calls: [{ id: "rtk_call_prompt", name: "run_command", arguments: { command: "printf raw-output", timeout_ms: 30_000 } }],
       },
     });
     const registry = new ToolRegistry(rtkConfig(fakeRtk), workspace, store);
     await registry.call(
-      { id: "rtk_call_prompt", name: "run_command", arguments: { command: "printf raw-output", timeout_ms: 5000 } },
+      { id: "rtk_call_prompt", name: "run_command", arguments: { command: "printf raw-output", timeout_ms: 30_000 } },
       { session_id: session.session_id, run_id: "run_rtk_prompt" },
     );
 

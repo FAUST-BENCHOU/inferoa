@@ -45,6 +45,10 @@ export interface AutoresearchResult {
   metric: number | null;
   metrics: Record<string, number>;
   description: string;
+  command?: string;
+  output_resource_uri?: string;
+  reward_hack_check?: string;
+  variance_check?: string;
   asi: JsonObject;
   logged_at: string;
 }
@@ -56,6 +60,12 @@ export interface AutoresearchExperiment {
   primary_metric: string;
   metric_unit: string;
   direction: MetricDirection;
+  hypothesis?: string;
+  intervention?: string;
+  baseline?: string;
+  controls?: string[];
+  reward_hack_risks?: string[];
+  variance_plan?: string;
   scope_paths: string[];
   off_limits: string[];
   constraints: string[];
@@ -155,6 +165,12 @@ export function createExperiment(input: {
   primary_metric: string;
   metric_unit?: string;
   direction?: MetricDirection;
+  hypothesis?: string;
+  intervention?: string;
+  baseline?: string;
+  controls?: string[];
+  reward_hack_risks?: string[];
+  variance_plan?: string;
   scope_paths?: string[];
   off_limits?: string[];
   constraints?: string[];
@@ -180,6 +196,12 @@ export function createExperiment(input: {
     primary_metric: primaryMetric,
     metric_unit: input.metric_unit?.trim() ?? "",
     direction: input.direction ?? "lower",
+    hypothesis: input.hypothesis?.trim() || input.goal?.trim() || undefined,
+    intervention: input.intervention?.trim() || undefined,
+    baseline: input.baseline?.trim() || undefined,
+    controls: cleanStringList(input.controls),
+    reward_hack_risks: cleanStringList(input.reward_hack_risks),
+    variance_plan: input.variance_plan?.trim() || undefined,
     scope_paths: cleanStringList(input.scope_paths),
     off_limits: cleanStringList(input.off_limits),
     constraints: cleanStringList(input.constraints),
@@ -210,6 +232,8 @@ export function logPendingRun(
     metric: number | null;
     description: string;
     metrics?: Record<string, number>;
+    reward_hack_check?: string;
+    variance_check?: string;
     asi?: JsonObject;
   },
 ): AutoresearchExperiment {
@@ -241,6 +265,10 @@ export function logPendingRun(
     metric: input.metric,
     metrics,
     description,
+    command: pending.command,
+    output_resource_uri: pending.output_resource_uri,
+    reward_hack_check: input.reward_hack_check?.trim() || undefined,
+    variance_check: input.variance_check?.trim() || undefined,
     asi: { ...pending.asi, ...(input.asi ?? {}) },
     logged_at: new Date().toISOString(),
   };
@@ -314,6 +342,9 @@ export function researchCompletionBlockMessage(state: AutoresearchState): string
   if (pending?.pending_run) {
     return `Cannot complete research goal while experiment "${pending.name}" has pending run ${pending.pending_run.id}; log it first.`;
   }
+  if (!normalized.experiments.length) {
+    return "Cannot complete research goal without an initialized experiment thread.";
+  }
   const loggedRuns = normalized.experiments.reduce((count, experiment) => count + experiment.results.length, 0);
   if (loggedRuns === 0) {
     return "Cannot complete research goal without logged benchmark or metric evidence.";
@@ -321,6 +352,40 @@ export function researchCompletionBlockMessage(state: AutoresearchState): string
   const metricEvidence = normalized.experiments.some((experiment) => experiment.results.some((result) => typeof result.metric === "number"));
   if (!metricEvidence) {
     return "Cannot complete research goal without a logged primary metric or explicit metric evidence.";
+  }
+  const lifecycleBlockers: string[] = [];
+  const experimentsWithRuns = normalized.experiments.filter((experiment) => experiment.results.length > 0);
+  for (const experiment of experimentsWithRuns) {
+    const missingThread = [
+      experiment.hypothesis ? undefined : "hypothesis",
+      experiment.intervention ? undefined : "intervention",
+      experiment.baseline ? undefined : "baseline",
+      experiment.controls?.length ? undefined : "controls",
+      experiment.reward_hack_risks?.length ? undefined : "reward_hack_risks",
+      experiment.variance_plan ? undefined : "variance_plan",
+    ].filter((item): item is string => Boolean(item));
+    if (missingThread.length) {
+      lifecycleBlockers.push(`${experiment.name} missing ${missingThread.join(", ")}`);
+    }
+    const kept = experiment.results.filter((result) => result.status === "keep");
+    if (!kept.length) {
+      lifecycleBlockers.push(`${experiment.name} has no kept result to support the conclusion`);
+    }
+    if (kept.some((result) => !result.reward_hack_check)) {
+      lifecycleBlockers.push(`${experiment.name} kept result lacks reward_hack_check`);
+    }
+    if (kept.some((result) => !result.variance_check)) {
+      lifecycleBlockers.push(`${experiment.name} kept result lacks variance_check`);
+    }
+    if (kept.some((result) => !result.output_resource_uri && !experiment.harness_status?.output_resource_uri)) {
+      lifecycleBlockers.push(`${experiment.name} kept result lacks output artifact URI`);
+    }
+    if (experiment.status === "active") {
+      lifecycleBlockers.push(`${experiment.name} is still active; mark it completed or rejected with the reason to stop`);
+    }
+  }
+  if (lifecycleBlockers.length) {
+    return `Cannot complete research goal until experiment lifecycle evidence is complete: ${lifecycleBlockers.slice(0, 6).join("; ")}.`;
   }
   return undefined;
 }
@@ -347,7 +412,10 @@ export function renderAutoresearchModeSection(state: AutoresearchState): string 
   const recent = experiment.results.slice(-5).map((result) => {
     const metric = escapeXmlText(formatMetric(result.metric, experiment.metric_unit));
     const description = truncateInlinePromptText(result.description, AUTORESEARCH_RESULT_DESCRIPTION_LIMIT);
-    return `- run ${result.run_id}: ${result.status} ${escapeXmlText(experiment.primary_metric)}=${metric} ${escapeXmlText(description)}`;
+    const reward = result.reward_hack_check ? ` reward_check=${escapeXmlText(truncateInlinePromptText(result.reward_hack_check, 180))}` : "";
+    const variance = result.variance_check ? ` variance_check=${escapeXmlText(truncateInlinePromptText(result.variance_check, 180))}` : "";
+    const artifact = result.output_resource_uri ? ` artifact=${escapeXmlText(result.output_resource_uri)}` : "";
+    return `- run ${result.run_id}: ${result.status} ${escapeXmlText(experiment.primary_metric)}=${metric} ${escapeXmlText(description)}${reward}${variance}${artifact}`;
   });
   const notes = truncateText(experiment.notes.trim(), AUTORESEARCH_PROMPT_NOTES_LIMIT).text;
   return [
@@ -356,6 +424,7 @@ export function renderAutoresearchModeSection(state: AutoresearchState): string 
     `Experiments: ${lifecycle.active} active; ${lifecycle.completed} completed; ${lifecycle.rejected} rejected`,
     `Active experiment: ${escapeXmlText(experiment.name)} (${experiment.status})`,
     `Primary metric: ${escapeXmlText(experiment.primary_metric)} (${escapeXmlText(experiment.metric_unit || "unitless")}; ${experiment.direction} is better)`,
+    renderResearchThread(experiment),
     `Best kept metric: ${experiment.best_metric === null ? "none" : escapeXmlText(formatMetric(experiment.best_metric, experiment.metric_unit))}`,
     `Progress: ${formatProgress(progress)}`,
     progress.keep_cap === undefined
@@ -373,6 +442,20 @@ export function renderAutoresearchModeSection(state: AutoresearchState): string 
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
+}
+
+function renderResearchThread(experiment: AutoresearchExperiment): string | undefined {
+  const controls = experiment.controls ?? [];
+  const rewardHackRisks = experiment.reward_hack_risks ?? [];
+  const lines = [
+    experiment.hypothesis ? `Hypothesis: ${escapeXmlText(experiment.hypothesis)}` : undefined,
+    experiment.intervention ? `Intervention: ${escapeXmlText(experiment.intervention)}` : undefined,
+    experiment.baseline ? `Baseline: ${escapeXmlText(experiment.baseline)}` : undefined,
+    controls.length ? `Controls: ${controls.map(escapeXmlText).join("; ")}` : undefined,
+    rewardHackRisks.length ? `Reward-hack risks: ${rewardHackRisks.map(escapeXmlText).join("; ")}` : undefined,
+    experiment.variance_plan ? `Variance plan: ${escapeXmlText(experiment.variance_plan)}` : undefined,
+  ].filter((line): line is string => Boolean(line));
+  return lines.length ? `Research thread:\n${lines.join("\n")}` : undefined;
 }
 
 function truncateInlinePromptText(value: string, limit: number): string {
@@ -444,9 +527,11 @@ function cloneExperiment(experiment: AutoresearchExperiment): AutoresearchExperi
   return {
     ...experiment,
     status: experiment.status ?? "active",
-    scope_paths: [...experiment.scope_paths],
-    off_limits: [...experiment.off_limits],
-    constraints: [...experiment.constraints],
+    controls: [...(experiment.controls ?? [])],
+    reward_hack_risks: [...(experiment.reward_hack_risks ?? [])],
+    scope_paths: [...(experiment.scope_paths ?? [])],
+    off_limits: [...(experiment.off_limits ?? [])],
+    constraints: [...(experiment.constraints ?? [])],
     harness_status: experiment.harness_status ? cloneHarnessValidation(experiment.harness_status) : undefined,
     pending_run: experiment.pending_run ? { ...experiment.pending_run, parsed_metrics: { ...experiment.pending_run.parsed_metrics }, asi: { ...experiment.pending_run.asi } } : undefined,
     results: experiment.results.map((result) => ({
@@ -487,6 +572,11 @@ function normalizeAutoresearchState(state: AutoresearchState): AutoresearchState
   const experiments = experimentsFromState(state).map((experiment) => ({
     ...experiment,
     status: experiment.status ?? "active",
+    controls: experiment.controls ?? [],
+    reward_hack_risks: experiment.reward_hack_risks ?? [],
+    scope_paths: experiment.scope_paths ?? [],
+    off_limits: experiment.off_limits ?? [],
+    constraints: experiment.constraints ?? [],
   }));
   const active =
     (state.active_experiment_name ? experiments.find((experiment) => experiment.name === state.active_experiment_name) : undefined) ??
@@ -539,6 +629,12 @@ function parseExperiment(value: unknown): AutoresearchExperiment | undefined {
     primary_metric: primaryMetric,
     metric_unit: typeof data.metric_unit === "string" ? data.metric_unit : "",
     direction,
+    hypothesis: typeof data.hypothesis === "string" ? data.hypothesis : undefined,
+    intervention: typeof data.intervention === "string" ? data.intervention : undefined,
+    baseline: typeof data.baseline === "string" ? data.baseline : undefined,
+    controls: stringArray(data.controls),
+    reward_hack_risks: stringArray(data.reward_hack_risks),
+    variance_plan: typeof data.variance_plan === "string" ? data.variance_plan : undefined,
     scope_paths: stringArray(data.scope_paths),
     off_limits: stringArray(data.off_limits),
     constraints: stringArray(data.constraints),
@@ -628,6 +724,10 @@ function parseResult(value: unknown): AutoresearchResult | undefined {
     metric,
     metrics: numericRecord(data.metrics),
     description,
+    command: typeof data.command === "string" ? data.command : undefined,
+    output_resource_uri: typeof data.output_resource_uri === "string" ? data.output_resource_uri : undefined,
+    reward_hack_check: typeof data.reward_hack_check === "string" ? data.reward_hack_check : undefined,
+    variance_check: typeof data.variance_check === "string" ? data.variance_check : undefined,
     asi: objectRecord(data.asi),
     logged_at: typeof data.logged_at === "string" ? data.logged_at : "",
   };
