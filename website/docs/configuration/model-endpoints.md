@@ -58,6 +58,8 @@ You can also set:
 INFEROA_MODE=auto inferoa
 ```
 
+In a loop, the TUI shows `selected: <model> / <decision>`. See [Loop mode](../workflows/loop-mode.md#intelligent-model-selection).
+
 ## External Compatible Providers
 
 External providers are useful for compatibility validation or fallback paths.

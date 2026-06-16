@@ -22,6 +22,14 @@ Use loop mode when the desired outcome is clear but the work is long:
 Do not use loop mode as a substitute for planning ambiguous scope. If the task
 needs approval before edits begin, start with [Plan mode](./plan-mode.md).
 
+## Intelligent Model Selection
+
+With `INFEROA_MODE=auto` and [vLLM Semantic Router](https://github.com/vllm-project/semantic-router), each loop turn can route to a different model. The TUI shows `selected: <model> / <decision>`.
+
+![Inferoa intelligent model selection during a loop](/gif/model-selection.gif)
+
+See [Model endpoints](../configuration/model-endpoints.md) for setup.
+
 ## Basic Commands
 
 ```text

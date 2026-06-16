@@ -46,7 +46,12 @@ export class ModelGateway {
     };
   }
 
-  async stream(request: ModelRequest, onDelta?: (text: string) => void, signal?: AbortSignal): Promise<ModelResponse> {
+  async stream(
+    request: ModelRequest,
+    onDelta?: (text: string) => void,
+    signal?: AbortSignal,
+    onRoute?: (route: JsonObject | undefined) => void,
+  ): Promise<ModelResponse> {
     throwIfAborted(signal);
     const setup = this.config.model_setup;
     if (!setup.base_url) {
@@ -73,7 +78,7 @@ export class ModelGateway {
     if (setup.provider === "external" && effectiveProfile === "gemini") {
       return await this.callGemini(effectiveSetup, request, onDelta, signal);
     }
-    return await this.callOpenAiCompatible(effectiveSetup, request, onDelta, signal);
+    return await this.callOpenAiCompatible(effectiveSetup, request, onDelta, signal, onRoute);
   }
 
   private async callOpenAiCompatible(
@@ -81,6 +86,7 @@ export class ModelGateway {
     request: ModelRequest,
     onDelta?: (text: string) => void,
     signal?: AbortSignal,
+    onRoute?: (route: JsonObject | undefined) => void,
   ): Promise<ModelResponse> {
     throwIfAborted(signal);
     const base = modelBaseUrl(setup);
@@ -110,6 +116,7 @@ export class ModelGateway {
       signal,
     });
     const headerSignals = signalHeaders(response.headers);
+    onRoute?.(routeFromHeaders(headerSignals));
     if (!response.ok || !response.body) {
       throw await modelGatewayHttpError("Model", response, headerSignals);
     }
@@ -962,7 +969,22 @@ function resolveOpenAiToolCallIndex(
 
 function routeFromHeaders(headers: Record<string, string>): JsonObject | undefined {
   const route: JsonObject = {};
-  for (const key of ["x-router-model", "x-selected-model", "endpoint-load-metrics"]) {
+  for (const key of [
+    // vLLM Semantic Router (public contract)
+    "x-vsr-selected-model",
+    "x-vsr-selected-decision",
+    "x-vsr-selected-category",
+    "x-vsr-selected-confidence",
+    "x-vsr-selected-reasoning",
+    "x-vsr-selected-modality",
+    "x-vsr-session-phase",
+    "x-vsr-cache-hit",
+    "x-vsr-replay-id",
+    // legacy / integration variants
+    "x-selected-model",
+    "x-router-model",
+    "endpoint-load-metrics",
+  ]) {
     if (headers[key]) {
       route[key] = headers[key];
     }

@@ -30,6 +30,11 @@ const sessionDemos = [
     image: "/gif/loop.gif",
   },
   {
+    title: "Intelligent Model Selection",
+    body: "Auto mode with vLLM Semantic Router: per-turn model routing, visible as selected: model / decision.",
+    image: "/gif/model-selection.gif",
+  },
+  {
     title: "Plan Mode",
     body: "Ambiguous scope becomes an inspectable plan before execution starts.",
     image: "/gif/plan.gif",

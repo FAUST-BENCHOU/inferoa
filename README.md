@@ -37,6 +37,8 @@ Engineering**:
 <div align="center">
   <p><strong>Loop Mode</strong></p>
   <img src="website/static/gif/loop.gif" alt="Inferoa loop mode" width="860" />
+  <p><strong>Intelligent Model Selection</strong></p>
+  <img src="website/static/gif/model-selection.gif" alt="Inferoa intelligent model selection" width="860" />
   <p><strong>Code Index</strong></p>
   <img src="website/static/gif/welcome.gif" alt="Inferoa code index" width="860" />
   <p><strong>Plan Mode</strong></p>

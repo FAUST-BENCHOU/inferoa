@@ -365,6 +365,7 @@ export class TuiApp {
   #inlineRenderedContent: string[] | undefined;
   #toolTraceMode: ToolTraceMode = "compact";
   #composerFooter: string | undefined;
+  #composerSelectedRoute: string | undefined;
   #composerActivity: string | undefined;
   #composerQueue: string[] | undefined;
   #composerPanel: ComposerPanel | undefined;
@@ -1452,6 +1453,8 @@ export class TuiApp {
       fg256(75, compactWorkspacePath(this.app.workspace.root)),
       fg256(238, "·"),
       fg256(252, model),
+      this.#composerSelectedRoute ? fg256(238, "·") : undefined,
+      this.#composerSelectedRoute ? fg256(244, this.#composerSelectedRoute) : undefined,
       contextWindow ? fg256(244, "·") : undefined,
       contextWindow ? fg256(244, compactTokenWindow(contextWindow).toLowerCase()) : undefined,
     ].filter((part): part is string => Boolean(part)).join(" ");
@@ -6330,6 +6333,10 @@ export class TuiApp {
             sawModelDelta = false;
             activity.status(prefillActivity);
           }
+          if (event.type === "model_route") {
+            this.#composerSelectedRoute = routeSelectionSummary(event.route);
+            this.#activeComposerRedraw?.();
+          }
           if (event.type === "model_retry") {
             activity.status(`Retrying Inferoa in ${formatDuration(event.delay_ms)}`);
           }
@@ -6397,6 +6404,7 @@ export class TuiApp {
           finalOutput += toolSummary;
           renderState.lastSegment = "tool";
         }
+        this.#composerSelectedRoute = routeSelectionSummary(evidence.route);
         const footer = renderCacheFooter({
           ...evidence,
           latencyMs: Date.now() - startedAt,
@@ -6631,6 +6639,7 @@ export class TuiApp {
       requestId: stringField(settled.request_id) ?? stringField(evidence.request_id),
       responseId: stringField(settled.response_id) ?? stringField(evidence.response_id),
       model: stringField(settled.model) ?? stringField(evidence.model),
+      route: objectField((settled as JsonObject).route) ?? objectField((evidence as JsonObject).router),
       mode: this.app.config.model_setup.mode,
     };
   }
@@ -8981,4 +8990,23 @@ function moveCursorVertical(delta: number): void {
   } else if (delta < 0) {
     stdout.write(`\x1b[${Math.abs(delta)}A`);
   }
+}
+
+function routeSelectionSummary(route: JsonObject | undefined): string | undefined {
+  if (!route) {
+    return undefined;
+  }
+  const selectedModel =
+    headerField(route["x-vsr-selected-model"]) ??
+    headerField(route["x-selected-model"]) ??
+    headerField(route["x-router-model"]);
+  if (!selectedModel) {
+    return undefined;
+  }
+  const selectedDecision = headerField(route["x-vsr-selected-decision"]);
+  return selectedDecision ? `selected: ${selectedModel} / ${selectedDecision}` : `selected: ${selectedModel}`;
+}
+
+function headerField(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }

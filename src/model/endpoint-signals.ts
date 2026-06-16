@@ -87,6 +87,16 @@ export function signalHeaders(headers: Headers): Record<string, string> {
     "endpoint-load-metrics",
     "x-router-model",
     "x-selected-model",
+    // vLLM Semantic Router (vllm-sr) observability headers
+    "x-vsr-selected-model",
+    "x-vsr-selected-decision",
+    "x-vsr-selected-category",
+    "x-vsr-selected-confidence",
+    "x-vsr-selected-reasoning",
+    "x-vsr-selected-modality",
+    "x-vsr-session-phase",
+    "x-vsr-cache-hit",
+    "x-vsr-replay-id",
   ];
   const out: Record<string, string> = {};
   for (const key of interesting) {
