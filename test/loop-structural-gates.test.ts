@@ -11,6 +11,7 @@ import {
   replaceGoalPlanning,
   writeGoalState,
 } from "../src/goals/state.js";
+import { runGoalSupervisor, type GoalSupervisorTurnRequest } from "../src/goals/supervisor.js";
 import { SessionStore } from "../src/session/store.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 import { CORE_TOOL_DEFINITIONS } from "../src/tools/schemas.js";
@@ -73,6 +74,27 @@ function structurallyDoneGoal(): ReturnType<typeof createGoalState> {
   return state;
 }
 
+async function reflectDoneTurn(registry: ToolRegistry, sessionId: string, request: GoalSupervisorTurnRequest, packetOverrides: JsonObject = {}) {
+  assert.equal(request.requestClass, "reflection");
+  const runId = request.runId ?? "run_reflection";
+  const reflected = await registry.call(
+    {
+      id: `${runId}_done_reflection`,
+      name: "goal",
+      arguments: {
+        op: "reflect",
+        decision: "done",
+        summary: "Current horizon appears done.",
+        verification_evidence: { checked: true },
+        reflection_packet: recursiveDonePacket(packetOverrides),
+      },
+    },
+    { session_id: sessionId, run_id: runId, request_class: "reflection", visibility: "internal" },
+  );
+  assert.equal(reflected.ok, true, JSON.stringify(reflected));
+  return { run_id: runId };
+}
+
 test("free-text recursive reflection cannot complete a deliver loop with empty coverage and frontier state", async () => {
   await withGoalFixture("loop-structural-empty-coverage", async ({ store, sessionId, registry }) => {
     writeGoalState(store, sessionId, structurallyDoneGoal(), "run_seed");
@@ -116,6 +138,121 @@ test("completing seed_frontier_candidates without recorded frontier blocks compl
     assert.equal(completed.error?.code, "goal_structural_evidence_required");
     assert.match(completed.error?.message ?? "", /frontier/i);
     assert.equal(readGoalState(store, sessionId)?.goal.status, "active");
+  });
+});
+
+test("goal supervisor turns empty frontier structural gate into a frontier repair horizon", async () => {
+  await withGoalFixture("loop-structural-frontier-repair", async ({ store, sessionId, registry }) => {
+    const state = structurallyDoneGoal();
+    state.goal.coverage = {
+      surfaces: [
+        {
+          id: "local-tests",
+          title: "Local tests and focused code path",
+          status: "covered",
+          evidence: { command: "npm test fixture" },
+          updated_at: new Date().toISOString(),
+        },
+      ],
+      updated_at: new Date().toISOString(),
+    };
+    writeGoalState(store, sessionId, state, "run_seed");
+    let reflectionCalls = 0;
+
+    const result = await runGoalSupervisor({
+      store,
+      sessionId,
+      supervisor: "test",
+      maxIterations: 3,
+      shouldContinue: () => reflectionCalls < 1,
+      runTurn: async (request) => {
+        reflectionCalls += 1;
+        return reflectDoneTurn(registry, sessionId, request);
+      },
+    });
+
+    assert.equal(result.status, "stopped");
+    const current = readGoalState(store, sessionId)?.goal;
+    assert.equal(current?.status, "active");
+    assert.equal(current?.horizon_generation, 1);
+    assert.equal(current?.planning?.summary, "Loop task 1 · Frontier repair");
+    assert.equal(current?.planning?.active_step_id, "structural_frontier_seed_1");
+    assert.match(current?.planning?.steps[0]?.notes ?? "", /goal op=update action=frontier/);
+    const expansion = store.listEvents(sessionId).find((event) => event.type === "goal.horizon.expanded" && event.data.reason === "structural_completion");
+    assert.ok(expansion);
+    assert.deepEqual(
+      (expansion.data.structural_issues as Array<{ kind: string }>).map((issue) => issue.kind),
+      ["frontier_empty", "frontier_bootstrap_missing"],
+    );
+  });
+});
+
+test("goal supervisor pauses a repeated structural blocker instead of duplicating repair horizons", async () => {
+  await withGoalFixture("loop-structural-repair-fuse", async ({ store, sessionId, registry }) => {
+    const state = structurallyDoneGoal();
+    state.goal.coverage = {
+      surfaces: [
+        {
+          id: "local-tests",
+          title: "Local tests and focused code path",
+          status: "covered",
+          evidence: { command: "npm test fixture" },
+          updated_at: new Date().toISOString(),
+        },
+      ],
+      updated_at: new Date().toISOString(),
+    };
+    writeGoalState(store, sessionId, state, "run_seed");
+    let reflectionCalls = 0;
+
+    await runGoalSupervisor({
+      store,
+      sessionId,
+      supervisor: "test",
+      maxIterations: 3,
+      shouldContinue: () => reflectionCalls < 1,
+      runTurn: async (request) => {
+        reflectionCalls += 1;
+        return reflectDoneTurn(registry, sessionId, request);
+      },
+    });
+
+    const repairState = readGoalState(store, sessionId);
+    assert.equal(repairState?.goal.planning?.summary, "Loop task 1 · Frontier repair");
+    assert.match(repairState?.goal.planning?.steps[0]?.notes ?? "", /structural_block_signature=/);
+    const completedRepair = replaceGoalPlanning(repairState!, {
+      summary: repairState!.goal.planning?.summary,
+      active_step_id: repairState!.goal.planning?.active_step_id,
+      steps: repairState!.goal.planning!.steps.map((step) => ({
+        id: step.id,
+        title: step.title,
+        status: "completed",
+        notes: step.notes,
+        evidence: step.evidence,
+      })),
+    });
+    writeGoalState(store, sessionId, completedRepair, "run_complete_repair_without_frontier");
+
+    reflectionCalls = 0;
+    const result = await runGoalSupervisor({
+      store,
+      sessionId,
+      supervisor: "test",
+      maxIterations: 3,
+      shouldContinue: () => reflectionCalls < 1,
+      runTurn: async (request) => {
+        reflectionCalls += 1;
+        return reflectDoneTurn(registry, sessionId, request, { residual_risk: "No new frontier was recorded." });
+      },
+    });
+
+    assert.equal(result.status, "paused");
+    assert.match(result.reason ?? "", /same blocker signature/);
+    const current = readGoalState(store, sessionId)?.goal;
+    assert.equal(current?.status, "paused");
+    assert.equal(current?.horizon_generation, 1);
+    assert.equal(current?.planning?.summary, "Loop task 1 · Frontier repair");
+    assert.equal(store.listEvents(sessionId).filter((event) => event.type === "goal.horizon.expanded" && event.data.reason === "structural_completion").length, 1);
   });
 });
 

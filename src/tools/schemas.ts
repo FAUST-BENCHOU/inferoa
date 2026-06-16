@@ -306,10 +306,10 @@ const DEFINITIONS = [
         verdict: stringEnum("Verification verdict for op=verify.", ["pass", "fail", "partial", "blocked", "unknown"]),
         confidence: stringEnum("Verification or structural evidence confidence.", ["hard", "soft", "mixed", "weak"]),
         verification_evidence: jsonObject(
-          "Structured verification evidence for op=reflect with decision=done. This does not replace reflection_packet.",
+          "Required top-level structured verification evidence for op=reflect with decision=done. This does not replace reflection_packet.",
         ),
         reflection_packet: jsonObject(
-          "Explicit recursive reflection packet for op=reflect. For decision=done include objective_decomposition, coverage_review, executed_evidence, remaining_frontier or residual_risk, and why_no_expand.",
+          "Explicit recursive reflection packet for op=reflect. For decision=done include objective_decomposition, coverage_review, executed_evidence, remaining_frontier or residual_risk, and why_no_expand. This does not replace top-level verification_evidence.",
         ),
         evidence_resource_uri: string("Optional resource URI with captured verification evidence for op=verify."),
         metrics: jsonObject("Optional structured metrics for op=verify."),

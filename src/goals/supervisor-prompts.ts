@@ -37,7 +37,8 @@ export function buildLoopDecisionPrompt(goalOrObjective: GoalRecord | string): s
     "- Reconstruct the objective decomposition: covered surfaces, uninspected surfaces, frontier items, rejected branches, residual risks, and assumptions.",
     "- Analyze whether another execution slice can materially improve coverage, evidence, implementation quality, or risk reduction.",
     "- If expanding, emit concrete next steps that deepen or broaden the decomposition.",
-    "- If done, pass a reflection_packet with objective_decomposition, coverage_review, executed_evidence, remaining_frontier or residual_risk, and why_no_expand.",
+    "- If done, pass top-level verification_evidence and a reflection_packet with objective_decomposition, coverage_review, executed_evidence, remaining_frontier or residual_risk, and why_no_expand.",
+    "- verification_evidence is a separate top-level object; do not bury it inside reflection_packet.",
   ];
   if (preference === "discover") {
     return [

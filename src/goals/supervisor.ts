@@ -1,4 +1,4 @@
-import type { ModelRequest } from "../types.js";
+import type { JsonObject, ModelRequest } from "../types.js";
 import type { SessionStore } from "../session/store.js";
 import { randomId } from "../util/hash.js";
 import {
@@ -8,7 +8,7 @@ import {
   completeGoalAfterReflection,
   goalCompletionCandidateBlockMessage,
   goalCompletionRecursiveBlockMessage,
-  goalCompletionStructuralBlockMessage,
+  goalCompletionStructuralBlock,
   goalDurationMs,
   incompleteGoalPlanningSteps,
   isGoalHorizonExhausted,
@@ -24,6 +24,7 @@ import {
   type GoalCandidate,
   type GoalPlanningInput,
   type GoalState,
+  type GoalStructuralBlock,
 } from "./state.js";
 import { buildLoopDecisionPrompt, buildLoopExecutionPrompt } from "./supervisor-prompts.js";
 import { buildGoalVerificationPrompt } from "./verifier.js";
@@ -250,11 +251,16 @@ async function runGoalReflection(options: GoalSupervisorOptions, state: GoalStat
           return { status: "paused", iteration, reason: researchBlock, run_id: reflectionRunId, goal_id: paused.goal.id };
         }
       }
-      const structuralBlock = goalCompletionStructuralBlockMessage(reflected.goal);
+      const structuralBlock = goalCompletionStructuralBlock(reflected.goal);
       if (structuralBlock) {
-        const expanded = expandGoalForRecursiveReflection(reflected, structuralBlock);
+        const expanded = expandGoalForStructuralCompletion(reflected, structuralBlock);
+        if (!expanded) {
+          const reason = repeatedStructuralCompletionBlockMessage(structuralBlock);
+          const paused = pauseGoal(options, reflected, reflectionRunId, reason);
+          return { status: "paused", iteration, reason, run_id: reflectionRunId, goal_id: paused.goal.id };
+        }
         const saved = writeGoalState(options.store, options.sessionId, expanded, reflectionRunId);
-        appendRecursiveReflectionExpansionEvent(options, saved, reflected, reflectionRunId, structuralBlock);
+        appendStructuralCompletionExpansionEvent(options, saved, reflected, reflectionRunId, structuralBlock);
         options.onReflectionExpanded?.(saved);
         return { status: "waiting", iteration, reason: "expanded_for_structural_completion", run_id: reflectionRunId, goal_id: saved.goal.id };
       }
@@ -496,6 +502,46 @@ function appendRecursiveReflectionExpansionEvent(
   });
 }
 
+function appendStructuralCompletionExpansionEvent(
+  options: GoalSupervisorOptions,
+  saved: GoalState,
+  previous: GoalState,
+  runId: string,
+  block: GoalStructuralBlock,
+): void {
+  options.store.appendEvent({
+    session_id: options.sessionId,
+    run_id: runId,
+    type: "goal.horizon.expanded",
+    data: {
+      goal_id: saved.goal.id,
+      previous_horizon_generation: previous.goal.horizon_generation,
+      horizon_generation: saved.goal.horizon_generation,
+      step_count: saved.goal.planning?.steps.length ?? 0,
+      active_step_id: saved.goal.planning?.active_step_id,
+      reason: "structural_completion",
+      blocked_completion: block.message,
+      structural_issues: structuralBlockIssuesJson(block),
+    },
+  });
+}
+
+function structuralBlockIssuesJson(block: GoalStructuralBlock): JsonObject[] {
+  return block.issues.map((issue) => {
+    const out: JsonObject = {
+      kind: issue.kind,
+      message: issue.message,
+    };
+    if (issue.count !== undefined) {
+      out.count = issue.count;
+    }
+    if (issue.ids) {
+      out.ids = [...issue.ids];
+    }
+    return out;
+  });
+}
+
 function appendAtLeastNoProgressEvent(
   options: GoalSupervisorOptions,
   state: GoalState,
@@ -569,6 +615,233 @@ function expandGoalForRecursiveReflection(state: GoalState, blockedCompletion: s
   planned.enabled = true;
   planned.goal.status = "active";
   return planned;
+}
+
+function expandGoalForStructuralCompletion(state: GoalState, block: GoalStructuralBlock): GoalState | undefined {
+  const goal = state.goal;
+  if (currentPlanningStructuralSignature(goal) === structuralBlockSignature(block)) {
+    return undefined;
+  }
+  const next = cloneGoalState(state);
+  next.goal.horizon_generation += 1;
+  const planned = replaceGoalPlanning(next, structuralRepairPlanningInput(goal, next.goal.horizon_generation, block));
+  planned.enabled = true;
+  planned.goal.status = "active";
+  return planned;
+}
+
+function structuralRepairPlanningInput(goal: GoalState["goal"], generation: number, block: GoalStructuralBlock): GoalPlanningInput {
+  if (hasStructuralIssue(block, "frontier_empty", "frontier_bootstrap_missing")) {
+    return frontierRepairPlanningInput(goal, generation, block);
+  }
+  if (hasStructuralIssue(block, "coverage_missing_evidence", "frontier_closed_unproven", "residual_risk_unaccepted")) {
+    return evidenceRepairPlanningInput(goal, generation, block);
+  }
+  if (hasStructuralIssue(block, "coverage_empty", "coverage_unfinished", "coverage_rejected_weak")) {
+    return coverageRepairPlanningInput(goal, generation, block);
+  }
+  return genericStructuralRepairPlanningInput(goal, generation, block);
+}
+
+function frontierRepairPlanningInput(goal: GoalState["goal"], generation: number, block: GoalStructuralBlock): GoalPlanningInput {
+  const note = structuralRepairNote(block);
+  if (goal.preference === "discover") {
+    return {
+      summary: `Loop task ${generation} · Research frontier repair`,
+      active_step_id: `structural_frontier_seed_${generation}`,
+      steps: [
+        {
+          id: `structural_frontier_seed_${generation}`,
+          title: "Seed structured research frontier",
+          status: "pending",
+          notes: `${note} Call goal op=update action=frontier with concrete hypotheses, experiments, baselines, controls, or failure modes still worth testing. If no material frontier remains, record a rejected or low-value frontier item with evidence explaining why.`,
+        },
+        {
+          id: `structural_frontier_prioritize_${generation}`,
+          title: "Choose highest-information follow-up",
+          status: "pending",
+          notes: "Prioritize a different hypothesis, benchmark slice, ablation, control, or uncertainty source when the previous horizon was too local.",
+        },
+        {
+          id: `structural_frontier_resolve_${generation}`,
+          title: "Run or reject the selected frontier",
+          status: "pending",
+          notes: "Run the experiment/inspection or reject it with concrete evidence, then update goal op=update action=evidence and action=frontier with linked evidence_ids or residual_risk_id.",
+        },
+        {
+          id: `structural_frontier_reflect_${generation}`,
+          title: "Record linked reflection evidence",
+          status: "pending",
+          notes: "Before done reflection, ensure frontier and coverage entries point to evidence, then pass top-level verification_evidence plus reflection_packet.",
+        },
+      ],
+    };
+  }
+  return {
+    summary: `Loop task ${generation} · Frontier repair`,
+    active_step_id: `structural_frontier_seed_${generation}`,
+    steps: [
+      {
+        id: `structural_frontier_seed_${generation}`,
+        title: "Seed structured frontier audit",
+        status: "pending",
+        notes: `${note} Call goal op=update action=frontier with concrete items from uninspected modules, integrations, tests, docs/config, operational risks, or user-visible behavior. If no material frontier remains, record a rejected or low-value frontier item with evidence explaining why.`,
+      },
+      {
+        id: `structural_frontier_prioritize_${generation}`,
+        title: "Select highest-value frontier item",
+        status: "pending",
+        notes: "Prioritize high/medium open frontier. Choose a different module or surface when the previous horizon only covered one local slice.",
+      },
+      {
+        id: `structural_frontier_resolve_${generation}`,
+        title: "Resolve or reject selected frontier",
+        status: "pending",
+        notes: "Implement, verify, document, or reject with concrete evidence, then update goal op=update action=evidence and action=frontier with linked evidence_ids or residual_risk_id.",
+      },
+      {
+        id: `structural_frontier_reflect_${generation}`,
+        title: "Record linked reflection evidence",
+        status: "pending",
+        notes: "Before done reflection, ensure coverage and frontier entries point to evidence, then pass top-level verification_evidence plus reflection_packet.",
+      },
+    ],
+  };
+}
+
+function evidenceRepairPlanningInput(_goal: GoalState["goal"], generation: number, block: GoalStructuralBlock): GoalPlanningInput {
+  return {
+    summary: `Loop task ${generation} · Evidence repair`,
+    active_step_id: `structural_evidence_link_${generation}`,
+    steps: [
+      {
+        id: `structural_evidence_link_${generation}`,
+        title: "Link evidence to weak structural entries",
+        status: "pending",
+        notes: `${structuralRepairNote(block)} Inspect affected ids and link existing records through evidence_ids, or mark the item as rejected with accepted residual risk.`,
+      },
+      {
+        id: `structural_evidence_verify_${generation}`,
+        title: "Run missing verification",
+        status: "pending",
+        notes: "Run the smallest command, test, inspection, or benchmark needed to turn weak coverage/frontier claims into concrete evidence records.",
+      },
+      {
+        id: `structural_evidence_close_${generation}`,
+        title: "Close frontier and residual risk state",
+        status: "pending",
+        notes: "Update goal op=update action=coverage/frontier/evidence/residual_risk so high/medium items are done or rejected with linked evidence.",
+      },
+      {
+        id: `structural_evidence_reflect_${generation}`,
+        title: "Record verification evidence and packet",
+        status: "pending",
+        notes: "Use goal op=reflect decision=done only with top-level verification_evidence and a reflection_packet that cites the repaired evidence links.",
+      },
+    ],
+  };
+}
+
+function coverageRepairPlanningInput(goal: GoalState["goal"], generation: number, block: GoalStructuralBlock): GoalPlanningInput {
+  const research = goal.preference === "discover";
+  return {
+    summary: `Loop task ${generation} · Coverage repair`,
+    active_step_id: `structural_coverage_map_${generation}`,
+    steps: [
+      {
+        id: `structural_coverage_map_${generation}`,
+        title: research ? "Map research coverage surfaces" : "Map delivery coverage surfaces",
+        status: "pending",
+        notes: `${structuralRepairNote(block)} Call goal op=update action=coverage with the important surfaces that define the objective boundary.`,
+      },
+      {
+        id: `structural_coverage_resolve_${generation}`,
+        title: research ? "Resolve highest-uncertainty surface" : "Resolve highest-risk uncovered surface",
+        status: "pending",
+        notes: research
+          ? "Run, inspect, or reject the experiment surface with the highest information value and record concrete evidence."
+          : "Inspect, implement, verify, document, or reject the surface with the highest delivery risk and record concrete evidence.",
+      },
+      {
+        id: `structural_coverage_frontier_${generation}`,
+        title: "Synchronize frontier and residual risk",
+        status: "pending",
+        notes: "Record any remaining frontier with goal op=update action=frontier, or close/reject it with linked evidence or accepted residual risk.",
+      },
+      {
+        id: `structural_coverage_reflect_${generation}`,
+        title: "Record verification evidence and packet",
+        status: "pending",
+        notes: "Use goal op=reflect decision=done only with top-level verification_evidence and a reflection_packet grounded in the updated coverage/frontier state.",
+      },
+    ],
+  };
+}
+
+function genericStructuralRepairPlanningInput(goal: GoalState["goal"], generation: number, block: GoalStructuralBlock): GoalPlanningInput {
+  const research = goal.preference === "discover";
+  return {
+    summary: `Loop task ${generation} · Structural completion repair`,
+    active_step_id: `structural_repair_audit_${generation}`,
+    steps: [
+      {
+        id: `structural_repair_audit_${generation}`,
+        title: research ? "Audit research closure blockers" : "Audit delivery closure blockers",
+        status: "pending",
+        notes: structuralRepairNote(block),
+      },
+      {
+        id: `structural_repair_update_${generation}`,
+        title: "Update structural loop state",
+        status: "pending",
+        notes: "Use goal op=update action=coverage/frontier/evidence/residual_risk to resolve the listed blockers with concrete state changes.",
+      },
+      {
+        id: `structural_repair_verify_${generation}`,
+        title: "Verify or accept remaining risk",
+        status: "pending",
+        notes: "Run the practical verification step, or record accepted residual risk with evidence when verification is not material.",
+      },
+      {
+        id: `structural_repair_reflect_${generation}`,
+        title: "Record verification evidence and packet",
+        status: "pending",
+        notes: "Use goal op=reflect decision=done only with top-level verification_evidence and a reflection_packet grounded in structural evidence.",
+      },
+    ],
+  };
+}
+
+function hasStructuralIssue(block: GoalStructuralBlock, ...kinds: GoalStructuralBlock["issues"][number]["kind"][]): boolean {
+  return block.issues.some((issue) => kinds.includes(issue.kind));
+}
+
+function structuralRepairNote(block: GoalStructuralBlock): string {
+  const affected = block.issues
+    .filter((issue) => issue.ids?.length)
+    .map((issue) => `${issue.kind}: ${issue.ids?.slice(0, 8).join(", ")}`)
+    .join("; ");
+  const affectedNote = affected ? ` Affected ids: ${affected}.` : "";
+  return `${block.message} structural_block_signature=${structuralBlockSignature(block)}.${affectedNote}`;
+}
+
+function structuralBlockSignature(block: GoalStructuralBlock): string {
+  const frontierEmpty = block.issues.some((issue) => issue.kind === "frontier_empty");
+  const normalizedIssues = block.issues.filter((issue) => !(frontierEmpty && issue.kind === "frontier_bootstrap_missing"));
+  return Buffer.from(JSON.stringify(normalizedIssues.map((issue) => ({
+    kind: issue.kind,
+    count: issue.count ?? 0,
+    ids: issue.ids ?? [],
+  }))), "utf8").toString("base64url");
+}
+
+function currentPlanningStructuralSignature(goal: GoalState["goal"]): string | undefined {
+  const notes = goal.planning?.steps.map((step) => step.notes ?? "").join("\n") ?? "";
+  return notes.match(/structural_block_signature=([A-Za-z0-9_-]+)/)?.[1];
+}
+
+function repeatedStructuralCompletionBlockMessage(block: GoalStructuralBlock): string {
+  return `${block.message} Structural repair repeated with the same blocker signature and no coverage/frontier state change; pause instead of expanding another duplicate repair horizon.`;
 }
 
 function recursiveReflectionPlanningInput(goal: GoalState["goal"], generation: number, blockedCompletion: string): GoalPlanningInput {

@@ -30,6 +30,29 @@ export interface GoalReflectionPacket extends JsonObject {
   why_no_expand?: JsonValue;
 }
 
+export type GoalStructuralBlockKind =
+  | "coverage_empty"
+  | "coverage_unfinished"
+  | "coverage_missing_evidence"
+  | "coverage_rejected_weak"
+  | "frontier_empty"
+  | "frontier_bootstrap_missing"
+  | "frontier_open_high_medium"
+  | "frontier_closed_unproven"
+  | "residual_risk_unaccepted";
+
+export interface GoalStructuralBlockIssue {
+  kind: GoalStructuralBlockKind;
+  message: string;
+  count?: number;
+  ids?: string[];
+}
+
+export interface GoalStructuralBlock {
+  message: string;
+  issues: GoalStructuralBlockIssue[];
+}
+
 const PLAN_PROMPT_BODY_LIMIT = 6000;
 
 export interface GoalRecord {
@@ -1084,7 +1107,7 @@ function validateReflectionInput(input: GoalReflectionInput): void {
     throw new Error("reflection decision expand requires concrete new steps with substantive impact on the original goal");
   }
   if (input.decision === "done" && !input.verification_evidence) {
-    throw new Error("reflection decision done requires verification_evidence");
+    throw new Error("reflection decision done requires top-level verification_evidence");
   }
 }
 
@@ -1554,7 +1577,7 @@ export function goalCompletionReflectionBlockMessage(goal: GoalRecord): string |
     return "Cannot complete goal until a tool-enabled reflection run records decision=done.";
   }
   if (!goal.verification_evidence || Object.keys(goal.verification_evidence).length === 0) {
-    return "Cannot complete goal until the latest done reflection records verification_evidence.";
+    return "Cannot complete goal until the latest done reflection records top-level verification_evidence.";
   }
   return undefined;
 }
@@ -1591,11 +1614,11 @@ export function hasRecursiveDoneReflectionEvidence(goal: GoalRecord): boolean {
     && hasMeaningfulReflectionPacketField(packet, "why_no_expand");
 }
 
-export function goalCompletionStructuralBlockMessage(goal: GoalRecord): string | undefined {
+export function goalCompletionStructuralBlock(goal: GoalRecord): GoalStructuralBlock | undefined {
   if (goal.preference === "replay") {
     return undefined;
   }
-  const blockers: string[] = [];
+  const issues: GoalStructuralBlockIssue[] = [];
   const surfaces = goal.coverage?.surfaces ?? [];
   const frontier = goalFrontierItems(goal);
   const evidenceRecords = goal.evidence_records ?? [];
@@ -1607,41 +1630,78 @@ export function goalCompletionStructuralBlockMessage(goal: GoalRecord): string |
     && !hasStructuralItemEvidence(item, evidenceRecords, residualRisks)
   );
   if (!surfaces.length) {
-    blockers.push("coverage surfaces are empty");
+    issues.push({ kind: "coverage_empty", message: "coverage surfaces are empty" });
   } else {
     const uncovered = surfaces.filter((surface) => surface.status === "pending" || surface.status === "in_progress");
     const weakCovered = surfaces.filter((surface) => surface.status === "covered" && !hasCoverageEvidence(surface, evidenceRecords));
     const weakRejected = surfaces.filter((surface) => surface.status === "rejected" && !hasAcceptedResidualRisk(surface.residual_risk_id, residualRisks) && !surface.notes);
     if (uncovered.length) {
-      blockers.push(`coverage has ${countLabel(uncovered.length, "unfinished surface")}`);
+      issues.push({
+        kind: "coverage_unfinished",
+        message: `coverage has ${countLabel(uncovered.length, "unfinished surface")}`,
+        count: uncovered.length,
+        ids: uncovered.map((surface) => surface.id),
+      });
     }
     if (weakCovered.length) {
-      blockers.push(`coverage has ${countLabel(weakCovered.length, "covered surface")} without evidence`);
+      issues.push({
+        kind: "coverage_missing_evidence",
+        message: `coverage has ${countLabel(weakCovered.length, "covered surface")} without evidence`,
+        count: weakCovered.length,
+        ids: weakCovered.map((surface) => surface.id),
+      });
     }
     if (weakRejected.length) {
-      blockers.push(`coverage has ${countLabel(weakRejected.length, "rejected surface")} without accepted residual risk or rationale`);
+      issues.push({
+        kind: "coverage_rejected_weak",
+        message: `coverage has ${countLabel(weakRejected.length, "rejected surface")} without accepted residual risk or rationale`,
+        count: weakRejected.length,
+        ids: weakRejected.map((surface) => surface.id),
+      });
     }
   }
   if (!frontier.length) {
-    blockers.push("frontier audit is empty");
+    issues.push({ kind: "frontier_empty", message: "frontier audit is empty" });
   }
   if (completedBootstrapFrontierStep(goal) && !frontier.length) {
-    blockers.push("seed_frontier_candidates completed without recorded frontier");
+    issues.push({ kind: "frontier_bootstrap_missing", message: "seed_frontier_candidates completed without recorded frontier" });
   }
   if (highMediumOpen.length) {
-    blockers.push(`${countLabel(highMediumOpen.length, "open high/medium frontier item")} remain`);
+    issues.push({
+      kind: "frontier_open_high_medium",
+      message: `${countLabel(highMediumOpen.length, "open high/medium frontier item")} remain`,
+      count: highMediumOpen.length,
+      ids: highMediumOpen.map((item) => item.id),
+    });
   }
   if (highMediumUnprovenClosed.length) {
-    blockers.push(`${countLabel(highMediumUnprovenClosed.length, "closed high/medium frontier item")} lack evidence or accepted residual risk`);
+    issues.push({
+      kind: "frontier_closed_unproven",
+      message: `${countLabel(highMediumUnprovenClosed.length, "closed high/medium frontier item")} lack evidence or accepted residual risk`,
+      count: highMediumUnprovenClosed.length,
+      ids: highMediumUnprovenClosed.map((item) => item.id),
+    });
   }
   const unacceptedHighMediumRisks = residualRisks.filter((risk) => !risk.accepted && (risk.severity === "high" || risk.severity === "medium"));
   if (unacceptedHighMediumRisks.length) {
-    blockers.push(`${countLabel(unacceptedHighMediumRisks.length, "high/medium residual risk")} are not accepted`);
+    issues.push({
+      kind: "residual_risk_unaccepted",
+      message: `${countLabel(unacceptedHighMediumRisks.length, "high/medium residual risk")} are not accepted`,
+      count: unacceptedHighMediumRisks.length,
+      ids: unacceptedHighMediumRisks.map((risk) => risk.id),
+    });
   }
-  if (!blockers.length) {
+  if (!issues.length) {
     return undefined;
   }
-  return `Cannot complete ${goal.preference} loop until structural coverage and frontier audit are recorded: ${blockers.join("; ")}.`;
+  return {
+    message: `Cannot complete ${goal.preference} loop until structural coverage and frontier audit are recorded: ${issues.map((issue) => issue.message).join("; ")}.`,
+    issues,
+  };
+}
+
+export function goalCompletionStructuralBlockMessage(goal: GoalRecord): string | undefined {
+  return goalCompletionStructuralBlock(goal)?.message;
 }
 
 export function goalCompletionCandidateBlockMessage(goal: GoalRecord): string | undefined {

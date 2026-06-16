@@ -258,7 +258,7 @@ function handleInternalReflectionGoalOperation(op: string, args: JsonObject, con
   const updateAction = op === "update" ? stringArg(args.action)?.trim() : undefined;
   const message =
     op === "decompose" || op === "update_plan" || op === "update_step" || updateAction === "step" || updateAction === "plan"
-      ? "Internal reflection cannot update the current horizon directly. Call goal op=reflect with decision=expand and concrete steps, decision=done with verification_evidence, or decision=blocked."
+      ? "Internal reflection cannot update the current horizon directly. Call goal op=reflect with decision=expand and concrete steps, decision=done with top-level verification_evidence plus reflection_packet, or decision=blocked."
       : `Internal reflection cannot call goal op=${op}. Call goal op=reflect with decision=expand, done, or blocked.`;
   return state ? failGoalWithState(state, "goal_reflection_decision_required", message) : fail("goal_missing", "No goal to reflect on.");
 }
