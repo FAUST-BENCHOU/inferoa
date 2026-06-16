@@ -76,6 +76,7 @@ export interface RuntimeRunOptions {
 
 export type RuntimeStatusEvent =
   | { type: "model_start"; model: string }
+  | { type: "model_route"; route?: JsonObject }
   | { type: "model_retry"; model: string; attempt: number; next_attempt: number; delay_ms: number; max_attempts?: number; error: string }
   | {
       type: "compression_start";
@@ -826,6 +827,7 @@ export class Runtime {
             response_id: response.response_id,
             provider_id: request.provider_id,
             model: response.model,
+            route: response.route as never,
             prompt_hash: request.prompt_hash,
             tool_schema_hash: request.tool_schema_hash,
             prompt_epoch_id: request.prompt_epoch_id,
@@ -1093,6 +1095,7 @@ export class Runtime {
                 onDelta(text);
               }
             : undefined,
+          onStatus,
           signal,
           retry.request_timeout_ms,
         );
@@ -1168,11 +1171,37 @@ export class Runtime {
   private async streamModelAttempt(
     request: ModelRequest,
     onDelta: ((text: string) => void) | undefined,
+    onStatus: ((event: RuntimeStatusEvent) => void) | undefined,
     signal: AbortSignal | undefined,
     timeoutMs: number,
   ): Promise<ModelResponse> {
+    let routeEmitted = false;
+    const emitRoute = (route: JsonObject | undefined) => {
+      if (!route || routeEmitted) {
+        return;
+      }
+      routeEmitted = true;
+      onStatus?.({ type: "model_route", route });
+      this.store.appendEvent({
+        session_id: request.session_id,
+        run_id: request.run_id,
+        type: "model.route.selected",
+        data: {
+          step_id: request.step_id,
+          step_index: request.step_index,
+          provider_id: request.provider_id,
+          mode: request.mode,
+          model: request.model,
+          route: route as never,
+          request_class: request.request_class,
+          prompt_hash: request.prompt_hash,
+          tool_schema_hash: request.tool_schema_hash,
+          prompt_epoch_id: request.prompt_epoch_id,
+        },
+      });
+    };
     if (timeoutMs <= 0) {
-      return await this.gateway.stream(request, onDelta, signal);
+      return await this.gateway.stream(request, onDelta, signal, emitRoute);
     }
     const controller = new AbortController();
     let timedOut = false;
@@ -1188,7 +1217,7 @@ export class Runtime {
       signal?.addEventListener("abort", abortFromParent, { once: true });
     }
     try {
-      return await this.gateway.stream(request, onDelta, controller.signal);
+      return await this.gateway.stream(request, onDelta, controller.signal, emitRoute);
     } catch (error) {
       if (timedOut) {
         throw modelRequestTimeoutError(timeoutMs);
