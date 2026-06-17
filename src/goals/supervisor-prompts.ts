@@ -20,9 +20,11 @@ export function buildLoopExecutionPrompt(goalOrObjective: GoalRecord | string): 
     "Execution turn for a Deliver loop.",
     "Treat the top-level objective as broader than the current local task unless evidence proves the full scope is covered.",
     "Map or refresh work surfaces when needed: code paths, tests, integrations, user-visible behavior, config, docs, risks, and rollback.",
+    "The delivery contract's coverage surfaces are a debt ledger: pending/in_progress surfaces must be covered with evidence or explicitly rejected with rationale/residual risk.",
+    "Mapping, repo topology, file browsing, or naming a surface is not covered evidence by itself.",
     "Choose the highest-leverage action across implementation, verification, comparison, polish, and risk reduction.",
     "Execute and verify with the strongest practical evidence available this turn.",
-    "Before ending, update the loop step plus coverage/frontier/evidence state with evidence, frontier status, and the next execution slice.",
+    "Before ending, update the loop step plus coverage/frontier/evidence/residual_risk state with evidence, frontier status, and the next execution slice.",
     "Use goal op=update for state updates; goal op=reflect is only for internal decision turns.",
     "Every execution turn must make structural loop progress; natural-language completion claims alone are not progress.",
   ].join("\n");
@@ -35,9 +37,11 @@ export function buildLoopDecisionPrompt(goalOrObjective: GoalRecord | string): s
     "Recursive reflection checklist for every decision:",
     "- Re-read the top-level objective and compare it with the current loop task boundary.",
     "- Reconstruct the objective decomposition: covered surfaces, uninspected surfaces, frontier items, rejected branches, residual risks, and assumptions.",
+    "- Reconcile the delivery/research contract against persistent coverage, frontier, evidence, and residual_risk state; do not rely only on the current horizon checklist.",
     "- Analyze whether another execution slice can materially improve coverage, evidence, implementation quality, or risk reduction.",
     "- If expanding, emit concrete next steps that deepen or broaden the decomposition.",
     "- If done, pass top-level verification_evidence and a reflection_packet with objective_decomposition, coverage_review, executed_evidence, remaining_frontier or residual_risk, and why_no_expand.",
+    "- If the reflection_packet names residual risk, it must also be persisted through goal op=update action=residual_risk before completion.",
     "- verification_evidence is a separate top-level object; do not bury it inside reflection_packet.",
   ];
   if (preference === "discover") {
@@ -63,6 +67,7 @@ export function buildLoopDecisionPrompt(goalOrObjective: GoalRecord | string): s
     "Call goal op=reflect exactly once with decision=expand, done, or blocked.",
     "If expanding, include concrete next steps in steps; never use bare expand.",
     "Use done only when completion gates are satisfied and no material frontier remains.",
+    "Use done only after every pending/in_progress coverage surface is covered with evidence or explicitly rejected with rationale/residual risk.",
     "Use expand when coverage, verification, integration, user-visible behavior, edge cases, docs/config, or runtime minimum could materially improve delivery.",
     "When At least runtime remains, expand to a different high-value surface or stronger verification; never repeat stale or duplicate work just to consume time.",
   ].join("\n");

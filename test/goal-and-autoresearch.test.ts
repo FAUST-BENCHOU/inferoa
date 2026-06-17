@@ -63,6 +63,10 @@ async function completeGoalOrientation(registry: ToolRegistry, sessionId: string
         action: "coverage",
         coverage: [
           { id: "fixture-objective", title: "Fixture objective surface", status: "covered", evidence: { fixture: true } },
+          { title: "code paths and integration boundaries", status: "rejected", notes: "Not relevant to this focused goal-tool fixture." },
+          { title: "tests and negative cases", status: "rejected", notes: "Not relevant to this focused goal-tool fixture." },
+          { title: "configuration, deployment, and rollback behavior", status: "rejected", notes: "Not relevant to this focused goal-tool fixture." },
+          { title: "docs, user-visible behavior, and operational risks", status: "rejected", notes: "Not relevant to this focused goal-tool fixture." },
         ],
       },
     },
@@ -1124,7 +1128,17 @@ test("goal reflection gates completion and can expand a new horizon generation",
       {
         id: "ga_coverage",
         name: "goal",
-        arguments: { op: "update", action: "coverage", title: "Hidden horizon fixture surface", status: "covered", evidence: { git: "checked" } },
+        arguments: {
+          op: "update",
+          action: "coverage",
+          coverage: [
+            { title: "Hidden horizon fixture surface", status: "covered", evidence: { git: "checked" } },
+            { title: "code paths and integration boundaries", status: "rejected", notes: "Not relevant to this focused reflection fixture." },
+            { title: "tests and negative cases", status: "rejected", notes: "Not relevant to this focused reflection fixture." },
+            { title: "configuration, deployment, and rollback behavior", status: "rejected", notes: "Not relevant to this focused reflection fixture." },
+            { title: "docs, user-visible behavior, and operational risks", status: "rejected", notes: "Not relevant to this focused reflection fixture." },
+          ],
+        },
       },
       { session_id: session.session_id, run_id: "run_second_done" },
     )).ok, true);

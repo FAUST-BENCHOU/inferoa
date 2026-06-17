@@ -9,6 +9,9 @@ import {
   createGoalState,
   readGoalState,
   replaceGoalPlanning,
+  updateGoalCoverageSurface,
+  upsertGoalEvidenceRecord,
+  upsertGoalFrontierItem,
   writeGoalState,
 } from "../src/goals/state.js";
 import { runGoalSupervisor, type GoalSupervisorTurnRequest } from "../src/goals/supervisor.js";
@@ -94,6 +97,119 @@ async function reflectDoneTurn(registry: ToolRegistry, sessionId: string, reques
   assert.equal(reflected.ok, true, JSON.stringify(reflected));
   return { run_id: runId };
 }
+
+function latestBugHuntDoneState(): ReturnType<typeof createGoalState> {
+  const now = new Date();
+  let state = replaceGoalPlanning(createGoalState({ objective: "挖掘潜在问题并修复" }, now), {
+    summary: "Loop task 0 · Frontier execution",
+    steps: [
+      { id: "dashboard_cors_overpermissive", title: "Fix dashboard CORS/PNA", status: "completed" },
+      { id: "python_cli_secret_handling", title: "Fix K8s secret argv exposure", status: "completed" },
+      { id: "router_vectorstore_file_boundary", title: "Fix vectorstore file path boundary", status: "completed" },
+      { id: "verify_frontier_outcomes", title: "Verify frontier outcomes", status: "completed" },
+    ],
+  });
+  state = upsertGoalEvidenceRecord(state, {
+    id: "dashboard_backend_go_test_all",
+    kind: "test",
+    title: "Dashboard backend CORS tests",
+    command: "go test -count=1 ./middleware ./proxy ./router",
+    confidence: "hard",
+  });
+  state = upsertGoalEvidenceRecord(state, {
+    id: "vllm_sr_deployment_backend_tests",
+    kind: "test",
+    title: "vllm-sr deployment backend tests",
+    command: "python -m pytest tests/test_deployment_backend.py -q",
+    confidence: "hard",
+  });
+  state = upsertGoalEvidenceRecord(state, {
+    id: "semantic_router_vectorstore_tests",
+    kind: "test",
+    title: "Semantic router vectorstore tests",
+    command: "go test -count=1 ./pkg/vectorstore",
+    confidence: "hard",
+  });
+  state = upsertGoalFrontierItem(state, {
+    id: "dashboard_cors_overpermissive",
+    title: "Dashboard backend echoes arbitrary Origin with credentials and PNA enabled",
+    value: "high",
+    status: "done",
+    evidence_ids: ["dashboard_backend_go_test_all"],
+  });
+  state = upsertGoalFrontierItem(state, {
+    id: "python_cli_secret_handling",
+    title: "Python CLI secret handling exposes token values in argv",
+    value: "medium",
+    status: "done",
+    evidence_ids: ["vllm_sr_deployment_backend_tests"],
+  });
+  state = upsertGoalFrontierItem(state, {
+    id: "router_vectorstore_file_boundary",
+    title: "Router vectorstore FileStore path boundary",
+    value: "medium",
+    status: "done",
+    evidence_ids: ["semantic_router_vectorstore_tests"],
+  });
+  state = updateGoalCoverageSurface(state, {
+    id: "dashboard_backend",
+    title: "Dashboard backend proxy/CORS surface",
+    status: "covered",
+    evidence_ids: ["dashboard_backend_go_test_all"],
+    confidence: "hard",
+  });
+  state = updateGoalCoverageSurface(state, {
+    id: "python_cli",
+    title: "Python CLI deployment secret handling",
+    status: "covered",
+    evidence_ids: ["vllm_sr_deployment_backend_tests"],
+    confidence: "hard",
+  });
+  state = updateGoalCoverageSurface(state, {
+    id: "router_vectorstore",
+    title: "Router vectorstore file storage",
+    status: "covered",
+    evidence_ids: ["semantic_router_vectorstore_tests"],
+    confidence: "hard",
+  });
+  state = updateGoalCoverageSurface(state, {
+    id: "operator_runtime_defaults",
+    title: "Operator, deployment, and runtime defaults",
+    status: "pending",
+    notes: "Still uninspected after the first frontier pass.",
+  });
+  return completeGoalReflection(
+    state,
+    {
+      decision: "done",
+      summary: "Three seeded frontier items are fixed and verified.",
+      verification_evidence: { checked: true },
+      reflection_packet: recursiveDonePacket({
+        coverage_review: "Three touched surfaces are verified; operator/runtime defaults remain pending.",
+        residual_risk: [
+          {
+            title: "Whole repository exhaustive verification not run",
+            severity: "medium",
+            reason: "Only selected frontier items were verified.",
+          },
+        ],
+        why_no_expand: "Seeded frontier is closed.",
+      }),
+    },
+    "run_reflect_done",
+  );
+}
+
+test("deliver goals start with pending coverage inventory from the delivery contract", () => {
+  const state = createGoalState({ objective: "挖掘潜在问题并修复" });
+
+  const contractSurfaces = state.goal.delivery_contract?.risk_surfaces ?? [];
+  assert.ok(contractSurfaces.length > 0);
+  assert.deepEqual(
+    state.goal.coverage?.surfaces.map((surface) => ({ title: surface.title, status: surface.status })),
+    contractSurfaces.map((title) => ({ title, status: "pending" })),
+  );
+});
 
 test("free-text recursive reflection cannot complete a deliver loop with empty coverage and frontier state", async () => {
   await withGoalFixture("loop-structural-empty-coverage", async ({ store, sessionId, registry }) => {
@@ -253,6 +369,76 @@ test("goal supervisor pauses a repeated structural blocker instead of duplicatin
     assert.equal(current?.horizon_generation, 1);
     assert.equal(current?.planning?.summary, "Loop task 1 · Frontier repair");
     assert.equal(store.listEvents(sessionId).filter((event) => event.type === "goal.horizon.expanded" && event.data.reason === "structural_completion").length, 1);
+  });
+});
+
+test("closed seeded frontier does not complete while coverage inventory still has pending surfaces", async () => {
+  await withGoalFixture("loop-structural-coverage-debt", async ({ store, sessionId, registry }) => {
+    writeGoalState(store, sessionId, latestBugHuntDoneState(), "run_seed");
+    let reflectionCalls = 0;
+
+    const result = await runGoalSupervisor({
+      store,
+      sessionId,
+      supervisor: "test",
+      maxIterations: 3,
+      shouldContinue: () => reflectionCalls < 1,
+      runTurn: async (request) => {
+        reflectionCalls += 1;
+        return reflectDoneTurn(registry, sessionId, request, {
+          residual_risk: "Whole repository exhaustive verification not run.",
+        });
+      },
+    });
+
+    assert.equal(result.status, "stopped");
+    const current = readGoalState(store, sessionId)?.goal;
+    assert.equal(current?.status, "active");
+    assert.equal(current?.horizon_generation, 1);
+    assert.equal(current?.planning?.summary, "Loop task 1 · Coverage continuation");
+    assert.equal(current?.planning?.active_step_id, "structural_coverage_resolve_1");
+    assert.match(current?.planning?.steps[0]?.notes ?? "", /operator_runtime_defaults/);
+    const expansion = store.listEvents(sessionId).find((event) => event.type === "goal.horizon.expanded" && event.data.reason === "structural_completion");
+    assert.ok(expansion);
+    assert.match(JSON.stringify(expansion.data.structural_issues), /coverage_unfinished/);
+  });
+});
+
+test("reflection packet residual risks must be persisted before completion", async () => {
+  await withGoalFixture("loop-structural-packet-risk", async ({ store, sessionId, registry }) => {
+    let state = latestBugHuntDoneState();
+    for (const surface of state.goal.coverage?.surfaces ?? []) {
+      state = updateGoalCoverageSurface(state, {
+        id: surface.id,
+        title: surface.title,
+        status: "covered",
+        evidence_ids: surface.evidence_ids?.length ? surface.evidence_ids : ["dashboard_backend_go_test_all"],
+        confidence: "hard",
+      });
+    }
+    writeGoalState(store, sessionId, state, "run_seed");
+    let reflectionCalls = 0;
+
+    const result = await runGoalSupervisor({
+      store,
+      sessionId,
+      supervisor: "test",
+      maxIterations: 3,
+      shouldContinue: () => reflectionCalls < 1,
+      runTurn: async (request) => {
+        reflectionCalls += 1;
+        return reflectDoneTurn(registry, sessionId, request, {
+          residual_risk: "Whole repository exhaustive verification not run.",
+        });
+      },
+    });
+
+    assert.equal(result.status, "stopped");
+    const current = readGoalState(store, sessionId)?.goal;
+    assert.equal(current?.status, "active");
+    assert.equal(current?.horizon_generation, 1);
+    assert.equal(current?.planning?.summary, "Loop task 1 · Evidence repair");
+    assert.match(current?.planning?.steps[0]?.notes ?? "", /residual risk/i);
   });
 });
 

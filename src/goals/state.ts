@@ -39,7 +39,8 @@ export type GoalStructuralBlockKind =
   | "frontier_bootstrap_missing"
   | "frontier_open_high_medium"
   | "frontier_closed_unproven"
-  | "residual_risk_unaccepted";
+  | "residual_risk_unaccepted"
+  | "reflection_residual_risk_unpersisted";
 
 export interface GoalStructuralBlockIssue {
   kind: GoalStructuralBlockKind;
@@ -519,6 +520,12 @@ export function createGoalState(input: GoalCreateInput, now = new Date()): GoalS
   const runtimePolicy = createLoopRuntimePolicy(input.runtime_policy);
   const replay = preference === "replay" ? createLoopReplayState(input.replay) : undefined;
   const planning = preference === "replay" ? undefined : createGoalPlanning(horizonZeroPlanningInput(preference), now);
+  const deliveryContract = preference === "replay" ? undefined : createGoalDeliveryContract(objective, preference, timestamp);
+  const coverage = preference === "deliver" && deliveryContract
+    ? createGoalCoverageFromRiskSurfaces(deliveryContract.risk_surfaces, timestamp)
+    : preference === "replay"
+      ? undefined
+      : emptyGoalCoverage(timestamp);
   return {
     enabled: true,
     goal: {
@@ -539,8 +546,8 @@ export function createGoalState(input: GoalCreateInput, now = new Date()): GoalS
       tool_calls_used: 0,
       horizon_generation: 0,
       ledger: emptyGoalLedger(timestamp),
-      delivery_contract: preference === "replay" ? undefined : createGoalDeliveryContract(objective, preference, timestamp),
-      coverage: preference === "replay" ? undefined : emptyGoalCoverage(timestamp),
+      delivery_contract: deliveryContract,
+      coverage,
       requirements: preference === "replay" ? undefined : [],
       frontier: preference === "replay" ? undefined : [],
       evidence_records: preference === "replay" ? undefined : [],
@@ -641,6 +648,49 @@ function emptyGoalCoverage(timestamp: string): GoalCoverageState {
     surfaces: [],
     updated_at: timestamp,
   };
+}
+
+function createGoalCoverageFromRiskSurfaces(riskSurfaces: string[], timestamp: string): GoalCoverageState {
+  const coverage = emptyGoalCoverage(timestamp);
+  const used = new Set<string>();
+  riskSurfaces.forEach((title, index) => {
+    const cleanTitle = title.trim();
+    if (!cleanTitle) {
+      return;
+    }
+    const id = normalizeGoalStepId(undefined, cleanTitle, index, used);
+    used.add(id);
+    coverage.surfaces.push({
+      id,
+      title: cleanTitle,
+      status: "pending",
+      updated_at: timestamp,
+    });
+  });
+  return coverage;
+}
+
+function mergeMissingCoverageRiskSurfaces(coverage: GoalCoverageState, riskSurfaces: string[], timestamp: string): GoalCoverageState {
+  const next = cloneGoalCoverage(coverage);
+  const used = new Set(next.surfaces.map((surface) => surface.id));
+  const existingTitles = new Set(next.surfaces.map((surface) => goalStepTitleKey(surface.title)));
+  riskSurfaces.forEach((title, index) => {
+    const cleanTitle = title.trim();
+    if (!cleanTitle || existingTitles.has(goalStepTitleKey(cleanTitle))) {
+      return;
+    }
+    const id = normalizeGoalStepId(undefined, cleanTitle, next.surfaces.length + index, used);
+    used.add(id);
+    existingTitles.add(goalStepTitleKey(cleanTitle));
+    next.surfaces.push({
+      id,
+      title: cleanTitle,
+      status: "pending",
+      updated_at: timestamp,
+    });
+  });
+  next.updated_at = timestamp;
+  return next;
 }
 
 function createGoalDeliveryContract(objective: string, preference: LoopPreference, timestamp: string): GoalDeliveryContract | undefined {
@@ -884,6 +934,10 @@ export function updateGoalDeliveryContract(state: GoalState, input: GoalDelivery
     risk_surfaces: input.risk_surfaces !== undefined ? cleanGoalStringList(input.risk_surfaces) : current.risk_surfaces,
     updated_at: timestamp,
   };
+  if (next.goal.preference === "deliver") {
+    const currentCoverage = next.goal.coverage ?? emptyGoalCoverage(timestamp);
+    next.goal.coverage = mergeMissingCoverageRiskSurfaces(currentCoverage, next.goal.delivery_contract.risk_surfaces, timestamp);
+  }
   next.goal.updated_at = timestamp;
   return next;
 }
@@ -1691,6 +1745,13 @@ export function goalCompletionStructuralBlock(goal: GoalRecord): GoalStructuralB
       ids: unacceptedHighMediumRisks.map((risk) => risk.id),
     });
   }
+  if (!issues.length && hasUnpersistedReflectionResidualRisk(goal)) {
+    issues.push({
+      kind: "reflection_residual_risk_unpersisted",
+      message: "reflection packet names residual risk that is not persisted in goal residual_risks",
+      count: 1,
+    });
+  }
   if (!issues.length) {
     return undefined;
   }
@@ -1698,6 +1759,34 @@ export function goalCompletionStructuralBlock(goal: GoalRecord): GoalStructuralB
     message: `Cannot complete ${goal.preference} loop until structural coverage and frontier audit are recorded: ${issues.map((issue) => issue.message).join("; ")}.`,
     issues,
   };
+}
+
+function hasUnpersistedReflectionResidualRisk(goal: GoalRecord): boolean {
+  const packet = normalizeGoalReflectionPacket(goal.last_reflection_packet);
+  if (!packet || !reflectionPacketResidualRiskIsMaterial(packet.residual_risk)) {
+    return false;
+  }
+  return (goal.residual_risks ?? []).length === 0;
+}
+
+function reflectionPacketResidualRiskIsMaterial(value: JsonValue | undefined): boolean {
+  if (value === undefined || value === null) {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => reflectionPacketResidualRiskIsMaterial(item));
+  }
+  if (typeof value === "object") {
+    return Object.keys(value).length > 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+    return !/^(none|no|no material|no remaining|n\/a|not applicable)\b/.test(normalized);
+  }
+  return Boolean(value);
 }
 
 export function goalCompletionStructuralBlockMessage(goal: GoalRecord): string | undefined {

@@ -62,7 +62,8 @@ Preference:
 
 Runtime:
 
-- `Auto` lets the agent decide when enough evidence exists to stop.
+- `Auto` lets the agent stop only after the loop's coverage, frontier,
+  evidence, and residual-risk state has been reconciled.
 - `At least` keeps the loop running until the minimum duration is satisfied,
   then the normal decision and verification gates still apply.
 
@@ -99,6 +100,12 @@ The active loop stores:
 The agent should keep step status and evidence current while working. An empty
 checklist is not enough to finish the loop.
 
+For Deliver loops, the delivery contract starts with a coverage inventory derived
+from the objective's risk surfaces. Mapping a repository, reading a topology
+document, or naming a module does not make that surface `covered`. A surface must
+be covered with evidence, or explicitly rejected with a rationale or accepted
+residual risk.
+
 ## Decisions And Completion
 
 When the current loop task appears exhausted, Inferoa runs an internal decision
@@ -115,6 +122,12 @@ The decision has three useful outcomes:
 For broad loops, completion is also gated by the candidate ledger. If a decision
 says `done` while high-value candidates remain open, Inferoa expands the next
 loop task instead of silently finishing.
+
+Completion is also gated by coverage debt. If the current loop task closes its
+seeded frontier but coverage surfaces remain `pending` or `in_progress`, Inferoa
+opens a coverage-continuation loop task instead of completing. If a reflection
+packet names residual risk, that risk must be persisted in loop state before
+completion can pass.
 
 Loop completion is gated by verification and loop decisions. A loop is not done
 because the checklist is empty; it is done after verification records

@@ -634,8 +634,11 @@ function structuralRepairPlanningInput(goal: GoalState["goal"], generation: numb
   if (hasStructuralIssue(block, "frontier_empty", "frontier_bootstrap_missing")) {
     return frontierRepairPlanningInput(goal, generation, block);
   }
-  if (hasStructuralIssue(block, "coverage_missing_evidence", "frontier_closed_unproven", "residual_risk_unaccepted")) {
+  if (hasStructuralIssue(block, "coverage_missing_evidence", "frontier_closed_unproven", "residual_risk_unaccepted", "reflection_residual_risk_unpersisted")) {
     return evidenceRepairPlanningInput(goal, generation, block);
+  }
+  if (hasStructuralIssue(block, "coverage_unfinished") && !hasStructuralIssue(block, "coverage_empty")) {
+    return coverageContinuationPlanningInput(goal, generation, block);
   }
   if (hasStructuralIssue(block, "coverage_empty", "coverage_unfinished", "coverage_rejected_weak")) {
     return coverageRepairPlanningInput(goal, generation, block);
@@ -704,6 +707,46 @@ function frontierRepairPlanningInput(goal: GoalState["goal"], generation: number
         title: "Record linked reflection evidence",
         status: "pending",
         notes: "Before done reflection, ensure coverage and frontier entries point to evidence, then pass top-level verification_evidence plus reflection_packet.",
+      },
+    ],
+  };
+}
+
+function coverageContinuationPlanningInput(goal: GoalState["goal"], generation: number, block: GoalStructuralBlock): GoalPlanningInput {
+  const research = goal.preference === "discover";
+  const pendingIds = block.issues
+    .filter((issue) => issue.kind === "coverage_unfinished")
+    .flatMap((issue) => issue.ids ?? [])
+    .slice(0, 8);
+  const pendingNote = pendingIds.length ? ` Pending coverage ids: ${pendingIds.join(", ")}.` : "";
+  const note = `${structuralRepairNote(block)}${pendingNote} Mapping or topology inspection alone is not covered evidence; resolve one pending surface, or reject it with a concrete rationale/accepted residual risk.`;
+  return {
+    summary: `Loop task ${generation} · Coverage continuation`,
+    active_step_id: `structural_coverage_resolve_${generation}`,
+    steps: [
+      {
+        id: `structural_coverage_resolve_${generation}`,
+        title: research ? "Resolve highest-uncertainty pending research surface" : "Resolve highest-risk pending delivery surface",
+        status: "pending",
+        notes: note,
+      },
+      {
+        id: `structural_coverage_frontier_${generation}`,
+        title: "Update frontier from the coverage pass",
+        status: "pending",
+        notes: "Record new findings as frontier items, or explicitly reject the inspected surface with evidence when no material work remains.",
+      },
+      {
+        id: `structural_coverage_verify_${generation}`,
+        title: "Verify or accept residual risk for the surface",
+        status: "pending",
+        notes: "Run a targeted command/check/review, link evidence_ids, or persist an accepted residual risk before closing the coverage surface.",
+      },
+      {
+        id: `structural_coverage_reflect_${generation}`,
+        title: "Record grounded reflection packet",
+        status: "pending",
+        notes: "Before done reflection, reconcile contract -> coverage -> frontier -> evidence -> residual risk; do not rely only on seeded frontier being closed.",
       },
     ],
   };
