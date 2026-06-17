@@ -1281,7 +1281,11 @@ export class Runtime {
     for (const url of urls) {
       throwIfAborted(signal);
       const result = await this.executeToolCall(
-        { id: randomId("prefetch"), name: "web_open", arguments: { url, max_bytes: 1_000_000 } },
+        {
+          id: randomId("prefetch"),
+          name: "capability_call",
+          arguments: { name: "web_open", arguments: { url, max_bytes: 1_000_000 }, reason: "prefetch prompt URL" },
+        },
         sessionId,
         runId,
         undefined,
@@ -1771,6 +1775,10 @@ export function modelMessagesForDisplay(messages: ModelMessage[]): string {
 
 function summarizeToolStart(name: string, args: JsonObject): string {
   switch (name) {
+    case "capability_call":
+      return startSummary("Running capability", stringField(args.name));
+    case "tool_search":
+      return startSummary("Searching tools", stringField(args.query));
     case "run_command":
       return startSummary("Running", stringField(args.command));
     case "run_experiment":

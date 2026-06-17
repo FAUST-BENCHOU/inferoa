@@ -28,6 +28,8 @@ const COMPACT_SUCCESS_TOOLS = new Set([
   "list_dir",
   "glob",
   "file_search",
+  "tool_search",
+  "capability_call",
   "export_resource",
   "read_file",
   "read_resource",
@@ -160,6 +162,12 @@ function renderToolBody(group: ToolEventGroup, store: SessionStore): string[] {
     case "codegraph":
       lines.push(...renderTextPreview(stringField(data.content) ?? ""));
       break;
+    case "tool_search":
+      lines.push(...renderToolSearch(data));
+      break;
+    case "capability_call":
+      lines.push(...renderCapabilityTool(group, data, store, result));
+      break;
     case "file_search":
     case "glob":
       lines.push(...renderMatches(data));
@@ -244,6 +252,9 @@ function shouldExpandToolGroup(group: ToolEventGroup, body: string[]): boolean {
   if (body.length === 0) {
     return false;
   }
+  if (group.name === "capability_call") {
+    return ["goal", "plan", "init_experiment", "run_experiment", "log_experiment", "update_experiment"].includes(stringField(group.args.name) ?? "");
+  }
   if (
     [
       "apply_patch",
@@ -260,6 +271,7 @@ function shouldExpandToolGroup(group: ToolEventGroup, body: string[]): boolean {
       "run_experiment",
       "log_experiment",
       "codegraph",
+      "tool_search",
     ].includes(group.name)
   ) {
     return true;
@@ -340,6 +352,10 @@ function compactToolName(name: string): string {
       return "read";
     case "file_search":
       return "search";
+    case "tool_search":
+      return "tools";
+    case "capability_call":
+      return "capability";
     case "web_fetch":
       return "fetch";
     case "web_search":
@@ -452,6 +468,62 @@ function renderWebSearch(data: JsonObject): string[] {
     return lines;
   }
   return lines.length ? lines : [fg256(243, "No search results.")];
+}
+
+function renderToolSearch(data: JsonObject): string[] {
+  const tools = Array.isArray(data.tools) ? data.tools.map(objectField) : [];
+  if (!tools.length) {
+    return [fg256(243, "No matching hidden capabilities."), stringField(data.hint) ? fg256(244, stringField(data.hint) ?? "") : undefined].filter((line): line is string => Boolean(line));
+  }
+  return tools.slice(0, 8).map((tool) => {
+    const name = stringField(tool.name) ?? "unknown";
+    const exposure = stringField(tool.exposure) ?? "hidden";
+    const permission = stringField(tool.permission) ?? "read";
+    return `${fg256(39, name)} ${fg256(244, `${exposure} · ${permission}`)}`;
+  });
+}
+
+function renderCapabilityTool(group: ToolEventGroup, data: JsonObject, store: SessionStore, result: ToolResult | undefined): string[] {
+  const target = stringField(group.args.name);
+  const targetArgs = objectField(group.args.arguments);
+  if (!target) {
+    return renderGeneric(data, result?.resource_uri);
+  }
+  if (target === "goal") {
+    return renderGoalTool(data, targetArgs, result);
+  }
+  if (target === "plan") {
+    return renderPlanTool(data);
+  }
+  if (target === "init_experiment" || target === "run_experiment" || target === "log_experiment" || target === "update_experiment") {
+    return renderAutoresearchTool(target, data);
+  }
+  if (target === "web_search") {
+    return renderWebSearch(data);
+  }
+  if (target === "web_fetch" || target === "web_open") {
+    const lines = renderWebFetch(data);
+    if (stringField(data.note)) {
+      lines.push(`${fg256(39, "note")} ${stringField(data.note)}`);
+    }
+    return lines;
+  }
+  if (target === "read_resource" || target === "read_file") {
+    return renderTextPreview(stringField(data.content) ?? "");
+  }
+  if (target === "file_search" || target === "glob") {
+    return renderMatches(data);
+  }
+  if (target === "codegraph") {
+    return renderTextPreview(stringField(data.content) ?? "");
+  }
+  if (target === "git") {
+    if (stringField(targetArgs.op) === "status") {
+      return renderTextPreview(stringField(data.output) ?? resourceText(result?.resource_uri, store) ?? "");
+    }
+    return renderDiff(stringField(data.output) ?? resourceText(result?.resource_uri, store));
+  }
+  return renderGeneric(data, result?.resource_uri);
 }
 
 function renderWebFetch(data: JsonObject): string[] {
@@ -1088,6 +1160,10 @@ export function toolTraceAction(name: string, ok: boolean | undefined = true, co
       return `Scanned files${failed}`;
     case "file_search":
       return `Searched workspace${failed}`;
+    case "tool_search":
+      return `Searched tools${failed}`;
+    case "capability_call":
+      return `Ran capability${failed}`;
     case "read_file":
       return `Read file${failed}`;
     case "read_resource":
@@ -1183,6 +1259,9 @@ function toolGroupAction(group: ToolEventGroup): string {
   if (group.name === "skill") {
     return skillToolAction(group, failed);
   }
+  if (group.name === "capability_call") {
+    return capabilityToolAction(group, failed);
+  }
   return toolTraceAction(group.name, group.result?.ok, "card");
 }
 
@@ -1233,6 +1312,26 @@ function skillToolAction(group: ToolEventGroup, failed: string): string {
   }
 }
 
+function capabilityToolAction(group: ToolEventGroup, failed: string): string {
+  const target = stringField(group.args.name);
+  if (target === "goal") {
+    return goalToolAction({ ...group, name: target, args: objectField(group.args.arguments) }, failed);
+  }
+  if (target === "codegraph") {
+    return codegraphToolAction({ ...group, name: target, args: objectField(group.args.arguments) }, failed);
+  }
+  if (target === "git") {
+    return gitToolAction({ ...group, name: target, args: objectField(group.args.arguments) }, failed);
+  }
+  if (target === "skill") {
+    return skillToolAction({ ...group, name: target, args: objectField(group.args.arguments) }, failed);
+  }
+  if (target === "plan") {
+    return `Updated plan${failed}`;
+  }
+  return `Ran capability${failed}`;
+}
+
 function toolGroupDetail(group: ToolEventGroup, summary: string): string {
   const data = objectField(group.result?.data);
   switch (group.name) {
@@ -1251,6 +1350,10 @@ function toolGroupDetail(group: ToolEventGroup, summary: string): string {
       return stringField(group.args.pattern) ?? compactSummary(summary);
     case "file_search":
       return stringField(group.args.query) ?? compactSummary(summary);
+    case "tool_search":
+      return stringField(group.args.query) ?? compactSummary(summary);
+    case "capability_call":
+      return capabilityToolDetail(group, summary);
     case "export_resource":
       return stringField(data.path) ?? stringField(group.args.uri) ?? compactSummary(summary);
     case "read_file":
@@ -1340,6 +1443,19 @@ function toolGroupDetail(group: ToolEventGroup, summary: string): string {
     default:
       return compactSummary(summary);
   }
+}
+
+function capabilityToolDetail(group: ToolEventGroup, summary: string): string {
+  const target = stringField(group.args.name);
+  if (!target) {
+    return compactSummary(summary);
+  }
+  if (target === "capability_call") {
+    return target;
+  }
+  const targetGroup: ToolEventGroup = { ...group, name: target, args: objectField(group.args.arguments) };
+  const detail = toolGroupDetail(targetGroup, summary);
+  return detail && detail !== compactSummary(summary) ? `${target} · ${detail}` : target;
 }
 
 function codegraphToolDetail(group: ToolEventGroup, summary: string): string {

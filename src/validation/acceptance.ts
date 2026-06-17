@@ -48,7 +48,8 @@ export async function runFinalAcceptance(options: {
     const fixture = await ensureImageFixture(workspace.root);
     const taskPrompt = [
       "Run the Inferoa final acceptance coding task in this repository.",
-      "Use these built-in tools explicitly: todo_write, file_search, read_file, lsp, edit_file or write_file, run_command with one background process, read_process, stop_process, and git with op=status and op=diff.",
+      "Use these direct tools explicitly: todo_write, file_search, read_file, apply_patch, run_command with one background process, read_process, stop_process, and git with op=status and op=diff.",
+      "Use tool_search then capability_call for at least one code-intelligence capability such as lsp or ast_grep, and for any mode-only or Omni capability that is not directly visible.",
       "Make a small real repository change by writing docs/evidence/final-acceptance/agent-run.md with session evidence.",
       "Force context compression is enabled; continue after compression.",
       `Then use vision_understanding on ${fixture}, image_generation for a small diagram-like acceptance image, and video_generation for a short acceptance clip.`,
@@ -61,7 +62,7 @@ export async function runFinalAcceptance(options: {
       session_id: run.session.session_id,
     });
     const events = store.listEvents(run.session.session_id);
-    const toolCalls = events.filter((event) => event.type === "tool.call").map((event) => event.data.tool_name);
+    const toolCalls = expandedToolCallNames(events);
     const endpointEvidence = store.listEndpointEvidence(run.session.session_id);
     const promptHashEvents = events.filter((event) => event.type === "model.request.started" && event.data.prompt_hash && event.data.tool_schema_hash);
     const resources = events.filter((event) => event.type === "resource.created");
@@ -142,6 +143,27 @@ export async function runFinalAcceptance(options: {
   } finally {
     store.close();
   }
+}
+
+function expandedToolCallNames(events: SessionEvent[]): string[] {
+  const calls: string[] = [];
+  for (const event of events) {
+    if (event.type !== "tool.call") {
+      continue;
+    }
+    const name = typeof event.data.tool_name === "string" ? event.data.tool_name : undefined;
+    if (name) {
+      calls.push(name);
+    }
+    if (name === "capability_call") {
+      const args = event.data.arguments as JsonObject | undefined;
+      const target = typeof args?.name === "string" ? args.name : undefined;
+      if (target) {
+        calls.push(target);
+      }
+    }
+  }
+  return calls;
 }
 
 function cachedTokenEvidenceValue(record: JsonObject): number | undefined {

@@ -413,6 +413,7 @@ const CODEGRAPH_TOOL_DEFINITIONS: ToolDefinition[] = ([
     name: "codegraph",
     description: "Repository-wide code intelligence. Start with op=explore for architecture, bug investigation, call flows, and cross-file understanding; use targeted ops for follow-up.",
     permission: "read",
+    exposure: "direct",
     parameters: objectSchema({
       op: { type: "string", description: "Codegraph operation. explore/search require query; node/callers/callees/impact require symbol; files/status require only op.", enum: ["explore", "search", "node", "callers", "callees", "impact", "files", "status"] },
       query: stringSchema("Required for op=explore or op=search. Natural-language question, symbol names, file names, code terms, or partial symbol name."),
@@ -699,8 +700,8 @@ function indexPathMatchesPattern(pattern: string, filePath: string, prefix: stri
 }
 
 function indexMissHint(searchPath: string | undefined): string {
-  const scoped = searchPath ? ` Path "${searchPath}" may be outside indexed files, ignored, or waiting for watcher sync.` : "";
-  return `${scoped} Use codegraph op=status to inspect index freshness; use file_search/read_file for newly-created or ignored files.`;
+  const scoped = searchPath ? ` Path "${searchPath}" may be outside indexed files, gitignored, excluded from the index, or waiting for watcher sync.` : "";
+  return `${scoped} Use codegraph op=status to inspect index freshness; use file_search/read_file for newly-created, generated, ignored, or unindexed files.`;
 }
 
 function stringArg(value: unknown, name: string): string {

@@ -1,4 +1,4 @@
-import type { JsonObject, ToolDefinition, VllmAgentConfig } from "../types.js";
+import type { JsonObject, ToolDefinition, ToolExposure, VllmAgentConfig } from "../types.js";
 
 function objectSchema(properties: Record<string, JsonObject>, required: string[] = []): JsonObject {
   return {
@@ -14,6 +14,56 @@ const stringEnum = (description: string, values: string[]): JsonObject => ({ typ
 const number = (description: string): JsonObject => ({ type: "number", description });
 const boolean = (description: string): JsonObject => ({ type: "boolean", description });
 const jsonObject = (description: string): JsonObject => ({ type: "object", description, additionalProperties: true });
+
+const DIRECT_TOOL_NAMES = new Set([
+  "apply_patch",
+  "capability_call",
+  "clarify",
+  "file_search",
+  "git",
+  "read_file",
+  "read_process",
+  "run_command",
+  "stop_process",
+  "subagent",
+  "todo_write",
+  "tool_search",
+]);
+
+const MODE_TOOL_NAMES = new Set([
+  "audio_generation",
+  "audio_understanding",
+  "goal",
+  "image_edit",
+  "image_generation",
+  "init_experiment",
+  "log_experiment",
+  "plan",
+  "run_experiment",
+  "speech_generation",
+  "speech_voices",
+  "update_experiment",
+  "video_generation",
+  "video_understanding",
+  "vision_understanding",
+]);
+
+export function toolExposureForName(name: string): ToolExposure {
+  if (DIRECT_TOOL_NAMES.has(name)) {
+    return "direct";
+  }
+  if (MODE_TOOL_NAMES.has(name)) {
+    return "mode";
+  }
+  return "deferred";
+}
+
+function withExposure(tool: ToolDefinition): ToolDefinition {
+  return {
+    ...tool,
+    exposure: tool.exposure ?? toolExposureForName(tool.name),
+  };
+}
 
 const goalStep = objectSchema(
   {
@@ -195,6 +245,19 @@ const DEFINITIONS = [
         placeholder: string("Optional placeholder for free-form input."),
       },
       ["question"],
+    ),
+  },
+  {
+    name: "capability_call",
+    description: "Execute a non-direct capability discovered through tool_search or active mode context. Use direct tools by name when they are available.",
+    permission: "read",
+    parameters: objectSchema(
+      {
+        name: string("Non-direct tool name to execute."),
+        arguments: jsonObject("Arguments for the target tool, validated against its registered schema."),
+        reason: string("Optional short reason for using this capability."),
+      },
+      ["name", "arguments"],
     ),
   },
   {
@@ -558,6 +621,19 @@ const DEFINITIONS = [
     ),
   },
   {
+    name: "tool_search",
+    description: "Search hidden deferred and mode-only tool capabilities without changing the stable model-visible tool schema. Use before capability_call when a needed capability is not directly visible.",
+    permission: "read",
+    parameters: objectSchema(
+      {
+        query: string("Capability search query."),
+        exposure: stringEnum("Optional capability layer filter.", ["deferred", "mode"]),
+        limit: number("Maximum results."),
+      },
+      ["query"],
+    ),
+  },
+  {
     name: "skill",
     description: "List or read skills, or persistently enable/disable skill ids. op=read requires id; op=enable/disable require ids. Read a skill body before relying on it.",
     permission: "write",
@@ -762,7 +838,7 @@ const DEFINITIONS = [
   },
 ] satisfies ToolDefinition[];
 
-export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = DEFINITIONS.slice().sort((a, b) => a.name.localeCompare(b.name));
+export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = DEFINITIONS.map(withExposure).sort((a, b) => a.name.localeCompare(b.name));
 
 const OMNI_TOOL_CAPABILITY: Record<string, keyof VllmAgentConfig["omni"]["endpoints"]> = {
   audio_generation: "audio_generation",
@@ -776,7 +852,7 @@ const OMNI_TOOL_CAPABILITY: Record<string, keyof VllmAgentConfig["omni"]["endpoi
   vision_understanding: "vision",
 };
 
-export function configuredToolDefinitions(config: VllmAgentConfig): ToolDefinition[] {
+export function configuredAllToolDefinitions(config: VllmAgentConfig): ToolDefinition[] {
   return CORE_TOOL_DEFINITIONS.filter((tool) => {
     const capability = OMNI_TOOL_CAPABILITY[tool.name];
     if (!capability) {
@@ -788,4 +864,8 @@ export function configuredToolDefinitions(config: VllmAgentConfig): ToolDefiniti
     const endpoint = config.omni.endpoints[capability];
     return Boolean(endpoint?.base_url && endpoint.model);
   });
+}
+
+export function configuredToolDefinitions(config: VllmAgentConfig): ToolDefinition[] {
+  return configuredAllToolDefinitions(config).filter((tool) => tool.exposure === "direct");
 }

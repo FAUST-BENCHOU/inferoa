@@ -64,7 +64,12 @@ test("runtime prefetches direct URLs before the model turn without orphan tool m
     assert.equal(result.content, "prefetched");
 
     const events = store.listEvents(result.session.session_id);
-    assert.ok(events.some((event) => event.type === "tool.call" && event.data.tool_name === "web_open"));
+    assert.ok(
+      events.some((event) => {
+        const args = event.data.arguments as { name?: string } | undefined;
+        return event.type === "tool.call" && event.data.tool_name === "capability_call" && args?.name === "web_open";
+      }),
+    );
     assert.ok(!events.some((event) => event.type === "tool.call" && event.data.tool_name === "web_search"));
     assert.ok(events.some((event) => event.type === "web.prefetch"));
     const prefetchIndex = events.findIndex((event) => event.type === "web.prefetch");

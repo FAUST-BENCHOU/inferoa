@@ -98,8 +98,8 @@ test("daemon run jobs can execute as isolated verification jobs", async () => {
                 id: "call_goal_verify",
                 type: "function",
                 function: {
-                  name: "goal",
-                  arguments: JSON.stringify({
+                  name: "capability_call",
+                  arguments: capabilityArguments("goal", {
                     op: "verify",
                     verdict: "pass",
                     confidence: "soft",
@@ -181,8 +181,8 @@ test("daemon goal supervisor expands horizon through internal reflection and com
                 id: "call_reflection_expand",
                 type: "function",
                 function: {
-                  name: "goal",
-                  arguments: JSON.stringify({
+                  name: "capability_call",
+                  arguments: capabilityArguments("goal", {
                     op: "reflect",
                     decision: "expand",
                     summary: "Hidden horizon discovered.",
@@ -195,8 +195,8 @@ test("daemon goal supervisor expands horizon through internal reflection and com
                   id: "call_reflection_done",
                   type: "function",
                   function: {
-                    name: "goal",
-                    arguments: JSON.stringify({
+                    name: "capability_call",
+                    arguments: capabilityArguments("goal", {
                       op: "reflect",
 	                      decision: "done",
 	                      summary: "No additional horizon remains.",
@@ -235,8 +235,14 @@ test("daemon goal supervisor expands horizon through internal reflection and com
                       id: "call_complete_hidden",
                       type: "function",
                       function: {
-                        name: "goal",
-                        arguments: JSON.stringify({ op: "update", action: "step", step_id: "hidden-horizon", status: "completed", notes: "Handled hidden horizon." }),
+                        name: "capability_call",
+                        arguments: capabilityArguments("goal", {
+                          op: "update",
+                          action: "step",
+                          step_id: "hidden-horizon",
+                          status: "completed",
+                          notes: "Handled hidden horizon.",
+                        }),
                       },
                     },
                   ],
@@ -383,8 +389,8 @@ test("daemon run with an active goal pauses hidden supervision without strong ve
                       id: "call_hidden_reflection_done",
                       type: "function",
                       function: {
-                        name: "goal",
-                        arguments: JSON.stringify({
+                        name: "capability_call",
+                        arguments: capabilityArguments("goal", {
                           op: "reflect",
 	                          decision: "done",
 	                          summary: "The post-turn supervisor found no remaining horizon.",
@@ -485,4 +491,8 @@ function serveEndpointSignal(url: string | undefined, res: { writeHead: (status:
 
 function writeSse(res: { write: (chunk: string) => void }, payload: unknown): void {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function capabilityArguments(name: string, args: Record<string, unknown>): string {
+  return JSON.stringify({ name, arguments: args });
 }

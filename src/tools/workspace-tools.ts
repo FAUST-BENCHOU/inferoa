@@ -557,7 +557,15 @@ async function gitDiff(args: JsonObject, context: ToolExecutionContext): Promise
     cwd,
     timeout_ms: 10_000,
   });
-  return commandResult("git diff", result, context, "git.diff");
+  const toolResult = await commandResult("git diff", result, context, "git.diff");
+  const output = typeof toolResult.data?.output === "string" ? toolResult.data.output.trim() : "";
+  if (toolResult.ok && pathArg !== "." && !output && (await pathExists(path.resolve(cwd, pathArg)))) {
+    toolResult.data = {
+      ...(toolResult.data ?? {}),
+      hint: "No git diff output for this existing path. It may be unchanged, untracked, ignored, or outside Git's tracked diff for the selected revision/stage.",
+    };
+  }
+  return toolResult;
 }
 
 async function gitShow(args: JsonObject, context: ToolExecutionContext): Promise<ToolResult> {
@@ -627,6 +635,15 @@ function shellQuote(value: string): string {
     return value;
   }
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+async function pathExists(file: string): Promise<boolean> {
+  try {
+    await fs.access(file);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function walkFiles(dir: string, root: string, max: number): Promise<string[]> {

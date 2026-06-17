@@ -65,7 +65,7 @@ export async function runOmniRuntimeE2E(options: E2EOptions): Promise<E2EReport>
     const statusEvents: RuntimeStatusEvent[] = [];
     const result = await runtime.run({
       title: `omni-e2e-${options.profile}`,
-      prompt: `Run the remote Omni ${options.tool} validation now. Use ${toolCase.name}, then summarize the result.`,
+      prompt: `Run the remote Omni ${options.tool} validation now. Use tool_search if needed, then capability_call for ${toolCase.name}, then summarize the result.`,
       client_id: "omni-e2e-runtime",
       onStatus: (event) => statusEvents.push(event),
       request_class: "background",
@@ -84,7 +84,12 @@ export async function runOmniRuntimeE2E(options: E2EOptions): Promise<E2EReport>
     const checks = [
       { name: "runtime made two controller model requests", pass: controller.requests.length === 2, detail: `${controller.requests.length}` },
       { name: "runtime executed at least one tool round", pass: result.tool_rounds >= 1, detail: `${result.tool_rounds}` },
-      { name: `runtime executed ${toolCase.name}`, pass: statusEvents.some((event) => event.type === "tool_end" && event.tool_name === toolCase.name && event.ok) },
+      {
+        name: `runtime executed ${toolCase.name}`,
+        pass:
+          statusEvents.some((event) => event.type === "tool_start" && event.tool_name === "capability_call" && event.summary === `Running capability ${toolCase.name}`) &&
+          statusEvents.some((event) => event.type === "tool_end" && event.tool_name === "capability_call" && event.ok),
+      },
       { name: "remote Omni result reached tool result", pass: toolResults.some((data) => /"ok":true/.test(JSON.stringify(data)) && toolCase.resultPattern.test(JSON.stringify(data))) },
       { name: "managed resource persisted", pass: !toolCase.requiresResource || resources.some((resource) => String(resource.kind).startsWith("omni.")) },
       { name: "final model turn consumed tool result", pass: /OMNI_E2E_RUNTIME_OK/.test(result.content), detail: result.content.slice(0, 200) },
@@ -240,8 +245,8 @@ class ScriptedController {
                     id: toolCallId,
                     type: "function",
                     function: {
-                      name: this.toolCase.name,
-                      arguments: JSON.stringify(this.toolCase.arguments),
+                      name: "capability_call",
+                      arguments: JSON.stringify({ name: this.toolCase.name, arguments: this.toolCase.arguments }),
                     },
                   },
                 ],

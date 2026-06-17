@@ -176,11 +176,14 @@ export interface PromptEpochRecord {
   created_at?: string;
 }
 
+export type ToolExposure = "direct" | "deferred" | "mode";
+
 export interface ToolDefinition {
   name: string;
   description: string;
   parameters: JsonObject;
   permission: "read" | "write" | "shell" | "network" | "external_path" | "destructive";
+  exposure?: ToolExposure;
 }
 
 export interface ToolCall {

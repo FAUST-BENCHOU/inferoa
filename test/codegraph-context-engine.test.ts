@@ -17,7 +17,7 @@ function gitWorkspace(id: string, root: string, alias: string): WorkspaceIdentit
   return { id, root, alias, gitRoot: root };
 }
 
-test("ToolRegistry exposes CodeGraph native tools by default in a git workspace and keeps builtin code intelligence", async () => {
+test("ToolRegistry exposes CodeGraph by default and keeps LSP/AST discoverable", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-codegraph-tools-"));
   const store = await SessionStore.open(path.join(dir, "state"));
   try {
@@ -34,16 +34,22 @@ test("ToolRegistry exposes CodeGraph native tools by default in a git workspace 
     assert.deepEqual(properties?.op?.enum, ["explore", "search", "node", "callers", "callees", "impact", "files", "status"]);
     assert.match(properties?.query?.description ?? "", /op=explore/);
     assert.match(properties?.symbol?.description ?? "", /op=node/);
-    assert.ok(names.includes("lsp"));
-    assert.ok(names.includes("ast_grep"));
-    assert.ok(names.includes("ast_edit"));
+    assert.equal(names.includes("lsp"), false);
+    assert.equal(names.includes("ast_grep"), false);
+    assert.equal(names.includes("ast_edit"), false);
+
+    const session = store.createSession(workspace, "codegraph-tools");
+    const search = await registry.call({ id: "search_lsp", name: "tool_search", arguments: { query: "lsp ast" } }, { session_id: session.session_id });
+    assert.equal(search.ok, true);
+    assert.match(JSON.stringify(search.data), /lsp/);
+    assert.match(JSON.stringify(search.data), /ast_grep/);
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });
   }
 });
 
-test("CodeGraph tools are removable through context.engine.provider=off", async () => {
+test("CodeGraph direct tool is removable through context.engine.provider=off", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-codegraph-off-"));
   const store = await SessionStore.open(path.join(dir, "state"));
   try {
@@ -54,9 +60,11 @@ test("CodeGraph tools are removable through context.engine.provider=off", async 
 
     assert.equal(names.includes("codegraph"), false);
     assert.equal(names.some((name) => name.startsWith("codegraph_")), false);
-    assert.ok(names.includes("lsp"));
-    assert.ok(names.includes("ast_grep"));
-    assert.ok(names.includes("ast_edit"));
+    assert.equal(names.includes("lsp"), false);
+    assert.equal(names.includes("ast_grep"), false);
+    assert.equal(names.includes("ast_edit"), false);
+    assert.ok(names.includes("tool_search"));
+    assert.ok(names.includes("capability_call"));
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });
@@ -178,6 +186,7 @@ test("CodeIntelligenceHub builds a small CodeGraph index and serves native tool 
     );
     assert.equal(missingPathSearch.ok, true, JSON.stringify(missingPathSearch));
     assert.match(String(missingPathSearch.data?.content ?? ""), /may be outside indexed files/);
+    assert.match(String(missingPathSearch.data?.content ?? ""), /gitignored, excluded from the index/);
     assert.match(String(missingPathSearch.data?.content ?? ""), /file_search\/read_file/);
 
     const statusWithBlankProjectPath = await registry.call(

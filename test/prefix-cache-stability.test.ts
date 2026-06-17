@@ -31,13 +31,14 @@ test("new sessions freeze independent prompt-cache snapshots from the current li
 
     assert.equal(server.requests.length, 2);
     assert.equal(toolNames(server.requests[0]!).includes("image_generation"), false);
-    assert.equal(toolNames(server.requests[1]!).includes("image_generation"), true);
+    assert.equal(toolNames(server.requests[1]!).includes("image_generation"), false);
+    assert.deepEqual(toolNames(server.requests[1]!), toolNames(server.requests[0]!));
 
     const firstRequest = modelRequests(store, first.session.session_id)[0]!;
     const secondRequest = modelRequests(store, second.session.session_id)[0]!;
     assert.notEqual(first.session.session_id, second.session.session_id);
     assert.notEqual(firstRequest.data.prompt_epoch_id, secondRequest.data.prompt_epoch_id);
-    assert.notEqual(firstRequest.data.tool_schema_hash, secondRequest.data.tool_schema_hash);
+    assert.equal(firstRequest.data.tool_schema_hash, secondRequest.data.tool_schema_hash);
     assert.notEqual(store.getCurrentPromptEpoch(first.session.session_id)?.cache_salt, store.getCurrentPromptEpoch(second.session.session_id)?.cache_salt);
   } finally {
     store.close();
@@ -102,8 +103,8 @@ test("scoped runtime tools freeze per session and cannot widen on resume", async
     });
 
     assert.equal(server.requests.length, 2);
-    assert.deepEqual(toolNames(server.requests[0]!), ["read_file", "skill"]);
-    assert.deepEqual(toolNames(server.requests[1]!), ["read_file", "skill"]);
+    assert.deepEqual(toolNames(server.requests[0]!), ["read_file"]);
+    assert.deepEqual(toolNames(server.requests[1]!), ["read_file"]);
     assert.equal(toolNames(server.requests[1]!).includes("edit_file"), false);
     assert.equal(toolNames(server.requests[1]!).includes("run_command"), false);
 

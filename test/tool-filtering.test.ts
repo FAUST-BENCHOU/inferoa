@@ -5,27 +5,33 @@ import path from "node:path";
 import os from "node:os";
 import { DEFAULT_CONFIG } from "../src/config/defaults.js";
 import { SessionStore } from "../src/session/store.js";
-import { configuredToolDefinitions } from "../src/tools/schemas.js";
+import { configuredAllToolDefinitions, configuredToolDefinitions } from "../src/tools/schemas.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 import type { WorkspaceIdentity } from "../src/types.js";
 
-test("configured tool list excludes unconfigured Omni capabilities from chat injection", async () => {
+test("configured direct tool list stays stable while Omni capabilities stay hidden", async () => {
   const config = structuredClone(DEFAULT_CONFIG);
-  const names = configuredToolDefinitions(config).map((tool) => tool.name);
+  const directNames = configuredToolDefinitions(config).map((tool) => tool.name);
+  const allNames = configuredAllToolDefinitions(config).map((tool) => tool.name);
 
-  assert.doesNotMatch(names.join("\n"), /vision_understanding|image_generation|image_edit|video_generation|audio_generation|speech_generation|speech_voices|audio_understanding|video_understanding/);
-  assert.ok(names.includes("clarify"));
-  assert.ok(names.includes("read_file"));
-  assert.ok(names.includes("export_resource"));
+  assert.doesNotMatch(directNames.join("\n"), /vision_understanding|image_generation|image_edit|video_generation|audio_generation|speech_generation|speech_voices|audio_understanding|video_understanding/);
+  assert.doesNotMatch(allNames.join("\n"), /vision_understanding|image_generation|image_edit|video_generation|audio_generation|speech_generation|speech_voices|audio_understanding|video_understanding/);
+  assert.ok(directNames.includes("clarify"));
+  assert.ok(directNames.includes("read_file"));
+  assert.ok(directNames.includes("tool_search"));
+  assert.ok(directNames.includes("capability_call"));
+  assert.equal(directNames.includes("export_resource"), false);
 
   config.omni.enabled = true;
   config.omni.endpoints.vision = { base_url: "http://localhost:8000/v1", model: "vision-model" };
-  const configuredNames = configuredToolDefinitions(config).map((tool) => tool.name);
-  assert.ok(configuredNames.includes("vision_understanding"));
-  assert.doesNotMatch(configuredNames.join("\n"), /image_generation|image_edit|video_generation|audio_generation|speech_generation|speech_voices|audio_understanding|video_understanding/);
+  const configuredDirectNames = configuredToolDefinitions(config).map((tool) => tool.name);
+  const configuredAllNames = configuredAllToolDefinitions(config).map((tool) => tool.name);
+  assert.equal(configuredDirectNames.includes("vision_understanding"), false);
+  assert.ok(configuredAllNames.includes("vision_understanding"));
+  assert.doesNotMatch(configuredAllNames.join("\n"), /image_generation|image_edit|video_generation|audio_generation|speech_generation|speech_voices|audio_understanding|video_understanding/);
 });
 
-test("ToolRegistry list follows configured tool availability", async () => {
+test("ToolRegistry list exposes only direct tools and discovers configured hidden capabilities", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "inferoa-tool-filtering-"));
   const store = await SessionStore.open(path.join(dir, "state"));
   try {
@@ -37,12 +43,33 @@ test("ToolRegistry list follows configured tool availability", async () => {
 
     config.omni.enabled = true;
     config.omni.endpoints.image_generation = { base_url: "http://localhost:8000/v1", model: "image-model" };
-    assert.equal(new ToolRegistry(config, workspace, store).list().some((tool) => tool.name === "image_generation"), true);
+    const configuredRegistry = new ToolRegistry(config, workspace, store);
+    assert.equal(configuredRegistry.list().some((tool) => tool.name === "image_generation"), false);
 
     config.omni.endpoints.speech = { base_url: "http://localhost:8000/v1", model: "speech-model" };
     const speechTools = new ToolRegistry(config, workspace, store).list().map((tool) => tool.name);
-    assert.equal(speechTools.includes("speech_generation"), true);
-    assert.equal(speechTools.includes("speech_voices"), true);
+    assert.equal(speechTools.includes("speech_generation"), false);
+    assert.equal(speechTools.includes("speech_voices"), false);
+    assert.equal(speechTools.includes("tool_search"), true);
+    assert.equal(speechTools.includes("capability_call"), true);
+
+    const session = store.createSession(workspace, "tool-filtering-search");
+    const search = await new ToolRegistry(config, workspace, store).call(
+      { id: "search_image", name: "tool_search", arguments: { query: "image generation" } },
+      { session_id: session.session_id, run_id: "run_search" },
+    );
+    assert.equal(search.ok, true);
+    assert.match(JSON.stringify(search.data), /image_generation/);
+
+    const noMatchConfig = structuredClone(DEFAULT_CONFIG);
+    const noMatch = await new ToolRegistry(noMatchConfig, workspace, store).call(
+      { id: "search_absent_specialized", name: "tool_search", arguments: { query: "omni browser screenshot computer use mcp" } },
+      { session_id: session.session_id, run_id: "run_search" },
+    );
+    assert.equal(noMatch.ok, true);
+    assert.equal(noMatch.data?.no_match, true);
+    assert.deepEqual(noMatch.data?.tools, []);
+    assert.match(String(noMatch.data?.hint ?? ""), /No configured hidden capability matched specialized query token/);
   } finally {
     store.close();
     await rm(dir, { recursive: true, force: true });
@@ -72,7 +99,7 @@ test("configured Omni tool schemas do not expose model arguments", () => {
     "video_understanding",
     "vision_understanding",
   ]);
-  const omniTools = configuredToolDefinitions(config).filter((tool) => omniToolNames.has(tool.name));
+  const omniTools = configuredAllToolDefinitions(config).filter((tool) => omniToolNames.has(tool.name));
 
   assert.equal(omniTools.length, omniToolNames.size);
   for (const tool of omniTools) {
@@ -80,7 +107,7 @@ test("configured Omni tool schemas do not expose model arguments", () => {
   }
 });
 
-test("model-facing tool schemas use enums and omit legacy aliases", () => {
+test("registered tool schemas use enums and omit legacy aliases", () => {
   const config = structuredClone(DEFAULT_CONFIG);
   config.omni.enabled = true;
   config.omni.endpoints.vision = { base_url: "http://localhost:8000/v1", model: "vision-model" };
@@ -90,7 +117,9 @@ test("model-facing tool schemas use enums and omit legacy aliases", () => {
   config.omni.endpoints.audio_generation = { base_url: "http://localhost:8005/v1", model: "audio-model" };
   config.omni.endpoints.speech = { base_url: "http://localhost:8007/v1", model: "speech-model" };
 
-  const tools = configuredToolDefinitions(config);
+  const directTools = configuredToolDefinitions(config);
+  const tools = configuredAllToolDefinitions(config);
+  const directByName = new Map(directTools.map((tool) => [tool.name, tool]));
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   const prop = (toolName: string, propName: string): Record<string, unknown> | undefined =>
     ((byName.get(toolName)?.parameters.properties as Record<string, Record<string, unknown>> | undefined) ?? {})[propName];
@@ -102,6 +131,14 @@ test("model-facing tool schemas use enums and omit legacy aliases", () => {
     }
   }
 
+  assert.equal(directByName.has("web_fetch"), false);
+  assert.equal(directByName.has("web_open"), false);
+  assert.equal(directByName.has("skill"), false);
+  assert.equal(directByName.has("goal"), false);
+  assert.equal(directByName.has("plan"), false);
+  assert.equal(directByName.has("lsp"), false);
+  assert.equal(directByName.has("tool_search"), true);
+  assert.equal(directByName.has("capability_call"), true);
   assert.equal(byName.has("web_fetch"), false);
   assert.equal(byName.has("web_open"), true);
   assert.deepEqual(prop("web_open", "format")?.enum, ["text", "html"]);

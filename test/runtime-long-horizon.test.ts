@@ -249,7 +249,7 @@ test("runtime executes tool calls against the frozen session prompt snapshot", a
                   {
                     id: "call_frozen_write",
                     type: "function",
-                    function: { name: "write_file", arguments: JSON.stringify({ path: "frozen.txt", content: "snapshot execution\n" }) },
+                    function: { name: "capability_call", arguments: capabilityArguments("write_file", { path: "frozen.txt", content: "snapshot execution\n" }) },
                   },
                 ],
               },
@@ -283,7 +283,7 @@ test("runtime executes tool calls against the frozen session prompt snapshot", a
       prompt: "write the file with the frozen tool policy",
       session_id: session.session_id,
       onStatus: (event) => {
-        if (event.type === "tool_start" && event.tool_name === "write_file") {
+        if (event.type === "tool_start" && event.tool_name === "capability_call") {
           runtimeConfig.permissions.workspaces = {
             [workspace.id]: { mode: "ask" },
           };
@@ -561,7 +561,10 @@ test("runtime tool start summaries name concrete Omni actions", async () => {
                   {
                     id: "call_image_generation",
                     type: "function",
-                    function: { name: "image_generation", arguments: JSON.stringify({ prompt: "tiny mascot" }) },
+                    function: {
+                      name: "capability_call",
+                      arguments: JSON.stringify({ name: "image_generation", arguments: { prompt: "tiny mascot" } }),
+                    },
                   },
                 ],
               },
@@ -596,7 +599,7 @@ test("runtime tool start summaries name concrete Omni actions", async () => {
     });
 
     assert.equal(result.content, "generated image");
-    assert.ok(statuses.some((event) => event.type === "tool_start" && event.tool_name === "image_generation" && event.summary === "Image generation"));
+    assert.ok(statuses.some((event) => event.type === "tool_start" && event.tool_name === "capability_call" && event.summary === "Running capability image_generation"));
     assert.equal(statuses.some((event) => event.type === "tool_start" && event.summary === "Calling Omni endpoint"), false);
   } finally {
     store.close();
@@ -1049,8 +1052,14 @@ test("runtime yields after visible work exhausts the active goal horizon", async
                     id: "call_finish_horizon",
                     type: "function",
                     function: {
-                      name: "goal",
-                      arguments: JSON.stringify({ op: "update", action: "step", step_id: "final", status: "completed", notes: "Final visible step completed." }),
+                      name: "capability_call",
+                      arguments: capabilityArguments("goal", {
+                        op: "update",
+                        action: "step",
+                        step_id: "final",
+                        status: "completed",
+                        notes: "Final visible step completed.",
+                      }),
                     },
                   },
                 ],
@@ -1131,8 +1140,8 @@ test("runtime yields immediately after an internal reflection decision is record
                     id: "call_reflection_done",
                     type: "function",
                     function: {
-                      name: "goal",
-                      arguments: JSON.stringify({
+                      name: "capability_call",
+                      arguments: capabilityArguments("goal", {
                         op: "reflect",
                         decision: "done",
                         summary: "No remaining horizon.",
@@ -1144,7 +1153,10 @@ test("runtime yields immediately after an internal reflection decision is record
                     index: 1,
                     id: "call_unwanted_complete",
                     type: "function",
-                    function: { name: "goal", arguments: JSON.stringify({ op: "complete", summary: "Reflection run should not complete directly." }) },
+                    function: {
+                      name: "capability_call",
+                      arguments: capabilityArguments("goal", { op: "complete", summary: "Reflection run should not complete directly." }),
+                    },
                   },
                 ],
               },
@@ -1225,7 +1237,7 @@ test("runtime lets verification continue after goal get even when the horizon is
                   {
                     id: "call_verify_get",
                     type: "function",
-                    function: { name: "goal", arguments: JSON.stringify({ op: "get" }) },
+                    function: { name: "capability_call", arguments: capabilityArguments("goal", { op: "get" }) },
                   },
                 ],
               },
@@ -1245,8 +1257,8 @@ test("runtime lets verification continue after goal get even when the horizon is
                     id: "call_verify_record",
                     type: "function",
                     function: {
-                      name: "goal",
-                      arguments: JSON.stringify({
+                      name: "capability_call",
+                      arguments: capabilityArguments("goal", {
                         op: "verify",
                         provider: "checker",
                         verdict: "pass",
@@ -1330,7 +1342,7 @@ test("runtime rejects model-facing loop completion control-plane calls", async (
                   {
                     id: "call_goal_complete",
                     type: "function",
-                    function: { name: "goal", arguments: JSON.stringify({ op: "complete", summary: "Finished the goal." }) },
+                    function: { name: "capability_call", arguments: capabilityArguments("goal", { op: "complete", summary: "Finished the goal." }) },
                   },
                 ],
               },
@@ -1415,7 +1427,7 @@ test("runtime yields after rejected model-facing completion before a follow-up p
                   {
                     id: "call_goal_complete_before_failure",
                     type: "function",
-                    function: { name: "goal", arguments: JSON.stringify({ op: "complete", summary: "Finished before final response." }) },
+                    function: { name: "capability_call", arguments: capabilityArguments("goal", { op: "complete", summary: "Finished before final response." }) },
                   },
                 ],
               },
@@ -1534,4 +1546,8 @@ function serveEndpointSignal(url: string | undefined, res: { writeHead: (status:
 
 function writeSse(res: { write: (chunk: string) => void }, payload: unknown): void {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function capabilityArguments(name: string, args: Record<string, unknown>): string {
+  return JSON.stringify({ name, arguments: args });
 }

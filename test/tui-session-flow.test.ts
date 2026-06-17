@@ -239,6 +239,9 @@ test("doctor tools queues an in-session built-in tool regression prompt", async 
     assert.match(stripAnsi(panels.at(-1)?.lines.join("\n") ?? ""), /queued built-in tool regression/i);
     assert.equal(queued.length, 1);
     assert.match(queued[0]?.prompt ?? "", /Run a built-in tools regression/);
+    assert.match(queued[0]?.prompt ?? "", /todo_write/);
+    assert.match(queued[0]?.prompt ?? "", /tool_search then capability_call/);
+    assert.match(queued[0]?.prompt ?? "", /capability_call target names/);
     assert.match(queued[0]?.prompt ?? "", /Required final report/);
     assert.equal(queued[0]?.options?.renderPrompt, false);
   } finally {

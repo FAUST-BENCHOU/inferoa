@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { CORE_TOOL_DEFINITIONS } from "../tools/schemas.js";
+import { CORE_TOOL_DEFINITIONS, configuredToolDefinitions } from "../tools/schemas.js";
 import { LSP_REGISTRY } from "../tools/code-intelligence.js";
 import { DEFAULT_CONFIG } from "../config/defaults.js";
 
@@ -60,7 +60,7 @@ const checks: Record<Milestone, () => Promise<Check[]>> = {
     await containsCheck("src/tui/tool-renderer.ts", "renderDiff", "diff renderer"),
     await containsCheck("src/tui/tool-renderer.ts", "collapseCompactToolRows", "compact tool batching"),
     await containsCheck("src/tools/workspace-tools.ts", "diff", "write/edit diff evidence"),
-    { name: "Required model-facing tools present", pass: requiredTools(["file_search", "read_file", "edit_file", "write_file", "run_command", "git", "todo_write", "lsp"]) },
+    { name: "Required direct tools present", pass: requiredDirectTools(["file_search", "read_file", "apply_patch", "run_command", "git", "todo_write", "tool_search", "capability_call"]) },
   ],
   T4: async () => [
     await containsCheck("src/session/store.ts", "renameSession", "session rename support"),
@@ -159,6 +159,11 @@ async function contains(target: string, needle: string): Promise<boolean> {
 
 function requiredTools(names: string[]): boolean {
   const present = new Set(CORE_TOOL_DEFINITIONS.map((tool) => tool.name));
+  return names.every((name) => present.has(name));
+}
+
+function requiredDirectTools(names: string[]): boolean {
+  const present = new Set(configuredToolDefinitions(DEFAULT_CONFIG).map((tool) => tool.name));
   return names.every((name) => present.has(name));
 }
 
