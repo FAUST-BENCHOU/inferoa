@@ -7,6 +7,8 @@ import { runFinalAcceptance } from "../src/validation/acceptance.js";
 
 const PRODUCT_SOURCE_ALLOWING_EXPLICIT_TOOL_CAP = new Set([
   "src/runtime.ts",
+  // Debug harnesses may expose explicit caps for deterministic release probes.
+  "src/debug/run-session.ts",
   // Self-improve optimizer is a bounded proposal job, not a user-facing long-horizon loop.
   "src/opt/agentic-propose.ts",
 ]);
