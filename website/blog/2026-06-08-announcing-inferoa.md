@@ -214,6 +214,14 @@ optimization, [RTK](https://github.com/rtk-ai/rtk) tool-output savings, recent
 turn usage, and model-selection pressure. It shows whether the loop is becoming
 more efficient, not just how many tokens were spent.
 
+In auto mode, model choice is part of that loop state rather than a hidden
+provider detail. When Inferoa is connected to vLLM Semantic Router, the session
+can show which model path was selected for the turn and which routing decision
+produced it, so capability, cost, privacy, and context pressure can become
+visible feedback instead of post-hoc accounting.
+
+![Inferoa intelligent model selection during a loop](/gif/model-selection.gif)
+
 ![Inferoa tokenmaxxing report](/img/screenshots/tokenmaxxing.png)
 
 The command surface stays focused: `/loop` for durable task and research

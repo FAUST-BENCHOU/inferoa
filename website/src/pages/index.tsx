@@ -30,11 +30,6 @@ const sessionDemos = [
     image: "/gif/loop.gif",
   },
   {
-    title: "Intelligent Model Selection",
-    body: "Auto mode with vLLM Semantic Router: per-turn model routing, visible as selected: model / decision.",
-    image: "/gif/model-selection.gif",
-  },
-  {
     title: "Plan Mode",
     body: "Ambiguous scope becomes an inspectable plan before execution starts.",
     image: "/gif/plan.gif",
@@ -45,6 +40,12 @@ const sessionDemos = [
     image: "/gif/research.gif",
   },
 ];
+
+const modelSelectionDemo = {
+  title: "Intelligent Model Selection",
+  body: "Auto mode with vLLM Semantic Router keeps per-turn routing visible as selected: model / decision.",
+  image: "/gif/model-selection.gif",
+};
 
 export default function Home(): JSX.Element {
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -373,11 +374,25 @@ export default function Home(): JSX.Element {
               <span className={styles.sectionKicker}>Quick Look</span>
               <h2>Inside a Session</h2>
             </div>
+            <article className={styles.featuredSession} aria-label="Inferoa intelligent model selection demo">
+              <div className={styles.featuredSessionHeader}>
+                <span>01</span>
+                <div>
+                  <h3>{modelSelectionDemo.title}</h3>
+                  <p>{modelSelectionDemo.body}</p>
+                </div>
+              </div>
+              <img
+                src={modelSelectionDemo.image}
+                alt="Inferoa intelligent model selection session demo"
+                loading="lazy"
+              />
+            </article>
             <div className={styles.sessionGrid} aria-label="Inferoa session GIF demos">
               {sessionDemos.map((screen, index) => (
                 <article className={styles.sessionCard} key={screen.title}>
                   <div className={styles.sessionCardHeader}>
-                    <span>{String(index + 1).padStart(2, "0")}</span>
+                    <span>{String(index + 2).padStart(2, "0")}</span>
                     <div>
                       <h3>{screen.title}</h3>
                       <p>{screen.body}</p>

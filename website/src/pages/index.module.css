@@ -592,6 +592,58 @@
   background: #111820;
 }
 
+.featuredSession {
+  width: min(1040px, 100%);
+  margin: 1.5rem auto 0;
+  overflow: hidden;
+  border: 1px solid rgba(17, 17, 17, 0.16);
+  border-radius: 4px;
+  background: #ffffff;
+  box-shadow: 8px 8px 0 rgba(17, 17, 17, 0.06);
+}
+
+.featuredSessionHeader {
+  display: grid;
+  grid-template-columns: 3rem minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+  padding: 1.2rem 1.35rem;
+  border-bottom: 1px solid rgba(17, 17, 17, 0.1);
+}
+
+.featuredSessionHeader > span {
+  color: var(--line-cyan);
+  font-family: var(--font-pixel);
+  font-size: 0.82rem;
+}
+
+.featuredSessionHeader h3 {
+  margin: 0;
+  color: var(--text-color);
+  font-size: clamp(1.5rem, 2.3vw, 2.2rem);
+  font-weight: 600;
+  line-height: 1.04;
+  letter-spacing: 0;
+}
+
+.featuredSessionHeader p {
+  max-width: 760px;
+  margin: 0.65rem 0 0;
+  color: rgba(17, 17, 17, 0.62);
+  font-size: 1rem;
+  line-height: 1.45;
+}
+
+.featuredSession img {
+  width: 100%;
+  aspect-ratio: 31 / 18;
+  height: auto;
+  display: block;
+  object-fit: contain;
+  object-position: center;
+  background: #111820;
+}
+
 .ecosystem {
   background:
     linear-gradient(rgba(17, 17, 17, 0.035) 1px, transparent 1px),
@@ -930,6 +982,19 @@
   }
 
   .sessionCardHeader p {
+    font-size: 0.92rem;
+  }
+
+  .featuredSession {
+    margin-top: 0.85rem;
+  }
+
+  .featuredSessionHeader {
+    grid-template-columns: 2.2rem 1fr;
+    padding: 1rem;
+  }
+
+  .featuredSessionHeader p {
     font-size: 0.92rem;
   }
 
