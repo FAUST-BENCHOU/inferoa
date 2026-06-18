@@ -472,6 +472,39 @@ test("composer metadata left shows compact context window beside the model", asy
   }
 });
 
+test("auto mode composer metadata hides context window", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-auto-composer-window-metadata-"));
+  const store = await SessionStore.open(stateDir);
+  try {
+    const config = structuredClone(DEFAULT_CONFIG);
+    config.model_setup.mode = "auto";
+    config.model_setup.model = "auto";
+    config.model_setup.context_window = 256_000;
+    const workspace = { id: "w_auto_composer_window_metadata", root: stateDir, alias: "auto-composer-window-metadata" };
+    const tui = new TuiApp(
+      {
+        config,
+        configFiles: [],
+        workspace,
+        store,
+        runtime: {},
+      } as never,
+    );
+    const view = tui as unknown as {
+      composerMetadataLeft: () => string;
+    };
+
+    const plain = stripAnsi(view.composerMetadataLeft());
+
+    assert.match(plain, /auto$/);
+    assert.doesNotMatch(plain, /256k/);
+    assert.doesNotMatch(plain, /ctx/i);
+  } finally {
+    store.close();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("bare loop command asks objective before preference and runtime setup", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "inferoa-goal-setup-order-"));
   const store = await SessionStore.open(stateDir);

@@ -46,11 +46,12 @@ export function renderCacheFooter(input: CacheFooterInput): string {
   const usage = input.usage;
   const signal = cacheSignal(usage, input.previousPromptTokens, input.cacheGap);
   const parts: string[] = [];
-  if (input.showCacheHit !== false && shouldShowCacheSignal(signal)) {
+  if (input.mode !== "auto" && input.showCacheHit !== false && shouldShowCacheSignal(signal)) {
     parts.push(formatFooterCacheSignal(signal, input.cacheKind ?? "hit"));
   }
   if (input.latencyMs !== undefined) {
-    parts.push(fg256(244, `worked for ${formatDuration(input.latencyMs)}`));
+    const duration = formatDuration(input.latencyMs);
+    parts.push(fg256(244, input.mode === "auto" ? duration : `worked for ${duration}`));
   }
   return parts.join(" · ");
 }

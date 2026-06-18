@@ -57,7 +57,7 @@ test("home banner contracts to narrow terminal widths", () => {
   assert.match(plain, />_ Inferoa/);
 });
 
-test("home banner expands to the resized terminal width", () => {
+test("home banner caps wide terminal width instead of spanning the whole row", () => {
   const width = 168;
   const rendered = renderHomeFrame({
     workspaceRoot,
@@ -65,6 +65,35 @@ test("home banner expands to the resized terminal width", () => {
     model: "tke/deepseek-v4-pro-tokenhub",
     width,
   });
+  const frameWidth = visibleWidth(rendered[0] ?? "");
 
-  assert.ok(rendered.every((line) => visibleWidth(line) === width));
+  assert.ok(frameWidth >= 84, `banner was too narrow at ${frameWidth}`);
+  assert.ok(frameWidth <= 100, `banner was too wide at ${frameWidth}`);
+  assert.ok(rendered.every((line) => visibleWidth(line) === frameWidth));
+});
+
+test("home banner balances wide two-column layout instead of squeezing the identity column", () => {
+  const width = 204;
+  const rendered = renderHomeFrame({
+    workspaceRoot,
+    mode: "auto",
+    model: "qwen/qwen3.6-rocm",
+    width,
+  });
+  const frameWidth = visibleWidth(rendered[0] ?? "");
+  const plainLines = rendered.map((line) => stripAnsi(line));
+  const dividerColumns = plainLines
+    .flatMap((line) => [...line.matchAll(/│/g)].map((match) => match.index ?? -1))
+    .filter((index) => index > 1 && index < frameWidth - 2);
+  const bodyDividerColumn = dividerColumns[0] ?? -1;
+  const tipsLine = plainLines.find((line) => line.includes("Tips for getting started")) ?? "";
+
+  assert.ok(frameWidth >= 96, `banner was too narrow at ${frameWidth}`);
+  assert.ok(frameWidth <= 112, `banner was too wide at ${frameWidth}`);
+  assert.ok(rendered.every((line) => visibleWidth(line) === frameWidth));
+  assert.ok(bodyDividerColumn >= 52, `divider was too far left at ${bodyDividerColumn}`);
+  assert.ok(bodyDividerColumn <= 72, `divider was too far right at ${bodyDividerColumn}`);
+  assert.match(tipsLine.slice(bodyDividerColumn + 1), /Tips for getting started/);
+  assert.match(plainLines.join("\n"), /~\/local-workbench\/work\/vllm\/inferoa/);
+  assert.doesNotMatch(plainLines.join("\n"), /local-workbench\/work\/vll…/);
 });

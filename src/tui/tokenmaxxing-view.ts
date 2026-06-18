@@ -91,6 +91,7 @@ interface ModelCallSummary {
   stepId?: string;
   stepIndex?: number;
   promptEpochId?: string;
+  model?: string;
   isRunStart: boolean;
   requestClass?: string;
   requestOrigin?: string;
@@ -120,6 +121,20 @@ interface CompactionCallSummary {
 }
 
 type TurnSummary = RunSummary | ModelCallSummary | CompactionCallSummary;
+
+interface ModelChangeSummary {
+  order: number;
+  event: SessionEvent;
+  runOrdinal: number;
+  stepIndex?: number;
+  previousModel: string;
+  model: string;
+}
+
+interface TokenmaxxingSignalItem {
+  event: SessionEvent;
+  order: number;
+}
 
 interface TurnLatency {
   ttftMs?: number;
@@ -214,6 +229,7 @@ export function renderTokenmaxxingRows(
   const latencyEvidence = buildLatencyEvidence(endpointEvidence, events);
   const runs = runSummaries(events, cacheEvidence.byRun);
   const modelCalls = modelCallSummaries(events, cacheEvidence.byCall, latencyEvidence);
+  const modelChanges = modelChangeSummaries(modelCalls);
   const compactionCalls = compactionCallSummaries(endpointEvidence, events, cacheEvidence.byCall, latencyEvidence);
   const modelDetailTurns = [...modelCalls, ...compactionCalls].sort((left, right) => left.order - right.order);
   const detailTurns: TurnSummary[] = modelDetailTurns.length ? modelDetailTurns : runs;
@@ -232,6 +248,14 @@ export function renderTokenmaxxingRows(
   if (!options.activityOnly && detailTurns.length) {
     const limit = options.detailLimit ?? 6;
     const recentTurns = Number.isFinite(limit) ? detailTurns.slice(-Math.max(0, limit)) : detailTurns;
+    const recentTurnOrders = new Set(recentTurns.map((turn) => turn.order));
+    const recentModelChanges = modelChanges.filter((change) => recentTurnOrders.has(change.order)).slice().reverse();
+    if (recentModelChanges.length) {
+      rows.push(row(fg256(39, "Model changes"), "section"));
+      for (const change of recentModelChanges) {
+        rows.push(row(modelChangeLine(change, contentWidth), "signal"));
+      }
+    }
     const epochs = epochSummaries(events, cacheEvidence.observations, endpointEvidence);
     rows.push(row(turnTableHeader(contentWidth), "turn-header"));
     let currentEpoch: string | undefined;
@@ -246,7 +270,7 @@ export function renderTokenmaxxingRows(
   }
 
   const includeActivity = options.activityOnly || (options.includeActivity ?? false);
-  const tokenmaxxingActivityEvents = includeActivity ? events.filter(isTokenmaxxingActivityEvent) : [];
+  const tokenmaxxingActivityEvents = includeActivity ? tokenmaxxingActivityItems(events, modelChanges) : [];
   const activityEvents = options.activityOnly ? tokenmaxxingActivityEvents.slice(-80) : tokenmaxxingActivityEvents.slice(-4);
   if (activityEvents.length) {
     rows.push(...tokenmaxxingSignalRows(events, activityEvents, contentWidth));
@@ -439,6 +463,7 @@ function modelCallSummaries(events: SessionEvent[], cacheByCall: Map<string, Cac
       const cache = cacheByCall.get(callKey);
       const latency = mergeLatency(latencyFromData(event.data, usageField(event.data.usage)), latencyByCall.get(callKey), usageField(event.data.usage));
       const isRunStart = !seenRuns.has(runId);
+      const model = modelCallModel(event.data, request);
       seenRuns.add(runId);
       return {
         kind: "model_call",
@@ -450,6 +475,7 @@ function modelCallSummaries(events: SessionEvent[], cacheByCall: Map<string, Cac
         stepId,
         stepIndex,
         promptEpochId: cache?.promptEpochId ?? stringField(event.data.prompt_epoch_id) ?? stringField(request?.prompt_epoch_id),
+        model,
         isRunStart,
         requestClass: stringField(event.data.request_class) ?? stringField(request?.request_class),
         requestOrigin: stringField(event.data.request_origin) ?? stringField(request?.request_origin) ?? loopOriginByRun.get(runId),
@@ -462,6 +488,40 @@ function modelCallSummaries(events: SessionEvent[], cacheByCall: Map<string, Cac
         latency,
       };
     });
+}
+
+function modelCallModel(data: JsonObject, request: JsonObject | undefined): string | undefined {
+  return selectedModelFromRoute(objectField(data.route)) ?? stringField(data.model) ?? stringField(request?.model);
+}
+
+function selectedModelFromRoute(route: JsonObject): string | undefined {
+  return (
+    stringField(route["x-vsr-selected-model"]) ??
+    stringField(route["x-selected-model"]) ??
+    stringField(route["x-router-model"])
+  );
+}
+
+function modelChangeSummaries(modelCalls: ModelCallSummary[]): ModelChangeSummary[] {
+  const out: ModelChangeSummary[] = [];
+  let previous: ModelCallSummary | undefined;
+  for (const call of modelCalls.slice().sort((left, right) => left.order - right.order)) {
+    if (!call.model) {
+      continue;
+    }
+    if (previous?.model && previous.model !== call.model) {
+      out.push({
+        order: call.order,
+        event: call.event,
+        runOrdinal: call.runOrdinal,
+        stepIndex: call.stepIndex,
+        previousModel: previous.model,
+        model: call.model,
+      });
+    }
+    previous = call;
+  }
+  return out;
 }
 
 function compactionCallSummaries(evidence: JsonObject[], events: SessionEvent[], cacheByCall: Map<string, CacheObservation>, latencyByCall: Map<string, TurnLatency>): CompactionCallSummary[] {
@@ -1395,19 +1455,72 @@ function rtkLine(rtk: RtkTotals): string {
   ].filter((part): part is string => Boolean(part)).join(" · ");
 }
 
-function tokenmaxxingSignalRows(allEvents: SessionEvent[], events: SessionEvent[], width: number): TokenmaxxingScreenRow[] {
+function modelChangeLine(change: ModelChangeSummary, width: number): string {
+  const turn = `turn ${change.runOrdinal}${change.stepIndex === undefined ? "" : `.${change.stepIndex}`}`;
+  return truncateToWidth(
+    [
+      fg256(111, "model changed"),
+      fg256(244, turn),
+      modelChangeDetail(change.previousModel, change.model),
+    ].join(` ${fg256(67, "·")} `),
+    width,
+  );
+}
+
+function modelChangeDetail(previousModel: string | undefined, model: string | undefined): string {
+  return [
+    previousModel ? fg256(244, previousModel) : fg256(244, "?"),
+    fg256(238, "->"),
+    model ? fg256(75, model) : fg256(244, "?"),
+  ].join(" ");
+}
+
+function tokenmaxxingSignalRows(allEvents: SessionEvent[], items: TokenmaxxingSignalItem[], width: number): TokenmaxxingScreenRow[] {
   const runOrdinals = runOrdinalMap(allEvents);
   const rows: TokenmaxxingScreenRow[] = [
     row(fg256(39, "Recent signals"), "section"),
     row(formatSignalRow([fg256(244, "time"), fg256(244, "signal"), fg256(244, "turn"), fg256(244, "tokens"), fg256(244, "cache"), fg256(244, "status"), fg256(244, "detail")], width), "signal"),
   ];
-  rows.push(...events.map((event) => row(formatSignalRow(signalCells(event, runOrdinals), width), "signal")));
+  rows.push(...items.map((item) => row(formatSignalRow(signalCells(item.event, runOrdinals), width), "signal")));
   return rows;
+}
+
+function tokenmaxxingActivityItems(events: SessionEvent[], modelChanges: ModelChangeSummary[]): TokenmaxxingSignalItem[] {
+  const eventItems = events
+    .map((event, order) => ({ event, order }))
+    .filter((item) => isTokenmaxxingActivityEvent(item.event));
+  const modelChangeItems = modelChanges.map((change) => ({
+    event: modelChangeSignalEvent(change),
+    order: change.order + 0.1,
+  }));
+  return [...eventItems, ...modelChangeItems].sort((left, right) => left.order - right.order);
+}
+
+function modelChangeSignalEvent(change: ModelChangeSummary): SessionEvent {
+  return {
+    ...change.event,
+    type: "tokenmaxxing.model.changed",
+    data: {
+      step_index: change.stepIndex,
+      previous_model: change.previousModel,
+      model: change.model,
+    },
+  };
 }
 
 function signalCells(event: SessionEvent, runOrdinals: Map<string, number>): string[] {
   const data = event.data;
   switch (event.type) {
+    case "tokenmaxxing.model.changed":
+      return [
+        signalTime(event.created_at ?? ""),
+        fg256(111, "model changed"),
+        signalTurnLabel(event, runOrdinals),
+        "",
+        "",
+        "route",
+        modelChangeDetail(stringField(data.previous_model), stringField(data.model)),
+      ];
     case "model.response.settled": {
       const usage = usageField(data.usage);
       return [

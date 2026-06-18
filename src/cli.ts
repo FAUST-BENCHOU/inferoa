@@ -62,6 +62,8 @@ import { queueGoalVerificationSuite, runGoalVerificationSuite } from "./loop/ver
 import { readLoopPolicy, resolveLoopBackgroundIsolation } from "./loop/policy.js";
 import { runtimeAgenticOptimizer } from "./opt/agentic-propose.js";
 import { optLiteAdopt, optLiteLearn, optLitePropose, optLiteReplay, optLiteReport, optLiteRun, optLiteStatus } from "./opt/opt-lite.js";
+import { runDebugSession } from "./debug/run-session.js";
+import { runEvalProfile } from "./eval/runner.js";
 import {
   attachDaemonJob,
   cancelDaemonJob,
@@ -86,6 +88,7 @@ interface ParsedCli extends AppOptions {
   initialView?: "setup";
   prompt?: string;
   debug?: string[];
+  evalProfile?: string[];
   selfImprove?: string[];
   loop?: string[];
   inbox?: string[];
@@ -118,6 +121,10 @@ async function main(): Promise<void> {
   }
   if (parsed.debug) {
     await runDebug(parsed);
+    return;
+  }
+  if (parsed.evalProfile) {
+    await runEval(parsed);
     return;
   }
   if (parsed.print) {
@@ -223,6 +230,12 @@ function parseArgs(argv: string[]): ParsedCli {
       parsed.debug = rest.filter((item) => item !== "--json");
       break;
     }
+    if (arg === "eval" && prompt.length === 0) {
+      const rest = argv.slice(i + 1);
+      parsed.json = parsed.json || rest.includes("--json");
+      parsed.evalProfile = rest.filter((item) => item !== "--json");
+      break;
+    }
     if (arg === "self-improve" && prompt.length === 0) {
       const rest = argv.slice(i + 1);
       parsed.json = parsed.json || rest.includes("--json");
@@ -298,13 +311,14 @@ Usage:
   inferoa verify <session> [--role role|--roles role,role] [--background] [--worktree] [rubric]
                                    Run an independent loop verification pass
   inferoa self-improve <command>  Loop self-improvement commands
+  inferoa eval --profile=<name>   Run an eval profile
   inferoa debug <command>         Machine/debug commands
 
 Options:
   --config <path>                    Config YAML path
   --workspace <path>                 Workspace root
   --state-dir <path>                 State directory, defaults to ~/.inferoa
-  --json                             JSON output for debug commands
+  --json                             JSON output for eval/debug commands
   --no-animation                     Disable TUI intro animation
 
 TUI commands:
@@ -320,6 +334,8 @@ Debug commands:
   tools list
   tools call <name> [json]
   events <session> [limit]
+  run-session --prompt <text>...     Run multiple prompts in one session with route/cache telemetry
+  eval-agentic-routing               Run agentic routing replay evals against a vLLM SR endpoint
   archive <session>
   daemon start|status|jobs|run|goal|attach|detach|cancel ...
   acceptance [--daemon]
@@ -340,6 +356,14 @@ Worktree commands:
   health                            Show managed worktree health
   adopt <worktree_id> [--dry-run]   Merge a managed worktree branch into the active checkout
 `);
+}
+
+async function runEval(options: ParsedCli): Promise<void> {
+  const result = await runEvalProfile(options, options.evalProfile ?? []);
+  print(result.report, options.json);
+  if (result.failed) {
+    process.exitCode = 1;
+  }
 }
 
 async function runPrint(options: ParsedCli): Promise<void> {
@@ -1029,6 +1053,22 @@ async function runDebug(options: ParsedCli): Promise<void> {
     case "events":
       await debugEvents(options, rest);
       return;
+    case "run-session": {
+      const result = await runDebugSession(options, rest);
+      print(result.report, options.json);
+      if (result.failed) {
+        process.exitCode = 1;
+      }
+      return;
+    }
+    case "eval-agentic-routing": {
+      const result = await runEvalProfile(options, ["--profile", "agentic-routing", ...rest]);
+      print(result.report, options.json);
+      if (result.failed) {
+        process.exitCode = 1;
+      }
+      return;
+    }
     case "archive":
       await debugArchive(options, rest);
       return;

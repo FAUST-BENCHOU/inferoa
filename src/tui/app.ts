@@ -282,6 +282,16 @@ export interface TuiLaunchOptions {
 
 interface ChatTurnEvidence extends CacheFooterInput {
   responseId?: string;
+  requestClass?: RuntimeRunOptions["request_class"];
+  origin?: RuntimeRunOptions["origin"];
+}
+
+export interface ComposerRouteSelection {
+  selectedModel: string;
+  selectedCategory?: string;
+  selectedDecision?: string;
+  requestClass?: RuntimeRunOptions["request_class"];
+  origin?: RuntimeRunOptions["origin"];
 }
 
 interface GoalSupervisorRecordDetail {
@@ -365,7 +375,7 @@ export class TuiApp {
   #inlineRenderedContent: string[] | undefined;
   #toolTraceMode: ToolTraceMode = "compact";
   #composerFooter: string | undefined;
-  #composerSelectedRoute: string | undefined;
+  #composerRouteSelection: ComposerRouteSelection | undefined;
   #composerActivity: string | undefined;
   #composerQueue: string[] | undefined;
   #composerPanel: ComposerPanel | undefined;
@@ -1448,13 +1458,14 @@ export class TuiApp {
 
   private composerMetadataLeft(): string {
     const model = compactModelLabel(this.app.config.model_setup.model ?? "unconfigured");
-    const contextWindow = this.configuredContextWindow();
+    const contextWindow = this.app.config.model_setup.mode === "auto"
+      ? undefined
+      : this.configuredContextWindow();
     return [
       fg256(75, compactWorkspacePath(this.app.workspace.root)),
       fg256(238, "·"),
       fg256(252, model),
-      this.#composerSelectedRoute ? fg256(238, "·") : undefined,
-      this.#composerSelectedRoute ? fg256(244, this.#composerSelectedRoute) : undefined,
+      ...renderComposerRouteSelection(this.#composerRouteSelection),
       contextWindow ? fg256(244, "·") : undefined,
       contextWindow ? fg256(244, compactTokenWindow(contextWindow).toLowerCase()) : undefined,
     ].filter((part): part is string => Boolean(part)).join(" ");
@@ -6334,7 +6345,10 @@ export class TuiApp {
             activity.status(prefillActivity);
           }
           if (event.type === "model_route") {
-            this.#composerSelectedRoute = routeSelectionSummary(event.route);
+            this.#composerRouteSelection = composerRouteSelectionFromRoute(event.route, {
+              requestClass: options.requestClass,
+              origin: options.origin,
+            });
             this.#activeComposerRedraw?.();
           }
           if (event.type === "model_retry") {
@@ -6404,7 +6418,10 @@ export class TuiApp {
           finalOutput += toolSummary;
           renderState.lastSegment = "tool";
         }
-        this.#composerSelectedRoute = routeSelectionSummary(evidence.route);
+        this.#composerRouteSelection = composerRouteSelectionFromRoute(evidence.route, {
+          requestClass: evidence.requestClass ?? options.requestClass,
+          origin: evidence.origin ?? options.origin,
+        });
         const footer = renderCacheFooter({
           ...evidence,
           latencyMs: Date.now() - startedAt,
@@ -6641,6 +6658,8 @@ export class TuiApp {
       model: stringField(settled.model) ?? stringField(evidence.model),
       route: objectField((settled as JsonObject).route) ?? objectField((evidence as JsonObject).router),
       mode: this.app.config.model_setup.mode,
+      requestClass: requestClassField(settled.request_class) ?? requestClassField(evidence.request_class),
+      origin: originField(settled.origin) ?? originField(evidence.origin),
     };
   }
 
@@ -8993,7 +9012,10 @@ function moveCursorVertical(delta: number): void {
   }
 }
 
-function routeSelectionSummary(route: JsonObject | undefined): string | undefined {
+export function composerRouteSelectionFromRoute(
+  route: JsonObject | undefined,
+  options: Pick<ComposerRouteSelection, "requestClass" | "origin"> = {},
+): ComposerRouteSelection | undefined {
   if (!route) {
     return undefined;
   }
@@ -9004,8 +9026,63 @@ function routeSelectionSummary(route: JsonObject | undefined): string | undefine
   if (!selectedModel) {
     return undefined;
   }
+  const selectedCategory = headerField(route["x-vsr-selected-category"]);
   const selectedDecision = headerField(route["x-vsr-selected-decision"]);
-  return selectedDecision ? `selected: ${selectedModel} / ${selectedDecision}` : `selected: ${selectedModel}`;
+  return {
+    selectedModel,
+    selectedCategory,
+    selectedDecision,
+    requestClass: options.requestClass,
+    origin: options.origin,
+  };
+}
+
+export function renderComposerRouteSelection(selection: ComposerRouteSelection | undefined): string[] {
+  if (!selection) {
+    return [];
+  }
+  const label = selection.selectedCategory ?? composerRouteRequestLabel(selection.requestClass, selection.origin);
+  return [
+    fg256(238, "·"),
+    fg256(75, selection.selectedModel),
+    label ? fg256(238, "·") : undefined,
+    label ? fg256(252, label) : undefined,
+    selection.selectedDecision ? fg256(238, "·") : undefined,
+    selection.selectedDecision ? fg256(75, selection.selectedDecision) : undefined,
+  ].filter((part): part is string => Boolean(part));
+}
+
+function composerRouteRequestLabel(requestClass: RuntimeRunOptions["request_class"] | undefined, origin: RuntimeRunOptions["origin"] | undefined): string | undefined {
+  switch (requestClass) {
+    case "reflection":
+      return "decision";
+    case "verification":
+      return "verify";
+    case "background":
+      return origin === "loop" ? "execution" : "bg";
+    case "compaction":
+      return "compact";
+    default:
+      return undefined;
+  }
+}
+
+function requestClassField(value: unknown): RuntimeRunOptions["request_class"] | undefined {
+  switch (value) {
+    case "interactive":
+    case "tool":
+    case "verification":
+    case "compaction":
+    case "background":
+    case "reflection":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function originField(value: unknown): RuntimeRunOptions["origin"] | undefined {
+  return value === "loop" ? "loop" : undefined;
 }
 
 function headerField(value: unknown): string | undefined {

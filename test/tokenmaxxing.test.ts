@@ -266,6 +266,39 @@ test("tokenmaxxing marks loop-origin execution prompts and shows model latency c
   assert.doesNotMatch(plain, /turn 1\.1\s+user/);
 });
 
+test("tokenmaxxing surfaces model changes in turns and signals", () => {
+  const events: SessionEvent[] = [
+    event("user.prompt", { prompt: "route with auto model" }, "run_route"),
+    event("model.request.started", { step_id: "step_1", step_index: 1, prompt_epoch_id: "pe_route", model: "auto" }, "run_route"),
+    event("model.response.settled", {
+      step_id: "step_1",
+      step_index: 1,
+      prompt_epoch_id: "pe_route",
+      model: "auto",
+      route: { "x-vsr-selected-model": "qwen/qwen3.6-rocm" },
+      usage: { prompt_tokens: 900, cached_prompt_tokens: 0, completion_tokens: 20, total_tokens: 920 },
+      tool_calls: [],
+    }, "run_route"),
+    event("model.request.started", { step_id: "step_2", step_index: 2, prompt_epoch_id: "pe_route", model: "auto" }, "run_route"),
+    event("model.response.settled", {
+      step_id: "step_2",
+      step_index: 2,
+      prompt_epoch_id: "pe_route",
+      model: "auto",
+      route: { "x-vsr-selected-model": "deepseek-v4-pro-tokenhub" },
+      usage: { prompt_tokens: 950, cached_prompt_tokens: 900, completion_tokens: 20, total_tokens: 970 },
+      tool_calls: [],
+    }, "run_route"),
+  ];
+
+  const overview = stripAnsi(renderTokenmaxxingLines(events, [], 220, { detailLimit: Number.POSITIVE_INFINITY }).join("\n"));
+  const signals = stripAnsi(renderTokenmaxxingLines(events, [], 220, { activityOnly: true }).join("\n"));
+
+  assert.match(overview, /Model changes/);
+  assert.match(overview, /model changed\s+.*turn 1\.2\s+.*qwen\/qwen3\.6-rocm -> deepseek-v4-pro-tokenhub/);
+  assert.match(signals, /model changed\s+turn 1\.2\s+.*route\s+qwen\/qwen3\.6-rocm -> deepseek-v4-pro-tokenhub/);
+});
+
 test("tokenmaxxing infers hidden loop execution prompts without origin metadata", () => {
   const events: SessionEvent[] = [
     event(

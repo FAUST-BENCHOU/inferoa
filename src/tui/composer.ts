@@ -543,7 +543,9 @@ function colorWelcomeLogoRow(line: string, index: number): string {
 
 function welcomeMetaLine(options: WelcomeComposerRenderOptions, width: number): string {
   const modelText = compactModelLabel(options.model);
-  const contextText = options.contextWindow ? compactTokenWindow(options.contextWindow) : undefined;
+  const contextText = options.mode === "auto"
+    ? undefined
+    : options.contextWindow ? compactTokenWindow(options.contextWindow) : undefined;
   const left = [fg256(252, modelText), ...(contextText ? [fg256(244, contextText)] : [])].join(` ${fg256(244, "·")} `);
   const provider = options.providerName?.trim() ? fg256(252, options.providerName.trim()) : undefined;
   return padRight(renderComposerMetadataLine(left, provider, Math.max(1, width - WELCOME_META_SIDE_INSET)), width);
@@ -655,9 +657,9 @@ function renderComposerMetadataLine(left: string, right: string | undefined, wid
 function composerFooterMetadata(footer: string | undefined, metadataLeft: string | undefined): string {
   const separator = metadataSeparator();
   const footerParts = splitFooterParts(footer);
-  const worked = footerParts.find((part) => stripAnsiLocal(part).startsWith("worked for"));
-  const primaryFooter = footerParts.filter((part) => part !== worked).join(separator);
-  return [primaryFooter, metadataLeft, worked].filter((part): part is string => Boolean(part?.trim())).join(separator);
+  const duration = footerParts.find(isDurationFooterPart);
+  const primaryFooter = footerParts.filter((part) => part !== duration).join(separator);
+  return [primaryFooter, metadataLeft, duration].filter((part): part is string => Boolean(part?.trim())).join(separator);
 }
 
 function splitFooterParts(footer: string | undefined): string[] {
@@ -670,6 +672,11 @@ function metadataSeparator(): string {
 
 function stripAnsiLocal(text: string): string {
   return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").trim();
+}
+
+function isDurationFooterPart(part: string): boolean {
+  const clean = stripAnsiLocal(part);
+  return /^worked for /.test(clean) || /^\d+(?:ms|(?:\.\d+)?s|m(?: \d+s)?)$/.test(clean);
 }
 
 function compactComposerDisplay(

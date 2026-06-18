@@ -9,17 +9,28 @@ export interface HomeRenderOptions {
 }
 
 export function renderHomeFrame(options: HomeRenderOptions): string[] {
-  const frameWidth = Math.max(20, options.width);
+  const frameWidth = homeBannerWidth(options.width);
   const inner = frameWidth - 2;
   if (frameWidth < 84) {
     return homeFrame("", [...renderHomeLeft(options, inner), "", ...renderHomeTips(inner)], frameWidth);
   }
-  const leftWidth = Math.min(48, Math.max(34, Math.floor(inner * 0.42)));
+  const leftWidth = Math.min(
+    Math.max(44, Math.floor(inner * 0.62)),
+    Math.max(44, inner - 31),
+  );
   const rightWidth = inner - leftWidth - 3;
   const left = renderHomeLeft(options, leftWidth);
   const right = renderHomeTips(rightWidth);
   const body = mergeHomeColumns(left, right, leftWidth, rightWidth);
   return homeFrame("", body, frameWidth);
+}
+
+function homeBannerWidth(terminalWidth: number): number {
+  const safeWidth = Math.max(20, terminalWidth);
+  if (safeWidth < 84) {
+    return safeWidth;
+  }
+  return Math.min(safeWidth, Math.max(84, Math.min(112, Math.floor(safeWidth * 0.52))));
 }
 
 function renderHomeLeft(options: HomeRenderOptions, width: number): string[] {

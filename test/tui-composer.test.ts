@@ -16,6 +16,7 @@ import {
   renderWelcomeComposerSurface,
   resolveComposerSubmission,
 } from "../src/tui/composer.js";
+import { renderCacheFooter } from "../src/tui/cache-footer.js";
 import { stripAnsi, visibleWidth } from "../src/tui/ansi.js";
 import { slashSubcommands } from "../src/tui/slash.js";
 
@@ -183,6 +184,34 @@ test("composer folds cache footer, path, model, and mode into one metadata line"
   assert.match(rawLine, /\x1b\[38;5;75m~\/local-workbench\/work\/vllm\/inferoa/);
   assert.match(rawLine, /\x1b\[38;5;252mdeepseek-v4-pro-tokenhub/);
   assert.match(rawLine, /\x1b\[38;5;244mworked for 5\.3s/);
+});
+
+test("composer auto route metadata renders path, mode, route, and bare duration in order", () => {
+  const rendered = renderComposerSurface({
+    buffer: "",
+    cursor: 0,
+    items: [],
+    selected: 0,
+    width: 160,
+    metadataLeft: "\x1b[38;5;75m~/local-workbench/work/vllm/vllm-agent\x1b[0m \x1b[38;5;238m·\x1b[0m \x1b[38;5;252mauto\x1b[0m \x1b[38;5;238m·\x1b[0m \x1b[38;5;75mqwen/qwen3.6-rocm\x1b[0m \x1b[38;5;238m·\x1b[0m \x1b[38;5;252mdecision\x1b[0m \x1b[38;5;238m·\x1b[0m \x1b[38;5;75msimple_general\x1b[0m",
+    footer: renderCacheFooter({
+      mode: "auto",
+      latencyMs: 3_400,
+      usage: { prompt_tokens: 1000, cached_prompt_tokens: 500 },
+      previousPromptTokens: 520,
+    }),
+  });
+  const rawLine = rendered.lines.find((line) => stripAnsi(line).includes("qwen/qwen3.6-rocm")) ?? "";
+  const plainLine = stripAnsi(rawLine).trim();
+
+  assert.equal(plainLine, "~/local-workbench/work/vllm/vllm-agent · auto · qwen/qwen3.6-rocm · decision · simple_general · 3.4s");
+  assert.match(rawLine, /\x1b\[38;5;75m~\/local-workbench\/work\/vllm\/vllm-agent\x1b\[0m/);
+  assert.match(rawLine, /\x1b\[38;5;252mauto\x1b\[0m/);
+  assert.match(rawLine, /\x1b\[38;5;75mqwen\/qwen3\.6-rocm\x1b\[0m/);
+  assert.match(rawLine, /\x1b\[38;5;252mdecision\x1b\[0m/);
+  assert.match(rawLine, /\x1b\[38;5;75msimple_general\x1b\[0m/);
+  assert.match(rawLine, /\x1b\[38;5;244m3\.4s\x1b\[0m/);
+  assert.doesNotMatch(plainLine, /worked for|cache reuse|gap|256k/);
 });
 
 test("composer gives activity and queued prompts balanced space above input", () => {
@@ -384,6 +413,26 @@ test("welcome composer shows provider in the input box and version in the lower 
   assert.match(rendered.lines.at(-1) ?? "", /\x1b\[38;5;244mv9\.8\.7\x1b\[0m$/);
   assert.equal(rendered.lines.length, 34);
   assert.equal(rendered.lines.every((line) => visibleWidth(line) <= width), true);
+});
+
+test("welcome composer hides context window in auto mode", () => {
+  const rendered = renderWelcomeComposerSurface({
+    buffer: "",
+    cursor: 0,
+    items: [],
+    selected: 0,
+    width: 118,
+    height: 34,
+    workspaceRoot: "/tmp/workspace",
+    mode: "auto",
+    model: "auto",
+    contextWindow: 256_000,
+  });
+  const plain = rendered.lines.map((line) => stripAnsi(line)).join("\n");
+  const metaLine = plain.split("\n").find((line) => line.includes("auto")) ?? "";
+
+  assert.match(metaLine, /auto/);
+  assert.doesNotMatch(metaLine, /256k/);
 });
 
 test("welcome slash launcher keeps a compact portrait hint", () => {

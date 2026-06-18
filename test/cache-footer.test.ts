@@ -37,6 +37,22 @@ test("cache footer shows cached-token hit rate and cache gap when exposed", () =
   assert.doesNotMatch(rawFooter, /\x1b\[38;5;220m/);
 });
 
+test("cache footer hides cache reuse and gap in auto mode", () => {
+  const footer = stripAnsi(renderCacheFooter({
+    mode: "auto",
+    model: "auto",
+    usage: { prompt_tokens: 1000, cached_prompt_tokens: 500, completion_tokens: 20 },
+    previousPromptTokens: 520,
+    latencyMs: 5_300,
+  }));
+
+  assert.doesNotMatch(footer, /cache reuse/);
+  assert.doesNotMatch(footer, /cache hit/);
+  assert.doesNotMatch(footer, /gap/);
+  assert.equal(footer, "5.3s");
+  assert.doesNotMatch(footer, /worked for/);
+});
+
 test("cache footer hides zero percent prefix cache hits", () => {
   const footer = stripAnsi(renderCacheFooter({
     usage: { prompt_tokens: 1000, cached_prompt_tokens: 0, completion_tokens: 20 },
